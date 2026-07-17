@@ -1,12 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 import type { Agent } from "../agent/loop.js";
-import { gitBranch } from "../git/git.js";
+import { gitBranch, gitDiffStat } from "../git/git.js";
 import { saveConfig, type CliConfig } from "../config/config.js";
+import { contextWindowFor } from "../config/models.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
 import { tavilySearch } from "../tools/webSearch.js";
@@ -18,11 +19,12 @@ import { ModelPicker } from "./ModelPicker.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
+import { expandCommand, type CustomCommand } from "../commands/custom.js";
 
 type ItemBody =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
-  | { kind: "tool"; name: string; summary: string; error: boolean }
+  | { kind: "tool"; name: string; summary: string; error: boolean; output?: string }
   | { kind: "info"; text: string }
   | { kind: "banner"; subtitle: string };
 
@@ -34,6 +36,7 @@ interface PendingPermission {
   toolName: string;
   summary: string;
   diff?: string;
+  warning?: string;
   resolve(decision: PermissionDecision): void;
 }
 
@@ -50,11 +53,19 @@ export interface AppProps {
   undoStack: UndoStack;
   uiBridge: UiBridge;
   resumeSessions?: SessionMeta[];
+  customCommands?: CustomCommand[];
+  mcpToolCount?: number;
 }
 
 const COMMANDS: { name: string; description: string }[] = [
   { name: "/help", description: "show available commands" },
-  { name: "/model", description: "pick a model, or /model <id> for any NVIDIA model ID" },
+  { name: "/model", description: "pick a model, or /model <id> for any provider model ID" },
+  {
+    name: "/plan",
+    description: "toggle plan mode (read-only): explore and propose before editing",
+  },
+  { name: "/diff", description: "show the cumulative git diff of this session's changes" },
+  { name: "/redo", description: "reapply the change most recently undone" },
   { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
   { name: "/web-search", description: "search the web: /web-search <query>" },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
@@ -70,12 +81,23 @@ const HELP_TEXT = `Commands:
 ${COMMANDS.map((c) => `  ${c.name.padEnd(14)} ${c.description}`).join("\n")}
 
 Also: @path/to/file attaches a file to your message (with autocomplete).
+@image.png attaches an image for vision-capable models.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
-Keys: Esc cancels a running request · Tab completes · Ctrl+C exits`;
+Keys: Esc cancels · Tab completes · ↑/↓ recalls history · Ctrl+O toggles full
+tool output · Ctrl+C exits`;
+
+/** Preview of tool output: a few lines by default, everything when verbose. */
+function toolOutputPreview(output: string, verbose: boolean): string {
+  const lines = output.replace(/\s+$/, "").split("\n");
+  if (verbose) return lines.join("\n");
+  const head = lines.slice(0, 3).join("\n");
+  return lines.length > 3 ? `${head}\n… (+${lines.length - 3} lines · Ctrl+O)` : head;
+}
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
 const MENTION_ALL_RE = /(?:^|\s)@([^\s@]+)/g;
 const MAX_MENTION_CHARS = 8000;
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 export function App({
   agent,
@@ -86,6 +108,8 @@ export function App({
   undoStack,
   uiBridge,
   resumeSessions,
+  customCommands = [],
+  mcpToolCount = 0,
 }: AppProps) {
   const { exit } = useApp();
   const nextId = useRef(0);
@@ -118,11 +142,27 @@ export function App({
   const [ctxPct, setCtxPct] = useState(0);
   const [steerInput, setSteerInput] = useState("");
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
+  const [planMode, setPlanMode] = useState(false);
   const [resumeFilter, setResumeFilter] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileList, setFileList] = useState<string[]>([]);
+  const [verbose, setVerbose] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const inputHistory = useRef<string[]>([]);
+  const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
+
+  // Tick an elapsed-seconds counter while the agent is working.
+  useEffect(() => {
+    if (phase !== "working") {
+      setElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
 
   const addItem = useCallback((item: ItemBody) => {
     setItems((prev) => [...prev, { ...item, id: nextId.current++ }]);
@@ -146,10 +186,15 @@ export function App({
 
   useEffect(refreshFileList, [refreshFileList]);
 
+  const allCommands = [
+    ...COMMANDS,
+    ...customCommands.map((c) => ({ name: c.name, description: c.description })),
+  ];
+
   // Command suggestions while typing a slash command (before any arguments).
   const suggestions =
     phase === "input" && input.startsWith("/") && !input.includes(" ")
-      ? COMMANDS.filter((c) => c.name.startsWith(input.trim()))
+      ? allCommands.filter((c) => c.name.startsWith(input.trim()))
       : [];
   const selectedCmd = suggestions.length ? Math.min(cmdIndex, suggestions.length - 1) : 0;
 
@@ -173,6 +218,31 @@ export function App({
     if (key.escape && phase === "working") {
       abortRef.current?.abort();
     }
+    // Ctrl+O toggles showing full tool output.
+    if (key.ctrl && _input === "o") {
+      setVerbose((v) => !v);
+      return;
+    }
+    // History recall with ↑/↓ when no autocomplete popup is open.
+    if (phase === "input" && !suggestions.length && !fileSuggestions.length) {
+      const hist = inputHistory.current;
+      if (key.upArrow && hist.length) {
+        histIndex.current =
+          histIndex.current === -1 ? hist.length - 1 : Math.max(0, histIndex.current - 1);
+        setInput(hist[histIndex.current]);
+        return;
+      }
+      if (key.downArrow && histIndex.current !== -1) {
+        histIndex.current += 1;
+        if (histIndex.current >= hist.length) {
+          histIndex.current = -1;
+          setInput("");
+        } else {
+          setInput(hist[histIndex.current]);
+        }
+        return;
+      }
+    }
     if (phase === "resume") {
       if (key.backspace || key.delete) setResumeFilter((f) => f.slice(0, -1));
       else if (_input && !key.upArrow && !key.downArrow && !key.return && !key.escape && !key.tab) {
@@ -184,7 +254,8 @@ export function App({
       else if (key.downArrow) setCmdIndex((i) => (i + 1) % suggestions.length);
       else if (key.tab) setInput(suggestions[selectedCmd].name + " ");
     } else if (fileSuggestions.length) {
-      if (key.upArrow) setFileIndex((i) => (i - 1 + fileSuggestions.length) % fileSuggestions.length);
+      if (key.upArrow)
+        setFileIndex((i) => (i - 1 + fileSuggestions.length) % fileSuggestions.length);
       else if (key.downArrow) setFileIndex((i) => (i + 1) % fileSuggestions.length);
       else if (key.tab) completeMention(fileSuggestions[selectedFile]);
     }
@@ -193,6 +264,7 @@ export function App({
   const setModelEverywhere = (id: string) => {
     modelRef.current = id;
     setModel(id);
+    agent.contextWindow = contextWindowFor(id, config);
     saveConfig({ model: id });
     addItem({ kind: "info", text: `Model set to ${id}` });
   };
@@ -236,7 +308,10 @@ export function App({
       addItem({ kind: "info", text: `Web search: ${query}\n\n${results}` });
       agent.addUserNote(`[Results of a web search I ran for "${query}"]:\n${results}`);
     } catch (err) {
-      addItem({ kind: "info", text: `Web search failed: ${err instanceof Error ? err.message : String(err)}` });
+      addItem({
+        kind: "info",
+        text: `Web search failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
     } finally {
       setActivity(null);
       setPhase("input");
@@ -247,9 +322,16 @@ export function App({
     const [cmd, ...rest] = raw.trim().split(/\s+/);
     const arg = rest.join(" ");
     switch (cmd) {
-      case "/help":
-        addItem({ kind: "info", text: HELP_TEXT });
+      case "/help": {
+        const customList = customCommands.length
+          ? `\n\nCustom commands (from .kritya/commands/):\n${customCommands
+              .map((c) => `  ${c.name.padEnd(14)} ${c.description}`)
+              .join("\n")}`
+          : "";
+        const mcpNote = mcpToolCount > 0 ? `\n\n${mcpToolCount} MCP tool(s) loaded.` : "";
+        addItem({ kind: "info", text: HELP_TEXT + customList + mcpNote });
         break;
+      }
       case "/model":
         if (arg) setModelEverywhere(arg);
         else setPhase("model");
@@ -314,12 +396,47 @@ export function App({
             "the change. Do not push. Show the final commit hash and message."
         );
         break;
+      case "/plan": {
+        const next = !planMode;
+        setPlanMode(next);
+        agent.planMode = next;
+        addItem({
+          kind: "info",
+          text: next
+            ? "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked. Run /plan again to execute."
+            : "Plan mode OFF — the agent can make changes again.",
+        });
+        break;
+      }
+      case "/diff": {
+        const d = gitDiffStat(workspace);
+        addItem({ kind: "info", text: d || "No git changes (or not a git repo)." });
+        break;
+      }
+      case "/redo": {
+        const result = undoStack.redo();
+        if (result === null) {
+          addItem({ kind: "info", text: "Nothing to redo." });
+        } else {
+          addItem({ kind: "info", text: `Redo: ${result}` });
+          agent.addUserNote(`[I reapplied a previously undone change via /redo: ${result}]`);
+          refreshFileList();
+        }
+        break;
+      }
       case "/exit":
       case "/quit":
         exit();
         break;
-      default:
-        addItem({ kind: "info", text: `Unknown command: ${cmd}. Try /help` });
+      default: {
+        const custom = customCommands.find((c) => c.name === cmd);
+        if (custom) {
+          addItem({ kind: "user", text: raw.trim() });
+          void runAgent(expandCommand(custom.body, expandMentions(arg)));
+        } else {
+          addItem({ kind: "info", text: `Unknown command: ${cmd}. Try /help` });
+        }
+      }
     }
   };
 
@@ -327,6 +444,7 @@ export function App({
     const mentions = [...new Set([...text.matchAll(MENTION_ALL_RE)].map((m) => m[1]))];
     let extra = "";
     for (const p of mentions) {
+      if (IMAGE_RE.test(p)) continue; // images are attached separately, not inlined as text
       try {
         const abs = resolveSafe(workspace, p);
         const content = fs.readFileSync(abs, "utf8");
@@ -342,6 +460,24 @@ export function App({
     return text + extra;
   };
 
+  // Collect @-mentioned image files as data URIs for vision-capable models.
+  const collectImages = (text: string): string[] => {
+    const images: string[] = [];
+    for (const p of new Set([...text.matchAll(MENTION_ALL_RE)].map((m) => m[1]))) {
+      if (!IMAGE_RE.test(p)) continue;
+      try {
+        const abs = resolveSafe(workspace, p);
+        const b64 = fs.readFileSync(abs).toString("base64");
+        const ext = p.split(".").pop()!.toLowerCase();
+        const mime = ext === "jpg" ? "jpeg" : ext;
+        images.push(`data:image/${mime};base64,${b64}`);
+      } catch {
+        // Not a readable image — skip.
+      }
+    }
+    return images;
+  };
+
   const handleSubmit = async (value: string) => {
     // Enter while command suggestions are open selects the highlighted command instead of sending.
     if (suggestions.length && value.trim() !== suggestions[selectedCmd].name) {
@@ -355,21 +491,27 @@ export function App({
       return;
     }
 
-    let text = value.trim();
+    const text = value.trim();
     setInput("");
     setCmdIndex(0);
     setFileIndex(0);
+    histIndex.current = -1;
     if (!text) return;
+    if (inputHistory.current[inputHistory.current.length - 1] !== text) {
+      inputHistory.current.push(text);
+    }
     if (text.startsWith("/")) {
       handleSlash(text);
       return;
     }
 
     addItem({ kind: "user", text });
-    await runAgent(expandMentions(text));
+    const images = collectImages(text);
+    if (images.length) addItem({ kind: "info", text: `Attached ${images.length} image(s).` });
+    await runAgent(expandMentions(text), images);
   };
 
-  const runAgent = async (text: string) => {
+  const runAgent = async (text: string, images: string[] = []) => {
     setPhase("working");
     const ac = new AbortController();
     abortRef.current = ac;
@@ -388,20 +530,27 @@ export function App({
             setThinking(false);
             addItem({ kind: "assistant", text: full });
           },
-          onToolStart: (name, summary) => {
+          onToolStart: (_name, summary) => {
             setStream("");
             setActivity(summary);
           },
-          onToolEnd: (name, summary, _preview, isError) => {
+          onToolEnd: (name, summary, preview, isError) => {
             setActivity(null);
-            if (name !== "update_tasks") addItem({ kind: "tool", name, summary, error: isError });
+            if (name !== "update_tasks")
+              addItem({ kind: "tool", name, summary, error: isError, output: preview });
           },
-          requestPermission: (toolName, summary, diff) =>
+          requestPermission: (toolName, summary, diff, warning) =>
             new Promise<PermissionDecision>((resolve) => {
               setActivity(null);
-              setPermission({ toolName, summary, diff, resolve });
+              process.stdout.write("\x07"); // ring the terminal bell when input is needed
+              setPermission({ toolName, summary, diff, warning, resolve });
               setPhase("permission");
             }),
+          onRetry: (attempt, status) => {
+            setActivity(
+              `Provider error${status ? ` (${status})` : ""} — retrying (attempt ${attempt})…`
+            );
+          },
           onUsage: (u) => {
             setCtxPct(Math.round(agent.contextUsage() * 100));
             const id = modelRef.current;
@@ -414,7 +563,8 @@ export function App({
             }));
           },
         },
-        ac.signal
+        ac.signal,
+        images
       );
     } catch (err) {
       const isAbort =
@@ -422,7 +572,9 @@ export function App({
         (err instanceof Error && /abort/i.test(err.message));
       addItem({
         kind: "info",
-        text: isAbort ? "Interrupted." : `Error: ${err instanceof Error ? err.message : String(err)}`,
+        text: isAbort
+          ? "Interrupted."
+          : `Error: ${err instanceof Error ? err.message : String(err)}`,
       });
     } finally {
       abortRef.current = null;
@@ -433,6 +585,7 @@ export function App({
       setPhase("input");
       refreshFileList();
       setBranch(gitBranch(workspace));
+      process.stdout.write("\x07"); // bell: the turn is done
     }
   };
 
@@ -451,7 +604,10 @@ export function App({
     }
     const meta = resumeSessions?.find((s) => s.file === file);
     const messages = agentLoadSession(file);
-    addItem({ kind: "info", text: `Resumed session from ${meta?.date ?? "?"} (${messages} messages).` });
+    addItem({
+      kind: "info",
+      text: `Resumed session from ${meta?.date ?? "?"} (${messages} messages).`,
+    });
   };
 
   const agentLoadSession = (file: string): number => {
@@ -488,9 +644,20 @@ export function App({
             )}
             {item.kind === "assistant" && <Markdown text={item.text} />}
             {item.kind === "tool" && (
-              <Text dimColor>
-                {item.error ? <Text color="red">✗</Text> : <Text color="green">✓</Text>} {item.summary}
-              </Text>
+              <Box flexDirection="column">
+                <Text dimColor>
+                  {item.error ? <Text color="red">✗</Text> : <Text color="green">✓</Text>}{" "}
+                  {item.summary}
+                </Text>
+                {item.output && item.output.trim() && (
+                  <Text dimColor>
+                    {toolOutputPreview(item.output, verbose)
+                      .split("\n")
+                      .map((l) => `    ${l}`)
+                      .join("\n")}
+                  </Text>
+                )}
+              </Box>
             )}
             {item.kind === "info" && <Text dimColor>{item.text}</Text>}
             {item.kind === "banner" && <Banner subtitle={item.subtitle} />}
@@ -509,7 +676,9 @@ export function App({
           {tasks.map((t, i) => (
             <Text
               key={i}
-              color={t.status === "done" ? "green" : t.status === "in_progress" ? "yellow" : undefined}
+              color={
+                t.status === "done" ? "green" : t.status === "in_progress" ? "yellow" : undefined
+              }
               dimColor={t.status === "pending"}
             >
               {t.status === "done" ? "☑" : t.status === "in_progress" ? "◐" : "☐"} {t.text}
@@ -522,7 +691,11 @@ export function App({
         <Box flexDirection="column">
           <Spinner
             label={
-              activity ? activity : thinking ? "thinking… (Esc to cancel)" : "working… (Esc to cancel)"
+              activity
+                ? activity
+                : thinking
+                  ? "thinking… (Esc to cancel)"
+                  : "working… (Esc to cancel)"
             }
           />
           <Box borderStyle="round" borderColor="yellow" paddingX={1}>
@@ -555,6 +728,7 @@ export function App({
           toolName={permission.toolName}
           summary={permission.summary}
           diff={permission.diff}
+          warning={permission.warning}
           onDecision={onPermissionDecision}
         />
       )}
@@ -638,11 +812,15 @@ export function App({
 
       <Box>
         <Text dimColor>
+          {planMode ? <Text color="cyan">plan · </Text> : ""}
           {model}
           {branch ? ` · ⎇ ${branch}` : ""}
-          {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""} · {totalUsage.promptTokens.toLocaleString()} in /{" "}
+          {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""}
+          {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
+          {totalUsage.promptTokens.toLocaleString()} in /{" "}
           {totalUsage.completionTokens.toLocaleString()} out
-          {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""} · {path.basename(workspace)}
+          {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""}
+          {verbose ? " · verbose" : ""} · {path.basename(workspace)}
         </Text>
       </Box>
     </Box>
