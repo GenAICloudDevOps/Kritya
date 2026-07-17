@@ -13,9 +13,32 @@ function realpathAllowMissing(p: string): string {
 }
 
 /**
+ * Filename/path patterns that are treated as sensitive and blocked from being
+ * read or written by tools, regardless of allowlist rules. This is a
+ * defense-in-depth measure against prompt injection tricking the agent into
+ * exfiltrating secrets — it is not a substitute for keeping real secrets out
+ * of the workspace.
+ */
+const SENSITIVE_PATH_PATTERNS: RegExp[] = [
+  /(^|[\\/])\.env(\..*)?$/i,
+  /(^|[\\/])\.git[\\/]config$/i,
+  /(^|[\\/])[^\\/]*credentials[^\\/]*$/i,
+  /(^|[\\/])[^\\/]*secret[^\\/]*$/i,
+  /(^|[\\/])id_rsa(\.[^\\/]*)?$/i,
+  /(^|[\\/])id_ed25519(\.[^\\/]*)?$/i,
+  /\.pem$/i,
+  /\.key$/i,
+];
+
+function isSensitivePath(relPath: string): boolean {
+  return SENSITIVE_PATH_PATTERNS.some((re) => re.test(relPath));
+}
+
+/**
  * Resolve a user/model-supplied path against the workspace root and refuse
  * anything that escapes it, including via a symlink inside the workspace
- * that points outside of it.
+ * that points outside of it. Also refuses paths that look like secrets
+ * (.env, credentials, private keys, etc.) — see SENSITIVE_PATH_PATTERNS.
  */
 export function resolveSafe(workspace: string, p: string): string {
   const abs = path.resolve(workspace, p);
@@ -29,6 +52,10 @@ export function resolveSafe(workspace: string, p: string): string {
   const realRel = path.relative(realWorkspace, realAbs);
   if (realRel.startsWith("..") || path.isAbsolute(realRel)) {
     throw new Error(`Path "${p}" is outside the workspace (${workspace})`);
+  }
+
+  if (isSensitivePath(realRel) || isSensitivePath(rel)) {
+    throw new Error(`Path "${p}" looks like a secret file and is blocked from tool access`);
   }
 
   return abs;

@@ -18,8 +18,15 @@ of:
 - **Deny rules** (`deny` in `settings.json`) block matching tool calls outright
   and cannot be overridden by an allow rule or an "always allow" choice.
 - **Destructive-command detection** forces a warning prompt for commands like
-  `rm -rf`, `git push --force`, and `curl | sh`, even when allowlisted.
-- **File access is confined** to the workspace root.
+  `rm -rf`, `git push --force`, and `curl | sh`, even when allowlisted. This is
+  a regex-based backstop, not a guarantee — it can be evaded (e.g. long-form
+  flags like `--recursive --force`, or obfuscation via `$(...)`, `eval`, or a
+  base64-encoded payload). Don't rely on it as the sole safeguard for a
+  blanket `shell(*)` allow rule.
+- **File access is confined** to the workspace root, and paths that look like
+  secrets (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys)
+  are blocked from being read or written by tools, regardless of allowlist
+  rules.
 - **Untrusted content** from web search and MCP tools is wrapped in explicit
   markers, and the system prompt instructs the model to treat all tool output
   as data, never as instructions. Prompt injection via file/command/web content
