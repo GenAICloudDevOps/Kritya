@@ -1,9 +1,31 @@
 import React from "react";
 import { Box, Text } from "ink";
+import { tokenizeLine, type TokenKind } from "./highlight.js";
+
+const TOKEN_COLORS: Record<TokenKind, string | undefined> = {
+  keyword: "magenta",
+  string: "green",
+  comment: "gray",
+  number: "cyan",
+  plain: undefined,
+};
+
+function CodeLine({ line }: { line: string }) {
+  if (!line) return <Text> </Text>;
+  return (
+    <Text>
+      {tokenizeLine(line).map((t, i) => (
+        <Text key={i} color={TOKEN_COLORS[t.kind]} bold={t.kind === "keyword"}>
+          {t.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
 
 /**
- * Minimal terminal markdown: fenced code blocks, headers, bullets, inline code.
- * Deliberately lightweight — not a full markdown implementation.
+ * Minimal terminal markdown: fenced code blocks (syntax-highlighted), headers,
+ * bullets, inline code. Deliberately lightweight — not a full implementation.
  */
 export function Markdown({ text }: { text: string }) {
   const lines = text.split("\n");
@@ -15,8 +37,10 @@ export function Markdown({ text }: { text: string }) {
   const flushCode = () => {
     if (codeLines.length) {
       blocks.push(
-        <Box key={key++} borderStyle="round" borderColor="gray" paddingX={1}>
-          <Text color="cyan">{codeLines.join("\n")}</Text>
+        <Box key={key++} flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+          {codeLines.map((l, i) => (
+            <CodeLine key={i} line={l} />
+          ))}
         </Box>
       );
       codeLines = [];

@@ -11,7 +11,7 @@ export interface ToolContext {
   /** Absolute path of the workspace root; all file tools are confined to it. */
   workspace: string;
   /** Records file states before mutation so /undo can revert them. */
-  undo?: { snapshot(absPath: string, relPath: string): void };
+  undo?: { snapshot(absPath: string, relPath: string): void; beginTurn?(): void };
   /** Lets the update_tasks tool push checklist changes to the UI. */
   onTasksUpdate?(tasks: TaskItem[]): void;
 }

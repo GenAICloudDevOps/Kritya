@@ -105,10 +105,12 @@ test("undo restores previous content and deletes created files", async () => {
   const undo = new UndoStack();
   const abs = path.join(ws, "u.txt");
 
-  // Change 1: create a new file (did not exist before).
+  // Turn 1: create a new file (did not exist before).
+  undo.beginTurn();
   undo.snapshot(abs, "u.txt");
   await fs.writeFile(abs, "v1");
-  // Change 2: overwrite it.
+  // Turn 2: overwrite it.
+  undo.beginTurn();
   undo.snapshot(abs, "u.txt");
   await fs.writeFile(abs, "v2");
 
@@ -116,6 +118,26 @@ test("undo restores previous content and deletes created files", async () => {
   assert.equal(await fs.readFile(abs, "utf8"), "v1");
   assert.match(undo.undo() ?? "", /Deleted/);
   await assert.rejects(() => fs.readFile(abs, "utf8"));
+  assert.equal(undo.undo(), null);
+});
+
+test("undo reverts all files changed in the same turn together", async () => {
+  const ws = await makeWorkspace();
+  const undo = new UndoStack();
+  const a = path.join(ws, "a.txt");
+  const b = path.join(ws, "b.txt");
+  await fs.writeFile(a, "a-old");
+
+  undo.beginTurn();
+  undo.snapshot(a, "a.txt");
+  await fs.writeFile(a, "a-new");
+  undo.snapshot(b, "b.txt");
+  await fs.writeFile(b, "b-new");
+
+  const result = undo.undo() ?? "";
+  assert.match(result, /Reverted 2 file changes/);
+  assert.equal(await fs.readFile(a, "utf8"), "a-old");
+  await assert.rejects(() => fs.readFile(b, "utf8"));
   assert.equal(undo.undo(), null);
 });
 

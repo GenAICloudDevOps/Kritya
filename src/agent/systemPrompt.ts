@@ -1,11 +1,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gitStatusShort } from "../git/git.js";
 
 const MEMORY_FILES = ["KRITYA.md", "CODECLI.md"];
 const MEMORY_MAX_CHARS = 4000;
 
 export function buildSystemPrompt(workspace: string): string {
+  const gitSection = () => {
+    const status = gitStatusShort(workspace);
+    return status === null ? "" : `\n# Git status (porcelain, branch first)\n${status}\n`;
+  };
   let listing = "(unavailable)";
   try {
     listing = fs
@@ -42,7 +47,7 @@ You help with software engineering tasks: writing code, fixing bugs, explaining 
 
 # Workspace top-level contents
 ${listing || "(empty)"}
-${memory}
+${gitSection()}${memory}
 # Tool rules
 - All file paths are relative to the workspace root. You cannot access files outside it.
 - Before editing a file, read it first. edit_file requires old_string to match the file exactly and be unique.

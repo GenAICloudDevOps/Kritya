@@ -101,6 +101,7 @@ export class Agent {
   }
 
   async runTurn(userText: string, handlers: AgentHandlers, signal?: AbortSignal): Promise<void> {
+    this.ctx.undo?.beginTurn?.();
     const userMsg: ChatMessage = { role: "user", content: userText };
     this.history.push(userMsg);
     this.session.append(userMsg);

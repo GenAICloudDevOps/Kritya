@@ -89,18 +89,26 @@ export class SessionStore {
       const file = path.join(dir, f);
       const messages = SessionStore.loadFile(file);
       if (!messages.length) continue;
-      const firstUser = messages.find((m) => m.role === "user" && typeof m.content === "string");
-      const preview =
+      const firstUser = messages.find(
+        (m) =>
+          m.role === "user" &&
+          typeof m.content === "string" &&
+          m.content.trim() &&
+          !m.content.startsWith("[") // skip synthetic notes (undo, summaries)
+      );
+      const cleaned =
         firstUser && typeof firstUser.content === "string"
-          ? firstUser.content.replace(/\s+/g, " ").slice(0, 60)
-          : "(no preview)";
+          ? firstUser.content.replace(/\s+/g, " ").trim()
+          : "";
+      const preview = cleaned ? cleaned.slice(0, 60) : "(no preview)";
+      const title = cleaned ? cleaned.slice(0, 48) : "(untitled session)";
       let date = "";
       try {
         date = fs.statSync(file).mtime.toLocaleString();
       } catch {
         // leave empty
       }
-      sessions.push({ file, date, preview, count: messages.length });
+      sessions.push({ file, date, preview, title, count: messages.length });
     }
     return sessions;
   }
@@ -110,5 +118,7 @@ export interface SessionMeta {
   file: string;
   date: string;
   preview: string;
+  /** First user message, cleaned, for display and search in --resume. */
+  title: string;
   count: number;
 }

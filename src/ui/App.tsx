@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 import type { Agent } from "../agent/loop.js";
+import { gitBranch } from "../git/git.js";
 import { saveConfig, type CliConfig } from "../config/config.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
@@ -55,7 +56,8 @@ const COMMANDS: { name: string; description: string }[] = [
   { name: "/help", description: "show available commands" },
   { name: "/model", description: "pick a model, or /model <id> for any NVIDIA model ID" },
   { name: "/web-search", description: "search the web: /web-search <query>" },
-  { name: "/undo", description: "revert the last file change the agent made" },
+  { name: "/undo", description: "revert the file changes from the agent's last turn" },
+  { name: "/commit", description: "have the agent stage and commit the current changes" },
   { name: "/compact", description: "summarize older conversation to free context space" },
   { name: "/clear", description: "start a fresh conversation" },
   { name: "/cost", description: "show token usage and estimated cost" },
@@ -114,6 +116,8 @@ export function App({
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [ctxPct, setCtxPct] = useState(0);
   const [steerInput, setSteerInput] = useState("");
+  const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
+  const [resumeFilter, setResumeFilter] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileList, setFileList] = useState<string[]>([]);
@@ -167,6 +171,12 @@ export function App({
   useInput((_input, key) => {
     if (key.escape && phase === "working") {
       abortRef.current?.abort();
+    }
+    if (phase === "resume") {
+      if (key.backspace || key.delete) setResumeFilter((f) => f.slice(0, -1));
+      else if (_input && !key.upArrow && !key.downArrow && !key.return && !key.escape && !key.tab) {
+        setResumeFilter((f) => f + _input);
+      }
     }
     if (suggestions.length) {
       if (key.upArrow) setCmdIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
@@ -286,6 +296,14 @@ export function App({
             setPhase("input");
           });
         break;
+      case "/commit":
+        addItem({ kind: "user", text: "/commit" });
+        void runAgent(
+          "Review the current git changes (git status, git diff), stage the appropriate files, " +
+            "and create a commit with a well-written conventional-commit message that describes " +
+            "the change. Do not push. Show the final commit hash and message."
+        );
+        break;
       case "/exit":
       case "/quit":
         exit();
@@ -338,13 +356,17 @@ export function App({
     }
 
     addItem({ kind: "user", text });
+    await runAgent(expandMentions(text));
+  };
+
+  const runAgent = async (text: string) => {
     setPhase("working");
     const ac = new AbortController();
     abortRef.current = ac;
 
     try {
       await agent.runTurn(
-        expandMentions(text),
+        text,
         {
           onTextDelta: (delta) => {
             setThinking(false);
@@ -400,6 +422,7 @@ export function App({
       setPermission(null);
       setPhase("input");
       refreshFileList();
+      setBranch(gitBranch(workspace));
     }
   };
 
@@ -541,14 +564,22 @@ export function App({
       {phase === "resume" && (
         <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1}>
           <Text bold color="magenta">
-            Resume a session <Text dimColor>(Esc for a fresh one)</Text>
+            Resume a session <Text dimColor>(type to search · Esc for a fresh one)</Text>
           </Text>
+          {resumeFilter ? (
+            <Text>
+              <Text dimColor>filter: </Text>
+              {resumeFilter}
+            </Text>
+          ) : null}
           <SelectList
-            items={(resumeSessions ?? []).map((s) => ({
-              label: `${s.date} · ${s.count} msgs`,
-              value: s.file,
-              hint: s.preview,
-            }))}
+            items={(resumeSessions ?? [])
+              .filter((s) => s.title.toLowerCase().includes(resumeFilter.toLowerCase()))
+              .map((s) => ({
+                label: s.title,
+                value: s.file,
+                hint: `${s.date} · ${s.count} msgs`,
+              }))}
             onSelect={onResumeSelect}
             onCancel={() => onResumeSelect("")}
           />
@@ -598,6 +629,7 @@ export function App({
       <Box>
         <Text dimColor>
           {model}
+          {branch ? ` · ⎇ ${branch}` : ""}
           {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""} · {totalUsage.promptTokens.toLocaleString()} in /{" "}
           {totalUsage.completionTokens.toLocaleString()} out
           {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""} · {path.basename(workspace)}
