@@ -129,10 +129,6 @@ export function saveConfig(patch: Partial<CliConfig>): void {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + "\n");
 }
 
-export function resolveApiKey(config: CliConfig): string | undefined {
-  return process.env.NVIDIA_API_KEY || config.apiKey;
-}
-
 /** Parse simple KEY=VALUE lines; ignores comments, blanks, and export prefixes. */
 export function parseDotEnv(raw: string): Record<string, string> {
   const vars: Record<string, string> = {};

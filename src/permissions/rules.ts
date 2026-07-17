@@ -49,11 +49,6 @@ export function loadRules(workspace: string, trustWorkspace = true): PermissionR
   return { allow, deny };
 }
 
-/** Kept for backward compatibility; returns only the allow list. */
-export function loadAllowRules(workspace: string): string[] {
-  return loadRules(workspace).allow;
-}
-
 const RULE_RE = /^([a-z_]+)(?:\((.*)\))?$/;
 
 /** The string a pattern is matched against for a given tool. */
