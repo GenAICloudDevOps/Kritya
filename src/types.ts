@@ -16,6 +16,10 @@ export type ItemBody =
 
 export type Phase = "input" | "working" | "permission" | "model" | "resume";
 
+export interface UiBridge {
+  onTasksUpdate(tasks: TaskItem[]): void;
+}
+
 export interface ToolContext {
   /** Absolute path of the workspace root; all file tools are confined to it. */
   workspace: string;
