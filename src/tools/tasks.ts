@@ -36,7 +36,9 @@ export const updateTasksTool: ToolDef = {
     if (!Array.isArray(args.tasks)) throw new Error("tasks must be an array");
     const tasks: TaskItem[] = (args.tasks as Record<string, unknown>[]).map((t) => ({
       text: String(t.text ?? ""),
-      status: VALID_STATUS.has(String(t.status)) ? (String(t.status) as TaskItem["status"]) : "pending",
+      status: VALID_STATUS.has(String(t.status))
+        ? (String(t.status) as TaskItem["status"])
+        : "pending",
     }));
     ctx.onTasksUpdate?.(tasks);
     return `Task list updated (${tasks.length} tasks).`;

@@ -64,9 +64,7 @@ export function Markdown({ text }: { text: string }) {
         </Text>
       );
     } else if (/^\s*[-*]\s/.test(line)) {
-      blocks.push(
-        <Text key={key++}>{line.replace(/^(\s*)[-*]\s/, "$1• ")}</Text>
-      );
+      blocks.push(<Text key={key++}>{line.replace(/^(\s*)[-*]\s/, "$1• ")}</Text>);
     } else {
       blocks.push(<InlineLine key={key++} line={line} />);
     }

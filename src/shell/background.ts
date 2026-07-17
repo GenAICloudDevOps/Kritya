@@ -68,7 +68,9 @@ class BackgroundManager {
     }
   }
 
-  read(id: string): { output: string; running: boolean; exitCode: number | null; command: string } | null {
+  read(
+    id: string
+  ): { output: string; running: boolean; exitCode: number | null; command: string } | null {
     const entry = this.procs.get(id);
     if (!entry) return null;
     return {

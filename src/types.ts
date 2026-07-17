@@ -14,6 +14,8 @@ export interface ToolContext {
   undo?: { snapshot(absPath: string, relPath: string): void; beginTurn?(): void };
   /** Lets the update_tasks tool push checklist changes to the UI. */
   onTasksUpdate?(tasks: TaskItem[]): void;
+  /** Runs a read-only subagent on a focused task and returns its findings. */
+  spawnSubagent?(task: string, signal?: AbortSignal): Promise<string>;
 }
 
 export interface ToolDef {
@@ -47,6 +49,13 @@ export interface AgentHandlers {
   onAssistantText(text: string): void;
   onToolStart(name: string, summary: string): void;
   onToolEnd(name: string, summary: string, resultPreview: string, isError: boolean): void;
-  requestPermission(name: string, summary: string, diff?: string): Promise<PermissionDecision>;
+  requestPermission(
+    name: string,
+    summary: string,
+    diff?: string,
+    warning?: string
+  ): Promise<PermissionDecision>;
   onUsage(usage: Usage): void;
+  /** A transient provider error is being retried. */
+  onRetry?(attempt: number, status?: number): void;
 }

@@ -77,7 +77,7 @@ test("grep finds matches with file:line format", async () => {
   const ctx = { workspace: ws };
   await writeFileTool.execute({ path: "src/a.ts", content: "const foo = 1;\nconst bar = 2;" }, ctx);
   const out = await grepTool.execute({ pattern: "foo", include: "**/*.ts" }, ctx);
-  assert.match(out, /src[\/\\]a\.ts:1: const foo = 1;/);
+  assert.match(out, /src[/\\]a\.ts:1: const foo = 1;/);
 });
 
 test("parseDotEnv handles comments, quotes, and export prefix", () => {
@@ -99,9 +99,14 @@ test("diffLines on a new file is all additions", () => {
   assert.equal(diff, "+ one\n+ two");
 });
 
+test("diffLines marks the changed characters on a single-line edit", () => {
+  const diff = diffLines("value = 3000;", "value = 9999;");
+  assert.ok(diff.includes("- value = «3000»;"));
+  assert.ok(diff.includes("+ value = «9999»;"));
+});
+
 test("undo restores previous content and deletes created files", async () => {
   const ws = await makeWorkspace();
-  const ctx = { workspace: ws };
   const undo = new UndoStack();
   const abs = path.join(ws, "u.txt");
 
@@ -116,9 +121,29 @@ test("undo restores previous content and deletes created files", async () => {
 
   assert.match(undo.undo() ?? "", /Restored/);
   assert.equal(await fs.readFile(abs, "utf8"), "v1");
-  assert.match(undo.undo() ?? "", /Deleted/);
+  assert.match(undo.undo() ?? "", /Removed/);
   await assert.rejects(() => fs.readFile(abs, "utf8"));
   assert.equal(undo.undo(), null);
+});
+
+test("redo reapplies the most recently undone turn", async () => {
+  const ws = await makeWorkspace();
+  const undo = new UndoStack();
+  const abs = path.join(ws, "r.txt");
+  await fs.writeFile(abs, "v1");
+
+  undo.beginTurn();
+  undo.snapshot(abs, "r.txt");
+  await fs.writeFile(abs, "v2");
+
+  assert.match(undo.undo() ?? "", /Restored/);
+  assert.equal(await fs.readFile(abs, "utf8"), "v1");
+  assert.match(undo.redo() ?? "", /Restored/);
+  assert.equal(await fs.readFile(abs, "utf8"), "v2");
+  // Undo again works after a redo.
+  assert.match(undo.undo() ?? "", /Restored/);
+  assert.equal(await fs.readFile(abs, "utf8"), "v1");
+  assert.equal(undo.redo() !== null, true);
 });
 
 test("undo reverts all files changed in the same turn together", async () => {
@@ -135,7 +160,7 @@ test("undo reverts all files changed in the same turn together", async () => {
   await fs.writeFile(b, "b-new");
 
   const result = undo.undo() ?? "";
-  assert.match(result, /Reverted 2 file changes/);
+  assert.match(result, /Reverted 2 files/);
   assert.equal(await fs.readFile(a, "utf8"), "a-old");
   await assert.rejects(() => fs.readFile(b, "utf8"));
   assert.equal(undo.undo(), null);

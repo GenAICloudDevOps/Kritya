@@ -9,10 +9,8 @@ const assistantCalls = (): ChatMessage =>
   ({
     role: "assistant",
     content: null,
-    tool_calls: [
-      { id: "c1", type: "function", function: { name: "read_file", arguments: "{}" } },
-    ],
-  } as ChatMessage);
+    tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: "{}" } }],
+  }) as ChatMessage;
 const toolMsg = (): ChatMessage => ({ role: "tool", tool_call_id: "c1", content: "data" });
 
 test("short history is kept whole", () => {
@@ -41,7 +39,10 @@ test("never splits an assistant tool call from its replies", () => {
   ];
   const { toSummarize, keep } = splitForCompaction(history);
   assert.notStrictEqual(keep[0].role, "tool");
-  assert.ok((keep[0] as { tool_calls?: unknown[] }).tool_calls, "keep starts at the calling assistant");
+  assert.ok(
+    (keep[0] as { tool_calls?: unknown[] }).tool_calls,
+    "keep starts at the calling assistant"
+  );
   assert.strictEqual(toSummarize.length + keep.length, history.length);
   assert.strictEqual(toSummarize.length, 3);
 });

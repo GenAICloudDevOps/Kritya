@@ -20,16 +20,66 @@ export interface ChatResult {
 export interface StreamCallbacks {
   onTextDelta(delta: string): void;
   onReasoningDelta(delta: string): void;
+  /** Called before a retry after a transient provider error. */
+  onRetry?(attempt: number, status?: number): void;
 }
 
-export class NvidiaClient {
+/** Backward-compatible alias; the client is provider-agnostic. */
+export { ProviderClient as NvidiaClient };
+
+/** Retry transient provider failures (429 / 5xx / network) with backoff. */
+const MAX_ATTEMPTS = 4;
+
+function isRetryable(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  if (status === 429 || (typeof status === "number" && status >= 500)) return true;
+  const code = (err as { code?: string })?.code;
+  return (
+    code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND" || code === "EAI_AGAIN"
+  );
+}
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(t);
+      reject(new DOMException("Aborted", "AbortError"));
+    });
+  });
+
+export class ProviderClient {
   private client: OpenAI;
 
   constructor(apiKey: string, baseURL: string = NVIDIA_BASE_URL) {
-    this.client = new OpenAI({ apiKey, baseURL, maxRetries: 2 });
+    // We do our own streaming-aware retry loop, so disable the SDK's.
+    this.client = new OpenAI({ apiKey, baseURL, maxRetries: 0 });
   }
 
   async chat(
+    model: string,
+    messages: ChatMessage[],
+    tools: ToolDef[],
+    callbacks: StreamCallbacks,
+    signal?: AbortSignal
+  ): Promise<ChatResult> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.chatOnce(model, messages, tools, callbacks, signal);
+      } catch (err) {
+        if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
+        lastErr = err;
+        if (attempt === MAX_ATTEMPTS - 1 || !isRetryable(err)) throw err;
+        const status = (err as { status?: number })?.status;
+        callbacks.onRetry?.(attempt + 1, status);
+        await sleep(Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 250, signal);
+      }
+    }
+    throw lastErr;
+  }
+
+  private async chatOnce(
     model: string,
     messages: ChatMessage[],
     tools: ToolDef[],
@@ -60,10 +110,7 @@ export class NvidiaClient {
     );
 
     let text = "";
-    const calls = new Map<
-      number,
-      { id: string; name: string; argsJson: string }
-    >();
+    const calls = new Map<number, { id: string; name: string; argsJson: string }>();
     let usage: Usage | undefined;
 
     for await (const chunk of stream) {

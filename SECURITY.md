@@ -1,0 +1,33 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+Please report security vulnerabilities privately rather than opening a public
+issue. Use GitHub's "Report a vulnerability" (Security Advisories) on the
+repository, or contact the maintainer directly. We aim to acknowledge reports
+within a few days.
+
+## Scope and design notes
+
+kritya runs an autonomous agent that can read and modify files and run shell
+commands in the workspace you launch it in. Some safety properties to be aware
+of:
+
+- **Permission prompts** gate every mutating tool (`write_file`, `edit_file`,
+  `shell`) unless you allowlist them in `settings.json`.
+- **Deny rules** (`deny` in `settings.json`) block matching tool calls outright
+  and cannot be overridden by an allow rule or an "always allow" choice.
+- **Destructive-command detection** forces a warning prompt for commands like
+  `rm -rf`, `git push --force`, and `curl | sh`, even when allowlisted.
+- **File access is confined** to the workspace root.
+- **Untrusted content** from web search and MCP tools is wrapped in explicit
+  markers, and the system prompt instructs the model to treat all tool output
+  as data, never as instructions. Prompt injection via file/command/web content
+  is nonetheless a real risk with any LLM agent — review changes before trusting
+  them, and use plan mode (`/plan`) for unfamiliar repositories.
+
+## Privacy / telemetry
+
+kritya collects **no telemetry**. It talks only to the model provider you
+configure (and to Tavily if you use web search). See the README's Privacy
+section.

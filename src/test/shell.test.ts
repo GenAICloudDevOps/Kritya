@@ -18,8 +18,7 @@ test("truncateTail keeps the end of long output", () => {
 });
 
 test("shell honors timeout_seconds", async () => {
-  const sleeper =
-    os.platform() === "win32" ? "ping -n 6 127.0.0.1 >NUL" : "sleep 5";
+  const sleeper = os.platform() === "win32" ? "ping -n 6 127.0.0.1 >NUL" : "sleep 5";
   const start = Date.now();
   const out = await shellTool.execute({ command: sleeper, timeout_seconds: 1 }, ctx);
   assert.ok(Date.now() - start < 4000, "returned well before the 5s command finished");

@@ -9,6 +9,7 @@ import { grepTool } from "./grep.js";
 import { updateTasksTool } from "./tasks.js";
 import { webSearchTool } from "./webSearch.js";
 import { bgOutputTool, bgKillTool } from "./bg.js";
+import { spawnAgentTool } from "./subagent.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   readFileTool,
@@ -22,4 +23,8 @@ export const ALL_TOOLS: ToolDef[] = [
   grepTool,
   updateTasksTool,
   webSearchTool,
+  spawnAgentTool,
 ];
+
+/** Read-only tools a subagent is allowed to use (no writes, edits, or shell). */
+export const READONLY_TOOLS: ToolDef[] = [readFileTool, listDirTool, globTool, grepTool];

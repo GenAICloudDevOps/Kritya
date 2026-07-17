@@ -25,9 +25,7 @@ export const readFileTool: ToolDef = {
     const offset = Math.max(1, Number(args.offset) || 1);
     const limit = Number(args.limit) || 2000;
     const slice = lines.slice(offset - 1, offset - 1 + limit);
-    const numbered = slice
-      .map((l, i) => `${String(offset + i).padStart(5)}\t${l}`)
-      .join("\n");
+    const numbered = slice.map((l, i) => `${String(offset + i).padStart(5)}\t${l}`).join("\n");
     const header =
       lines.length > slice.length
         ? `[showing lines ${offset}-${offset + slice.length - 1} of ${lines.length}]\n`

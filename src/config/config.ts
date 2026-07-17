@@ -2,15 +2,42 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+/** A named, OpenAI-compatible model provider. */
+export interface ProviderConfig {
+  /** OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1 */
+  baseUrl: string;
+  /** Environment variable that holds the API key for this provider. */
+  apiKeyEnv?: string;
+  /** Literal API key (use apiKeyEnv or a .env file in preference). */
+  apiKey?: string;
+  /** Default model ID for this provider. */
+  model?: string;
+}
+
 export interface CliConfig {
   apiKey?: string;
   model?: string;
   baseUrl?: string;
+  /** Active provider name (a key of BUILTIN_PROVIDERS or `providers`). Default: nvidia. */
+  provider?: string;
+  /** Named providers; entries here override or extend BUILTIN_PROVIDERS. */
+  providers?: Record<string, ProviderConfig>;
   customModels?: { id: string; label?: string }[];
   /** USD per 1M tokens, keyed by model ID, for /cost estimates. */
   pricing?: Record<string, { input: number; output: number }>;
-  /** Model context window in tokens (default 120000); drives auto-compaction and the ctx meter. */
+  /** Model context window in tokens; overrides the per-model default. Drives auto-compaction and the ctx meter. */
   contextWindow?: number;
+  /** Max model round-trips per request before kritya stops and asks (default 40). */
+  maxSteps?: number;
+  /** MCP servers to launch and expose as tools (stdio transport). */
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+/** A Model Context Protocol server launched over stdio. */
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");
@@ -19,6 +46,53 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 const LEGACY_CONFIG_FILE = path.join(os.homedir(), ".code-cli", "config.json");
 
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+
+/**
+ * Built-in OpenAI-compatible providers. Users select one with `provider` in
+ * config (or --provider) and supply the key via the named env var or a .env
+ * file. Entries in config.providers override these by name.
+ */
+export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
+  nvidia: { baseUrl: NVIDIA_BASE_URL, apiKeyEnv: "NVIDIA_API_KEY" },
+  openai: { baseUrl: "https://api.openai.com/v1", apiKeyEnv: "OPENAI_API_KEY" },
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1", apiKeyEnv: "OPENROUTER_API_KEY" },
+  groq: { baseUrl: "https://api.groq.com/openai/v1", apiKeyEnv: "GROQ_API_KEY" },
+  deepseek: { baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY" },
+  mistral: { baseUrl: "https://api.mistral.ai/v1", apiKeyEnv: "MISTRAL_API_KEY" },
+  together: { baseUrl: "https://api.together.xyz/v1", apiKeyEnv: "TOGETHER_API_KEY" },
+  ollama: { baseUrl: "http://localhost:11434/v1", apiKey: "ollama" },
+};
+
+export interface ResolvedProvider {
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+}
+
+/**
+ * Resolve the active provider's base URL and API key. Precedence for the
+ * provider name: explicit override (--provider) > config.provider > "nvidia".
+ * Legacy top-level apiKey/baseUrl and NVIDIA_API_KEY continue to work for the
+ * default nvidia provider.
+ */
+export function resolveProvider(config: CliConfig, override?: string): ResolvedProvider {
+  const name = override || config.provider || "nvidia";
+  const merged: ProviderConfig = {
+    ...BUILTIN_PROVIDERS[name],
+    ...config.providers?.[name],
+  } as ProviderConfig;
+
+  let baseUrl = merged.baseUrl;
+  if (name === "nvidia" && config.baseUrl) baseUrl = config.baseUrl;
+  if (!baseUrl) baseUrl = NVIDIA_BASE_URL;
+
+  let apiKey: string | undefined;
+  if (merged.apiKeyEnv) apiKey = process.env[merged.apiKeyEnv];
+  if (!apiKey) apiKey = merged.apiKey;
+  if (!apiKey && name === "nvidia") apiKey = process.env.NVIDIA_API_KEY || config.apiKey;
+
+  return { name, baseUrl, apiKey };
+}
 
 export function loadConfig(): CliConfig {
   for (const file of [CONFIG_FILE, LEGACY_CONFIG_FILE]) {

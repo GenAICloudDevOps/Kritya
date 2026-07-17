@@ -28,3 +28,20 @@ export function gitStatusShort(cwd: string): string | null {
     ? [...lines.slice(0, 30), `… (${lines.length - 30} more changed files)`].join("\n")
     : out;
 }
+
+/**
+ * A summary of uncommitted changes: the diffstat plus a capped unified diff of
+ * both staged and unstaged work. Null outside a repo; empty string if clean.
+ */
+export function gitDiffStat(cwd: string, maxLines = 200): string | null {
+  const stat = git(cwd, ["diff", "HEAD", "--stat"]);
+  if (stat === null) return null;
+  if (!stat.trim()) return "";
+  const diff = git(cwd, ["diff", "HEAD"]) ?? "";
+  const lines = diff.split("\n");
+  const capped =
+    lines.length > maxLines
+      ? [...lines.slice(0, maxLines), `… (${lines.length - maxLines} more diff lines)`].join("\n")
+      : diff;
+  return `${stat}\n\n${capped}`;
+}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 
 export interface SelectItem {
@@ -20,7 +20,7 @@ export function SelectList({
   // Items can shrink under us (e.g. a live filter above the list).
   const index = items.length ? Math.min(rawIndex, items.length - 1) : 0;
 
-  useInput((input, key) => {
+  useInput((_input, key) => {
     if (!items.length) {
       if (key.escape && onCancel) onCancel();
       return;

@@ -1,7 +1,7 @@
 {
   "name": "kritya",
-  "version": "0.2.0",
-  "description": "Kritya — a lean terminal coding agent for build.nvidia.com models",
+  "version": "0.3.0",
+  "description": "Kritya — a lean, provider-agnostic terminal coding agent (NVIDIA, OpenAI, OpenRouter, Groq, Ollama, and more)",
   "type": "module",
   "bin": {
     "kritya": "dist/index.js"
@@ -16,8 +16,23 @@
     "build": "tsc",
     "dev": "tsx src/index.tsx",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "link": "npm run build && npm link",
     "prepublishOnly": "npm run build"
   },
+  "keywords": [
+    "cli",
+    "coding-agent",
+    "terminal",
+    "ai",
+    "llm",
+    "nvidia",
+    "openai-compatible",
+    "mcp"
+  ],
+  "license": "MIT",
   "dependencies": {
     "fast-glob": "^3.3.2",
     "ink": "^5.0.1",
@@ -26,9 +41,13 @@
     "react": "^18.3.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.9.0",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.0",
     "tsx": "^4.16.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0"
   }
 }
