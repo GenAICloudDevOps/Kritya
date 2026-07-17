@@ -12,6 +12,12 @@ export interface ProviderConfig {
   apiKey?: string;
   /** Default model ID for this provider. */
   model?: string;
+  /** Sampling temperature (default 0.2). Set null to omit from requests (some reasoning models reject it). */
+  temperature?: number | null;
+  /** Nucleus sampling top_p (default 0.95). Set null to omit from requests. */
+  topP?: number | null;
+  /** Max completion tokens (default 8192). Set null to omit from requests (let the model/provider default apply). */
+  maxTokens?: number | null;
 }
 
 export interface CliConfig {
@@ -67,6 +73,9 @@ export interface ResolvedProvider {
   name: string;
   baseUrl: string;
   apiKey?: string;
+  temperature?: number | null;
+  topP?: number | null;
+  maxTokens?: number | null;
 }
 
 /**
@@ -91,7 +100,14 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
   if (!apiKey) apiKey = merged.apiKey;
   if (!apiKey && name === "nvidia") apiKey = process.env.NVIDIA_API_KEY || config.apiKey;
 
-  return { name, baseUrl, apiKey };
+  return {
+    name,
+    baseUrl,
+    apiKey,
+    temperature: merged.temperature,
+    topP: merged.topP,
+    maxTokens: merged.maxTokens,
+  };
 }
 
 export function loadConfig(): CliConfig {

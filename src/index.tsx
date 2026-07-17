@@ -118,7 +118,11 @@ const providerDefaultModel = config.providers?.[provider.name]?.model;
 const modelRef = {
   current: args.model || config.model || providerDefaultModel || DEFAULT_MODEL,
 };
-const client = new ProviderClient(apiKey, provider.baseUrl);
+const client = new ProviderClient(apiKey, provider.baseUrl, {
+  temperature: provider.temperature,
+  topP: provider.topP,
+  maxTokens: provider.maxTokens,
+});
 const session = new SessionStore(workspace);
 
 const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];

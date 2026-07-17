@@ -164,6 +164,12 @@ export class Agent {
       if (result.usage) {
         this.lastPromptTokens = result.usage.promptTokens;
         handlers.onUsage(result.usage);
+      } else {
+        // Some providers omit usage on streamed responses; estimate so the
+        // context meter and auto-compaction don't stall at 0.
+        this.lastPromptTokens = Math.round(
+          JSON.stringify([systemMsg, ...this.history]).length / 4
+        );
       }
       this.history.push(result.message);
       this.session.append(result.message);

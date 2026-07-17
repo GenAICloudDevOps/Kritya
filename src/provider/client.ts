@@ -48,12 +48,33 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     });
   });
 
+export interface SamplingOptions {
+  /** Default 0.2. Pass null to omit temperature entirely (some reasoning models reject it). */
+  temperature?: number | null;
+  /** Default 0.95. Pass null to omit top_p entirely. */
+  topP?: number | null;
+  /** Default 8192. Pass null to omit max_tokens and let the provider's own default apply. */
+  maxTokens?: number | null;
+}
+
+const DEFAULT_TEMPERATURE = 0.2;
+const DEFAULT_TOP_P = 0.95;
+const DEFAULT_MAX_TOKENS = 8192;
+
 export class ProviderClient {
   private client: OpenAI;
+  private temperature?: number;
+  private topP?: number;
+  private maxTokens?: number;
 
-  constructor(apiKey: string, baseURL: string = NVIDIA_BASE_URL) {
+  constructor(apiKey: string, baseURL: string = NVIDIA_BASE_URL, sampling: SamplingOptions = {}) {
     // We do our own streaming-aware retry loop, so disable the SDK's.
     this.client = new OpenAI({ apiKey, baseURL, maxRetries: 0 });
+    this.temperature =
+      sampling.temperature === null ? undefined : (sampling.temperature ?? DEFAULT_TEMPERATURE);
+    this.topP = sampling.topP === null ? undefined : (sampling.topP ?? DEFAULT_TOP_P);
+    this.maxTokens =
+      sampling.maxTokens === null ? undefined : (sampling.maxTokens ?? DEFAULT_MAX_TOKENS);
   }
 
   async chat(
@@ -100,9 +121,9 @@ export class ProviderClient {
               },
             }))
           : undefined,
-        temperature: 0.2,
-        top_p: 0.95,
-        max_tokens: 8192,
+        ...(this.temperature !== undefined ? { temperature: this.temperature } : {}),
+        ...(this.topP !== undefined ? { top_p: this.topP } : {}),
+        ...(this.maxTokens !== undefined ? { max_tokens: this.maxTokens } : {}),
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -123,9 +144,11 @@ export class ProviderClient {
       const delta = chunk.choices?.[0]?.delta;
       if (!delta) continue;
 
-      // Some NVIDIA-hosted models (DeepSeek R1, Nemotron reasoning modes)
-      // stream thinking on a nonstandard field.
-      const reasoning = (delta as { reasoning_content?: string }).reasoning_content;
+      // Some NVIDIA-hosted models (DeepSeek R1, Nemotron reasoning modes) stream
+      // thinking on `reasoning_content`; OpenRouter and others use `reasoning`.
+      const reasoning =
+        (delta as { reasoning_content?: string; reasoning?: string }).reasoning_content ??
+        (delta as { reasoning_content?: string; reasoning?: string }).reasoning;
       if (reasoning) callbacks.onReasoningDelta(reasoning);
 
       if (delta.content) {
