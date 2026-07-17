@@ -79,9 +79,12 @@ export class UndoStack {
   }
 }
 
+// "latin1" maps each byte 0-255 to the same code point, so it round-trips
+// arbitrary binary content (docx/xlsx/pptx/pdf) losslessly, unlike "utf8"
+// which would corrupt byte sequences that aren't valid UTF-8.
 function readOrNull(absPath: string): string | null {
   try {
-    return fs.readFileSync(absPath, "utf8");
+    return fs.readFileSync(absPath, "latin1");
   } catch {
     return null;
   }
@@ -97,7 +100,7 @@ function restore(state: FileState): string {
     return `Removed ${state.relPath}`;
   }
   fs.mkdirSync(path.dirname(state.absPath), { recursive: true });
-  fs.writeFileSync(state.absPath, state.content, "utf8");
+  fs.writeFileSync(state.absPath, state.content, "latin1");
   return `Restored ${state.relPath}`;
 }
 
