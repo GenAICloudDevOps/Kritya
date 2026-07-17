@@ -4,6 +4,81 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-17
+
+### Security
+
+- **Workspace trust gate**: a cloned repo's `.kritya/settings.json` could
+  otherwise self-grant allow rules or run hooks the moment `kritya .`
+  launches there. Workspace-level allow rules and hooks now require explicit
+  trust (prompted on first launch, hash-pinned in `~/.kritya/trusted.json`)
+  before taking effect; deny rules and the global `~/.kritya/settings.json`
+  are unaffected.
+- **Sandbox escape via symlinks fixed**: `resolveSafe` now resolves symlinks
+  (and the nearest existing ancestor, for not-yet-created files) before
+  checking containment, closing a path where a symlink inside the workspace
+  pointing outside it let `edit_file`/`write_file`/`read_file` escape the
+  sandbox.
+- **Secret-path denylist**: reads and writes of likely-secret paths
+  (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys) are now
+  blocked inside `resolveSafe`, regardless of allowlist rules, closing a gap
+  where a prompt-injected agent could read `.env` and exfiltrate it via shell
+  or web search.
+- **Destructive-command detection hardened**: `classifyDanger` now also
+  catches long-form flags (`rm --recursive --force`, `git clean --force`,
+  `chmod --recursive 777`, `chown --recursive`), not just short-form
+  clusters like `-rf`. Documented in `SECURITY.md` that this remains a
+  regex-based backstop, not a hard guarantee — `$(...)`/`eval`/base64
+  obfuscation can still evade it.
+
+### Added
+
+- **`.krityaignore`**: gitignore-style patterns in the workspace root are now
+  honored by `glob`, `grep`, and the `@`-file-mention list, in addition to the
+  hardcoded `node_modules`/`.git` exclusion.
+- **Diff-aware shell permission prompts**: the `shell` tool now previews a
+  `git diff --stat` (plus the capped diff) before permission is granted for
+  commands that mutate git state (`checkout`, `reset`, `commit`, `merge`,
+  `rebase`, `stash`, `clean`, `rm`, `mv`, `restore`, `add`, etc.), matching
+  the diff preview already shown for file edits.
+- **GitHub Actions CI**: build, lint, format:check, and test now run on
+  Node 18.x/20.x for every pull request targeting `main`.
+
+### Changed
+
+- Auto-compaction no longer stalls at 0% context usage when a provider omits
+  usage stats on streamed responses; falls back to a size-based token
+  estimate. Reasoning deltas are now read from both `reasoning_content`
+  (NVIDIA/DeepSeek) and `reasoning` (OpenRouter and others). Sampling params
+  (`temperature`, `top_p`, `max_tokens`) are now overridable — or omittable
+  via `null` — per provider in config, instead of hardcoded.
+- The version string is now read from `package.json` at runtime instead of
+  being hardcoded separately in the CLI banner and the MCP client handshake.
+- `listSessions` no longer JSON-parses every message in a transcript just to
+  build a resume preview; it stops at the first real user message and counts
+  lines cheaply instead.
+- Fixed `web_search`'s `max_results: 0` being silently treated as "omitted"
+  and defaulting to 5.
+- Internal: slash-command dispatch extracted from `App.tsx` into a typed
+  command registry (`src/commands/registry.ts`), and agent-turn state
+  (transcript, streaming, permissions, cost, resume) extracted into a
+  `useAgent` hook, so both are unit-testable independent of the UI.
+- Internal: added test coverage for `ProviderClient.chatOnce`'s streaming
+  tool-call assembly (multi-chunk arguments, out-of-order chunk indices,
+  usage presence), fixed pre-existing prettier violations, made the test
+  runner's file glob shell-expanded for Node 18.x CI compatibility, and
+  added a `test:watch` script (via `tsx`, no compile step) for faster local
+  iteration.
+
+### Removed
+
+- Dropped legacy compatibility shims kept during the code-cli → kritya
+  rename: the `NvidiaClient` export alias, the `CODECLI.md` project-memory
+  fallback (use `KRITYA.md`), and the `~/.code-cli/config.json` legacy config
+  path (use `~/.kritya/config.json`).
+- Removed dead code (`resolveApiKey`, `loadAllowRules`) superseded by
+  `resolveProvider` and `loadRules`.
+
 ## [0.3.0] — 2026-07-17
 
 ### Added
