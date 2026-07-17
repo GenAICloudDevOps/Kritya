@@ -13,10 +13,12 @@ import { backgroundManager } from "./shell/background.js";
 import { ALL_TOOLS, READONLY_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
+import { TrustPrompt } from "./ui/TrustPrompt.js";
 import type { TaskItem, ToolDef } from "./types.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadCustomCommands } from "./commands/custom.js";
+import { gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
 
 const VERSION = "0.3.0";
 
@@ -132,7 +134,40 @@ process.on("exit", () => {
 const undoStack = new UndoStack();
 const uiBridge: UiBridge = { onTasksUpdate: (_tasks: TaskItem[]) => {} };
 
+/**
+ * Whether the workspace's .kritya/settings.json `allow` rules and `hooks`
+ * may take effect. Prompts (via a standalone Ink screen) only when that file
+ * actually has gated content and it hasn't already been trusted.
+ */
+async function resolveWorkspaceTrust(): Promise<boolean> {
+  const hash = gatedContentHash(workspace);
+  if (!hash) return true;
+  if (isTrusted(workspace, hash)) return true;
+
+  let preview: string;
+  try {
+    preview = fs.readFileSync(path.join(workspace, ".kritya", "settings.json"), "utf8");
+  } catch {
+    preview = "(could not re-read settings.json)";
+  }
+
+  return new Promise((resolve) => {
+    const instance = render(
+      <TrustPrompt
+        workspace={workspace}
+        preview={preview}
+        onDecision={(trust) => {
+          if (trust) saveTrust(workspace, hash);
+          instance.unmount();
+          resolve(trust);
+        }}
+      />
+    );
+  });
+}
+
 async function main() {
+  const trustWorkspace = await resolveWorkspaceTrust();
   // MCP servers (if any) contribute extra tools; loading is resilient.
   const mcpTools: ToolDef[] = await loadMcpTools(config.mcpServers);
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
@@ -179,13 +214,13 @@ async function main() {
       onTasksUpdate: (t) => uiBridge.onTasksUpdate(t),
       spawnSubagent,
     },
-    new PermissionManager(loadRules(workspace)),
+    new PermissionManager(loadRules(workspace, trustWorkspace)),
     session,
     initialHistory
   );
   agent.contextWindow = contextWindowFor(modelRef.current, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
-  agent.hooks = new HookRunner(loadHooks(workspace), workspace);
+  agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
 
   render(
     <App

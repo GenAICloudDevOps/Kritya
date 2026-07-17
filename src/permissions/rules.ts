@@ -12,25 +12,31 @@ import { CONFIG_DIR } from "../config/config.js";
  * For shell the pattern matches the command; for file tools it matches the
  * path argument. Matching is anchored — shell(npm test) does NOT allow
  * `npm test && rm -rf /`. deny rules win over allow rules and never prompt.
+ *
+ * The workspace settings file's `allow` rules only take effect once the
+ * workspace has been trusted (see src/trust/trust.ts) — an untrusted
+ * workspace could otherwise ship an `allow` rule that self-grants broad
+ * permissions. Its `deny` rules always apply; they only remove permissions.
  */
 export interface PermissionRules {
   allow: string[];
   deny: string[];
 }
 
-export function loadRules(workspace: string): PermissionRules {
+export function loadRules(workspace: string, trustWorkspace = true): PermissionRules {
   const allow: string[] = [];
   const deny: string[] = [];
-  for (const file of [
-    path.join(CONFIG_DIR, "settings.json"),
-    path.join(workspace, ".kritya", "settings.json"),
-  ]) {
+  const files = [
+    { file: path.join(CONFIG_DIR, "settings.json"), includeAllow: true },
+    { file: path.join(workspace, ".kritya", "settings.json"), includeAllow: trustWorkspace },
+  ];
+  for (const { file, includeAllow } of files) {
     try {
       const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as {
         allow?: unknown;
         deny?: unknown;
       };
-      if (Array.isArray(parsed.allow)) {
+      if (includeAllow && Array.isArray(parsed.allow)) {
         allow.push(...parsed.allow.filter((r): r is string => typeof r === "string"));
       }
       if (Array.isArray(parsed.deny)) {

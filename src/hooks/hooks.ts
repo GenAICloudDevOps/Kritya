@@ -19,6 +19,10 @@ import { CONFIG_DIR } from "../config/config.js";
  * output back to the model. postToolUse hooks run after a successful call.
  * stop hooks run when a turn ends. Commands receive KRITYA_TOOL_NAME,
  * KRITYA_TOOL_PATH, KRITYA_TOOL_COMMAND, and KRITYA_TOOL_ARGS (JSON) in the env.
+ *
+ * Workspace-level hooks only load once the workspace has been trusted (see
+ * src/trust/trust.ts), since a hook runs arbitrary shell commands
+ * automatically. Global (~/.kritya/settings.json) hooks are always trusted.
  */
 export interface HookDef {
   /** Regex tested against the tool name; omit to match every tool. */
@@ -39,12 +43,11 @@ export interface HookResult {
 
 const HOOK_TIMEOUT_MS = 30_000;
 
-export function loadHooks(workspace: string): HooksConfig {
+export function loadHooks(workspace: string, trustWorkspace = true): HooksConfig {
   const merged: HooksConfig = {};
-  for (const file of [
-    path.join(CONFIG_DIR, "settings.json"),
-    path.join(workspace, ".kritya", "settings.json"),
-  ]) {
+  const files = [path.join(CONFIG_DIR, "settings.json")];
+  if (trustWorkspace) files.push(path.join(workspace, ".kritya", "settings.json"));
+  for (const file of files) {
     try {
       const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { hooks?: HooksConfig };
       if (!parsed.hooks) continue;

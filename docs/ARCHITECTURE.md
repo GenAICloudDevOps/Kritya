@@ -14,6 +14,7 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
             ├─ tools/*              read/write/edit/shell/glob/grep/… tools
             ├─ permissions/*        allow/deny rules + danger classifier
             ├─ hooks/hooks.ts       user shell hooks around tool calls
+            ├─ trust/trust.ts       workspace trust gate for allow rules + hooks
             ├─ mcp/client.ts        MCP servers exposed as tools
             ├─ agent/compactor.ts   context summarization
             └─ session/store.ts     JSONL transcript persistence
@@ -22,8 +23,9 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
 ## Modules
 
 - **`src/index.tsx`** — CLI entry. Parses args, resolves the provider and API
-  key, loads `.env`, assembles the tool list (built-in + MCP), wires the
-  subagent spawner and hooks, and renders the UI.
+  key, loads `.env`, resolves workspace trust (prompting via `TrustPrompt` if
+  needed), assembles the tool list (built-in + MCP), wires the subagent
+  spawner and hooks, and renders the UI.
 - **`src/agent/loop.ts`** — `Agent`. Owns conversation history, runs the
   model→tools→model loop up to `maxSteps`, enforces plan mode, permissions,
   deny rules, the danger classifier, and hooks, and triggers auto-compaction.
@@ -41,14 +43,18 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
   (destructive-command classifier).
 - **`src/hooks/hooks.ts`** — loads and runs user `preToolUse`/`postToolUse`/
   `stop` shell hooks.
+- **`src/trust/trust.ts`** — hashes a workspace's `.kritya/settings.json`
+  `allow`/`hooks` content and tracks which hashes have been trusted
+  (`~/.kritya/trusted.json`), so an untrusted repo can't self-grant
+  permissions or run hooks just by being cloned.
 - **`src/mcp/client.ts`** — minimal stdio JSON-RPC MCP client; wraps remote
   tools as `ToolDef`s (marked external/untrusted).
 - **`src/commands/custom.ts`** — loads `.kritya/commands/*.md` as slash commands.
 - **`src/undo/undo.ts`** — per-turn snapshot stack backing `/undo` and `/redo`.
 - **`src/session/store.ts`** — append-only JSONL transcripts; powers `-c`/`-r`.
 - **`src/ui/`** — Ink components: `App` (the shell), `PermissionPrompt`,
-  `ModelPicker`, `SelectList`, `Markdown`, `Banner`, `Spinner`, plus
-  `highlight.ts` for code fences.
+  `TrustPrompt`, `ModelPicker`, `SelectList`, `Markdown`, `Banner`, `Spinner`,
+  plus `highlight.ts` for code fences.
 
 ## Tool contract
 
@@ -74,4 +80,4 @@ callback, and the subagent spawner.
 
 Unit tests live in `src/test/*.test.ts` and run on Node's built-in test runner
 after a build (`npm test`). They cover tools, path safety, permissions/rules,
-the danger classifier, fuzzy matching, diffing, and undo/redo.
+the danger classifier, fuzzy matching, diffing, undo/redo, and workspace trust.
