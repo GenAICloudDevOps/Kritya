@@ -31,6 +31,37 @@ test("resolveSafe rejects escapes", async () => {
   assert.throws(() => resolveSafe(ws, "a/../../outside.txt"));
 });
 
+test("resolveSafe rejects a symlinked file pointing outside the workspace", async () => {
+  const ws = await makeWorkspace();
+  const outside = await makeWorkspace();
+  const target = path.join(outside, "secret.txt");
+  await fs.writeFile(target, "secret");
+  await fs.symlink(target, path.join(ws, "link.txt"));
+  assert.throws(() => resolveSafe(ws, "link.txt"));
+});
+
+test("resolveSafe rejects escapes through a symlinked directory", async () => {
+  const ws = await makeWorkspace();
+  const outside = await makeWorkspace();
+  await fs.writeFile(path.join(outside, "secret.txt"), "secret");
+  await fs.symlink(outside, path.join(ws, "escape"), "dir");
+  assert.throws(() => resolveSafe(ws, "escape/secret.txt"));
+});
+
+test("resolveSafe rejects escapes through a symlinked directory for a not-yet-existing file", async () => {
+  const ws = await makeWorkspace();
+  const outside = await makeWorkspace();
+  await fs.symlink(outside, path.join(ws, "escape"), "dir");
+  assert.throws(() => resolveSafe(ws, "escape/new-file.txt"));
+});
+
+test("resolveSafe allows symlinks that stay inside the workspace", async () => {
+  const ws = await makeWorkspace();
+  await fs.mkdir(path.join(ws, "real"));
+  await fs.symlink(path.join(ws, "real"), path.join(ws, "alias"), "dir");
+  assert.equal(resolveSafe(ws, "alias/file.txt"), path.join(ws, "alias", "file.txt"));
+});
+
 test("truncateResult caps long output", () => {
   const out = truncateResult("x".repeat(100), 10);
   assert.ok(out.startsWith("xxxxxxxxxx"));
