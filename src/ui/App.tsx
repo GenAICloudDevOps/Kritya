@@ -9,6 +9,7 @@ import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
 import type { SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
+import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { UiBridge } from "../types.js";
 import { Banner } from "./Banner.js";
@@ -78,7 +79,7 @@ export function App({
       cwd: workspace,
       dot: false,
       onlyFiles: true,
-      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
+      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", ...loadIgnorePatterns(workspace)],
       suppressErrors: true,
     })
       .then((files) => setFileList(files.sort().slice(0, 2000)))

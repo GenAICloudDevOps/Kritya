@@ -1,10 +1,15 @@
 import { exec } from "node:child_process";
+import { gitDiffStat } from "../git/git.js";
 import { backgroundManager } from "../shell/background.js";
 import type { ToolDef } from "../types.js";
 import { truncateTail } from "./common.js";
 
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_TIMEOUT_S = 600;
+
+/** git subcommands that rewrite the working tree, index, or history. */
+const GIT_MUTATING_RE =
+  /\bgit\s+(commit|merge|rebase|pull|checkout|reset|clean|stash|cherry-pick|revert|apply|am|rm|mv|restore|add)\b/i;
 
 export const shellTool: ToolDef = {
   name: "shell",
@@ -31,6 +36,11 @@ export const shellTool: ToolDef = {
   },
   requiresPermission: true,
   summarize: (args) => `Run${args.background ? " in background" : ""}: ${args.command}`,
+  async preview(args, ctx) {
+    const command = String(args.command ?? "");
+    if (!GIT_MUTATING_RE.test(command)) return null;
+    return gitDiffStat(ctx.workspace) || null;
+  },
   execute(args, ctx) {
     const command = String(args.command);
 

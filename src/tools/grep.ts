@@ -3,6 +3,7 @@ import path from "node:path";
 import fg from "fast-glob";
 import type { ToolDef } from "../types.js";
 import { resolveSafe, truncateResult } from "./common.js";
+import { loadIgnorePatterns } from "./ignore.js";
 
 const MAX_MATCHES = 200;
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -11,7 +12,8 @@ export const grepTool: ToolDef = {
   name: "grep",
   description:
     "Search file contents with a regular expression. Returns 'file:line: text' matches. " +
-    "Ignores node_modules, .git, and binary files.",
+    "Ignores node_modules, .git, binary files, and anything matched by a .krityaignore " +
+    "file in the workspace root.",
   parameters: {
     type: "object",
     properties: {
@@ -34,7 +36,7 @@ export const grepTool: ToolDef = {
       cwd: searchRoot,
       dot: false,
       onlyFiles: true,
-      ignore: ["**/node_modules/**", "**/.git/**"],
+      ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(ctx.workspace)],
       suppressErrors: true,
     });
 

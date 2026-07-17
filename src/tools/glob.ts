@@ -1,11 +1,13 @@
 import fg from "fast-glob";
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
+import { loadIgnorePatterns } from "./ignore.js";
 
 export const globTool: ToolDef = {
   name: "glob",
   description:
-    "Find files matching a glob pattern (e.g. 'src/**/*.ts'). Ignores node_modules and .git.",
+    "Find files matching a glob pattern (e.g. 'src/**/*.ts'). Ignores node_modules, .git, " +
+    "and anything matched by a .krityaignore file in the workspace root.",
   parameters: {
     type: "object",
     properties: {
@@ -21,7 +23,7 @@ export const globTool: ToolDef = {
       cwd: ctx.workspace,
       dot: false,
       onlyFiles: true,
-      ignore: ["**/node_modules/**", "**/.git/**"],
+      ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(ctx.workspace)],
       suppressErrors: true,
     });
     const capped = files.sort().slice(0, 200);
