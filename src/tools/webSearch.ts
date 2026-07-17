@@ -37,7 +37,9 @@ export async function tavilySearch(query: string, maxResults = 5): Promise<strin
   const parts: string[] = [];
   if (data.answer) parts.push(`Answer: ${data.answer}`);
   for (const [i, r] of (data.results ?? []).entries()) {
-    parts.push(`${i + 1}. ${r.title ?? "(untitled)"}\n   ${r.url ?? ""}\n   ${(r.content ?? "").slice(0, 400)}`);
+    parts.push(
+      `${i + 1}. ${r.title ?? "(untitled)"}\n   ${r.url ?? ""}\n   ${(r.content ?? "").slice(0, 400)}`
+    );
   }
   return truncateResult(parts.join("\n\n") || "(no results)");
 }

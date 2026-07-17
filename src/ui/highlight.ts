@@ -8,14 +8,71 @@ export interface Token {
 // Shared keyword set across the languages an agent CLI shows most:
 // TS/JS, Python, Go, Rust, Java, shell.
 const KEYWORDS = new Set([
-  "const", "let", "var", "function", "def", "class", "if", "else", "elif",
-  "for", "while", "return", "import", "from", "export", "async", "await",
-  "try", "catch", "except", "finally", "new", "type", "interface", "enum",
-  "struct", "impl", "fn", "pub", "match", "switch", "case", "break",
-  "continue", "true", "false", "null", "None", "nil", "undefined", "this",
-  "self", "static", "void", "public", "private", "extends", "implements",
-  "lambda", "yield", "in", "of", "not", "and", "or", "package", "func",
-  "go", "chan", "defer", "then", "fi", "do", "done", "echo",
+  "const",
+  "let",
+  "var",
+  "function",
+  "def",
+  "class",
+  "if",
+  "else",
+  "elif",
+  "for",
+  "while",
+  "return",
+  "import",
+  "from",
+  "export",
+  "async",
+  "await",
+  "try",
+  "catch",
+  "except",
+  "finally",
+  "new",
+  "type",
+  "interface",
+  "enum",
+  "struct",
+  "impl",
+  "fn",
+  "pub",
+  "match",
+  "switch",
+  "case",
+  "break",
+  "continue",
+  "true",
+  "false",
+  "null",
+  "None",
+  "nil",
+  "undefined",
+  "this",
+  "self",
+  "static",
+  "void",
+  "public",
+  "private",
+  "extends",
+  "implements",
+  "lambda",
+  "yield",
+  "in",
+  "of",
+  "not",
+  "and",
+  "or",
+  "package",
+  "func",
+  "go",
+  "chan",
+  "defer",
+  "then",
+  "fi",
+  "do",
+  "done",
+  "echo",
 ]);
 
 const WORD_RE = /[A-Za-z_$][A-Za-z0-9_$]*/y;
@@ -53,10 +110,7 @@ export function tokenizeLine(line: string): Token[] {
       continue;
     }
 
-    if (
-      (ch === "/" && (line[i + 1] === "/" || line[i + 1] === "*")) ||
-      ch === "#"
-    ) {
+    if ((ch === "/" && (line[i + 1] === "/" || line[i + 1] === "*")) || ch === "#") {
       flush();
       tokens.push({ text: line.slice(i), kind: "comment" });
       break;

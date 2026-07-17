@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import { CURATED_MODELS } from "../config/models.js";
 import { SelectList, type SelectItem } from "./SelectList.js";
@@ -30,7 +29,8 @@ export function ModelPicker({
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1}>
       <Text bold color="magenta">
-        Select model <Text dimColor>(Esc to cancel, or /model &lt;id&gt; for any NVIDIA model)</Text>
+        Select model{" "}
+        <Text dimColor>(Esc to cancel, or /model &lt;id&gt; for any NVIDIA model)</Text>
       </Text>
       <SelectList items={items} onSelect={onSelect} onCancel={onCancel} />
     </Box>

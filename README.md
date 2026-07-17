@@ -1,8 +1,10 @@
 # kritya
 
-A lean, Claude Code-style coding agent for your terminal, powered by models on
-[build.nvidia.com](https://build.nvidia.com) (Qwen3 Coder, Kimi K2, DeepSeek, GLM,
-Nemotron, ...). Works on Linux, macOS, and Windows.
+A lean, Claude Code-style coding agent for your terminal. Provider-agnostic —
+it works with any OpenAI-compatible endpoint: [build.nvidia.com](https://build.nvidia.com)
+(Qwen3 Coder, Kimi K2, DeepSeek, GLM, Nemotron, ...) by default, plus OpenAI,
+OpenRouter, Groq, DeepSeek, Mistral, Together, and local models via Ollama.
+Works on Linux, macOS, and Windows.
 
 ```
 cd your-project
@@ -37,32 +39,50 @@ kritya .
 ```
 kritya [directory] [options]
 
-  -c, --continue     resume the most recent session for this directory
-  -r, --resume       pick a past session from a list
-  -m, --model <id>   use any model ID from build.nvidia.com
-  -h, --help         help
-  -v, --version      version
+  -c, --continue        resume the most recent session for this directory
+  -r, --resume          pick a past session from a list
+  -m, --model <id>      use any model ID your provider offers
+  -p, --provider <name> nvidia (default), openai, openrouter, groq, deepseek,
+                        mistral, together, ollama, or a custom one
+  -h, --help            help
+  -v, --version         version
 ```
 
 In-session commands (type `/` to see them with autocomplete; letters filter the list):
 
-| Command | What it does |
-| --- | --- |
-| `/model` | interactive model picker (`/model <id>` sets any NVIDIA model ID directly) |
-| `/init` | scan the repo and generate a `KRITYA.md` project-memory file |
-| `/commit` | have the agent review, stage, and commit the current git changes |
-| `/web-search <query>` | search the web via Tavily; results are shown and added to context |
-| `/undo` | revert all file changes from the agent's last turn |
-| `/compact` | summarize older conversation to free context space |
-| `/clear` | start a fresh conversation |
-| `/cost` | token usage and estimated $ (see Pricing below) |
-| `/help` | command list |
-| `/exit` | quit |
+| Command               | What it does                                                            |
+| --------------------- | ----------------------------------------------------------------------- |
+| `/model`              | interactive model picker (`/model <id>` sets any model ID directly)     |
+| `/plan`               | toggle plan mode (read-only): explore and propose before making changes |
+| `/diff`               | show the cumulative git diff of this session's changes                  |
+| `/init`               | scan the repo and generate a `KRITYA.md` project-memory file            |
+| `/commit`             | have the agent review, stage, and commit the current git changes        |
+| `/web-search <query>` | search the web via Tavily; results are shown and added to context       |
+| `/undo`               | revert all file changes from the agent's last turn                      |
+| `/redo`               | reapply the change most recently undone                                 |
+| `/compact`            | summarize older conversation to free context space                      |
+| `/clear`              | start a fresh conversation                                              |
+| `/cost`               | token usage and estimated $ (see Pricing below)                         |
+| `/help`               | command list                                                            |
+| `/exit`               | quit                                                                    |
 
-`Esc` cancels a running request. `Ctrl+C` exits.
+Custom `/commands` you define (see below) also appear here.
+
+`Esc` cancels a running request. `↑/↓` recalls input history. `Ctrl+O` toggles
+full tool output. `Ctrl+C` exits.
 
 ### More features
 
+- **Plan mode** (`/plan`) — a read-only mode where the agent explores and
+  proposes a step-by-step plan; writes, edits, and shell are blocked until you
+  run `/plan` again. Great for unfamiliar repositories.
+- **Subagents** — the agent can dispatch a focused, read-only investigation to a
+  fresh context (`spawn_agent`) that returns only its findings, keeping the main
+  conversation lean on big searches.
+- **Image attachments** — `@screenshot.png` sends the image to vision-capable
+  models alongside your message.
+- **Undo / redo** — `/undo` reverts the last turn's file changes; `/redo`
+  reapplies them. Undo is multi-level.
 - **Steer mid-run** — type while the agent is working and press Enter; your
   message is queued and absorbed before its next step (no need to interrupt).
 - **Auto-compaction** — when the conversation nears the model's context window
@@ -112,8 +132,26 @@ workspace (per-project) or `~/.kritya/settings.json` (global):
 ```
 
 A bare tool name allows that tool; `shell(pattern)` allows shell commands
-matching the pattern, where `*` is a wildcard. Matching is anchored —
-`shell(npm test)` does **not** allow `npm test && something-else`.
+matching the pattern, where `*` is a wildcard. Patterns also work for file
+tools against the path — `write_file(src/*)`, `edit_file(*.ts)`. Matching is
+anchored — `shell(npm test)` does **not** allow `npm test && something-else`.
+
+### Deny rules and the danger guard
+
+`deny` rules block matching calls outright — no prompt, and they can't be
+overridden by an allow rule or an "always allow" choice:
+
+```json
+{
+  "allow": ["write_file"],
+  "deny": ["write_file(.env*)", "edit_file(*secret*)", "shell(git push*)"]
+}
+```
+
+Separately, destructive commands (`rm -rf`, `git push --force`,
+`git reset --hard`, `curl | sh`, `sudo`, `mkfs`, fork bombs, …) always trigger a
+red warning prompt and can't be "always allowed" — even if a broad `shell(*)`
+rule would otherwise cover them.
 
 ## Configuration
 
@@ -135,23 +173,109 @@ matching the pattern, where `*` is a wildcard. Matching is anchored —
 `pricing` is optional (USD per 1M tokens per model). When set, `/cost` and the
 statusline show estimated dollars alongside token counts.
 
-`customModels` entries show up in the `/model` picker. Model IDs on the NVIDIA
-catalog change over time — pick an agent-capable (tool-calling) model for best
-results; chat-only models will answer questions but can't edit files.
+`customModels` entries show up in the `/model` picker. Model IDs change over
+time — pick an agent-capable (tool-calling) model for best results; chat-only
+models will answer questions but can't edit files. `maxSteps` (default 40) caps
+model round-trips per request. `contextWindow` overrides the per-model default.
 
 Sessions are stored as JSONL under `~/.kritya/sessions/` and reloaded with
 `kritya -c`.
 
+### Providers
+
+kritya works with any OpenAI-compatible API. Built-in names: `nvidia` (default),
+`openai`, `openrouter`, `groq`, `deepseek`, `mistral`, `together`, `ollama`.
+Select one with `--provider` or `provider` in config; the API key comes from the
+provider's env var (e.g. `OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or a `.env`
+file. Add your own, or override a built-in:
+
+```json
+{
+  "provider": "openrouter",
+  "providers": {
+    "openrouter": { "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY" },
+    "local": { "baseUrl": "http://localhost:8000/v1", "apiKey": "sk-none", "model": "my-model" }
+  }
+}
+```
+
+### Custom slash commands
+
+Drop a markdown file in `.kritya/commands/` (workspace) or `~/.kritya/commands/`
+(global) and it becomes a slash command named after the file. The body is a
+prompt; `$ARGUMENTS` is replaced with whatever you type after the command.
+
+```markdown
+<!-- .kritya/commands/review.md -->
+
+description: review the working changes for bugs and style
+
+Review the current git diff for correctness bugs and style issues. $ARGUMENTS
+```
+
+Now `/review focus on error handling` runs that prompt.
+
+### Hooks
+
+Run your own shell commands around the agent's tool calls via `hooks` in
+`settings.json`. `preToolUse` can block a call (non-zero exit + `"blocking": true`);
+`postToolUse` runs after; `stop` runs when a turn ends. Commands receive
+`KRITYA_TOOL_NAME`, `KRITYA_TOOL_PATH`, `KRITYA_TOOL_COMMAND`, and
+`KRITYA_TOOL_ARGS` in the environment.
+
+```json
+{
+  "hooks": {
+    "postToolUse": [
+      { "match": "edit_file|write_file", "command": "prettier --write \"$KRITYA_TOOL_PATH\"" }
+    ],
+    "stop": [{ "command": "npm run lint --silent" }]
+  }
+}
+```
+
+### MCP servers
+
+Expose [Model Context Protocol](https://modelcontextprotocol.io) tools to the
+agent by launching servers over stdio:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    }
+  }
+}
+```
+
+Their tools appear as `mcp_<server>_<tool>` and their output is treated as
+untrusted content. A server that fails to start is skipped with a warning.
+
+## Privacy
+
+kritya collects **no telemetry** and phones home to nothing of its own. Network
+requests go only to the model provider you configure (and to Tavily if you use
+web search). Sessions and config stay on your machine under `~/.kritya/`.
+
 ## Development
 
 ```bash
-npm run dev     # run from source (tsx)
-npm run build   # compile to dist/
-npm test        # build + unit tests
+npm run dev          # run from source (tsx)
+npm run build        # compile to dist/ (strict TypeScript)
+npm test             # build + unit tests
+npm run lint         # eslint
+npm run format       # prettier --write
 ```
 
-Architecture: `src/provider` (NVIDIA OpenAI-compatible streaming client) →
-`src/agent` (the tool-call loop, compaction, system prompt) → `src/tools`
-(plain-object tools) → `src/ui` (Ink/React terminal UI), with
-`src/permissions`, `src/session`, `src/shell` (background processes), and
-`src/git` supporting. See `docs/superpowers/specs/` for the design doc.
+Architecture: `src/provider` (OpenAI-compatible streaming client) → `src/agent`
+(the tool-call loop, compaction, system prompt) → `src/tools` (plain-object
+tools) → `src/ui` (Ink/React terminal UI), with `src/permissions`, `src/hooks`,
+`src/mcp`, `src/commands`, `src/session`, `src/shell` (background processes), and
+`src/git` supporting. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a full
+tour and [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
+## License
+
+[MIT](LICENSE).

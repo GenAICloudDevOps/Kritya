@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 
 // Dot-matrix glyphs (7 rows). "#" is an on pixel, "." is off.
@@ -64,9 +63,7 @@ export function Banner({ subtitle }: { subtitle?: string }) {
           {center("KRITYA")}
         </Text>
       )}
-      <Box marginTop={2}>
-        {subtitle ? <Text dimColor>{center(subtitle)}</Text> : null}
-      </Box>
+      <Box marginTop={2}>{subtitle ? <Text dimColor>{center(subtitle)}</Text> : null}</Box>
     </Box>
   );
 }

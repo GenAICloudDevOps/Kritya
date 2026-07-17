@@ -17,7 +17,11 @@ export class SessionStore {
   private dir: string;
   private file: string;
 
-  constructor(workspace: string) {
+  /** When ephemeral, nothing is persisted to disk (used by subagents). */
+  constructor(
+    workspace: string,
+    private ephemeral = false
+  ) {
     this.dir = sessionDir(workspace);
     this.file = this.newFilePath();
   }
@@ -29,6 +33,7 @@ export class SessionStore {
 
   /** Begin a session, optionally seeded with resumed history. */
   start(seed: ChatMessage[] = []): void {
+    if (this.ephemeral) return;
     fs.mkdirSync(this.dir, { recursive: true });
     if (seed.length) {
       fs.writeFileSync(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""));
@@ -36,6 +41,7 @@ export class SessionStore {
   }
 
   append(message: ChatMessage): void {
+    if (this.ephemeral) return;
     try {
       fs.mkdirSync(this.dir, { recursive: true });
       fs.appendFileSync(this.file, JSON.stringify(message) + "\n");
@@ -80,7 +86,11 @@ export class SessionStore {
     const dir = sessionDir(workspace);
     let files: string[];
     try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort().reverse();
+      files = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .sort()
+        .reverse();
     } catch {
       return [];
     }
