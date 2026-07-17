@@ -1,10 +1,10 @@
 {
-  "name": "code-cli",
-  "version": "0.1.0",
-  "description": "A lean Claude Code-style coding agent for NVIDIA build.nvidia.com models",
+  "name": "kritya",
+  "version": "0.2.0",
+  "description": "Kritya — a lean terminal coding agent for build.nvidia.com models",
   "type": "module",
   "bin": {
-    "code-cli": "dist/index.js"
+    "kritya": "dist/index.js"
   },
   "files": [
     "dist"

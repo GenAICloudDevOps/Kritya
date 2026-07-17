@@ -66,7 +66,7 @@ const HELP_TEXT = `Commands:
 ${COMMANDS.map((c) => `  ${c.name.padEnd(14)} ${c.description}`).join("\n")}
 
 Also: @path/to/file attaches a file to your message (with autocomplete).
-Project memory: put standing instructions in CODECLI.md at your workspace root.
+Project memory: put standing instructions in KRITYA.md at your workspace root.
 Keys: Esc cancels a running request · Tab completes · Ctrl+C exits`;
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
@@ -210,7 +210,7 @@ export function App({
     const hint =
       totalCost > 0
         ? ""
-        : `\nTip: add per-model prices (USD per 1M tokens) to ~/.code-cli/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4 } }`;
+        : `\nTip: add per-model prices (USD per 1M tokens) to ~/.kritya/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4 } }`;
     return `Usage this session:\n${lines.join("\n")}${total}${hint}`;
   };
 

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const MEMORY_FILE = "CODECLI.md";
+const MEMORY_FILES = ["KRITYA.md", "CODECLI.md"];
 const MEMORY_MAX_CHARS = 4000;
 
 export function buildSystemPrompt(workspace: string): string {
@@ -19,16 +19,19 @@ export function buildSystemPrompt(workspace: string): string {
   }
 
   let memory = "";
-  try {
-    const raw = fs.readFileSync(path.join(workspace, MEMORY_FILE), "utf8").trim();
-    if (raw) {
-      memory = `\n# Project instructions (from ${MEMORY_FILE} — always follow these)\n${raw.slice(0, MEMORY_MAX_CHARS)}\n`;
+  for (const name of MEMORY_FILES) {
+    try {
+      const raw = fs.readFileSync(path.join(workspace, name), "utf8").trim();
+      if (raw) {
+        memory = `\n# Project instructions (from ${name} — always follow these)\n${raw.slice(0, MEMORY_MAX_CHARS)}\n`;
+        break;
+      }
+    } catch {
+      // no memory file — fine
     }
-  } catch {
-    // no memory file — fine
   }
 
-  return `You are code-cli, an interactive coding agent running in the user's terminal.
+  return `You are kritya, an interactive coding agent running in the user's terminal.
 
 You help with software engineering tasks: writing code, fixing bugs, explaining code, running commands, and refactoring. Work autonomously: use your tools to explore, make changes, and verify them, then report the outcome concisely.
 

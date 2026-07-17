@@ -20,11 +20,11 @@ import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
 import type { TaskItem } from "./types.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
-const USAGE = `code-cli — a coding agent for NVIDIA build.nvidia.com models
+const USAGE = `kritya — a coding agent for NVIDIA build.nvidia.com models
 
-Usage: code-cli [directory] [options]
+Usage: kritya [directory] [options]
 
 Options:
   -c, --continue     resume the most recent session for this directory
@@ -37,9 +37,9 @@ Setup:
   1. Get an API key at https://build.nvidia.com (free credits available)
   2. export NVIDIA_API_KEY=nvapi-...        (Linux/macOS)
      setx NVIDIA_API_KEY nvapi-...          (Windows)
-  3. cd your-project && code-cli .
+  3. cd your-project && kritya .
 
-Config file: ~/.code-cli/config.json  { "apiKey", "model", "customModels": [{"id"}] }`;
+Config file: ~/.kritya/config.json  { "apiKey", "model", "customModels": [{"id"}] }`;
 
 function parseArgs(argv: string[]) {
   const args = { dir: ".", continue: false, resume: false, model: "", help: false, version: false };
@@ -87,15 +87,15 @@ const apiKey = resolveApiKey(config);
 if (!apiKey) {
   console.error(
     `No API key found.\n\nGet one at https://build.nvidia.com, then one of:\n` +
-      `  put NVIDIA_API_KEY=nvapi-... in a .env file (workspace or ~/.code-cli/.env)\n` +
+      `  put NVIDIA_API_KEY=nvapi-... in a .env file (workspace or ~/.kritya/.env)\n` +
       `  export NVIDIA_API_KEY=nvapi-...\n` +
-      `  add "apiKey" to ~/.code-cli/config.json`
+      `  add "apiKey" to ~/.kritya/config.json`
   );
   process.exit(1);
 }
 
 if (!process.stdin.isTTY) {
-  console.error("code-cli is interactive and requires a TTY.");
+  console.error("kritya is interactive and requires a TTY.");
   process.exit(1);
 }
 

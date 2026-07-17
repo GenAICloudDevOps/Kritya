@@ -3,11 +3,11 @@ import { Box, Text } from "ink";
 
 // Dot-matrix glyphs (7 rows). "#" is an on pixel, "." is off.
 const GLYPHS: Record<string, string[]> = {
-  C: [".####.", "#....#", "#.....", "#.....", "#.....", "#....#", ".####."],
-  O: [".####.", "#....#", "#....#", "#....#", "#....#", "#....#", ".####."],
-  D: ["#####.", "#....#", "#....#", "#....#", "#....#", "#....#", "#####."],
-  E: ["######", "#.....", "#.....", "#####.", "#.....", "#.....", "######"],
-  L: ["#.....", "#.....", "#.....", "#.....", "#.....", "#.....", "######"],
+  K: ["#....#", "#...#.", "#..#..", "###...", "#..#..", "#...#.", "#....#"],
+  R: ["#####.", "#....#", "#....#", "#####.", "#..#..", "#...#.", "#....#"],
+  T: ["######", "..##..", "..##..", "..##..", "..##..", "..##..", "..##.."],
+  Y: ["#....#", "#....#", ".#..#.", "..##..", "..##..", "..##..", "..##.."],
+  A: [".####.", "#....#", "#....#", "######", "#....#", "#....#", "#....#"],
   I: ["####", ".##.", ".##.", ".##.", ".##.", ".##.", "####"],
   "-": ["....", "....", "....", "####", "....", "....", "...."],
 };
@@ -44,8 +44,8 @@ function rowColor(row: number): string {
 
 export function Banner({ subtitle }: { subtitle?: string }) {
   const columns = process.stdout.columns ?? 80;
-  const wide = bannerLines("CODE-CLI", "░░");
-  const narrow = bannerLines("CODE-CLI", "░");
+  const wide = bannerLines("KRITYA", "░░");
+  const narrow = bannerLines("KRITYA", "░");
   const lines = wide[0].length <= columns ? wide : narrow[0].length <= columns ? narrow : null;
 
   const center = (text: string) =>
@@ -61,7 +61,7 @@ export function Banner({ subtitle }: { subtitle?: string }) {
         ))
       ) : (
         <Text bold color="cyan">
-          {center("CODE-CLI")}
+          {center("KRITYA")}
         </Text>
       )}
       <Box marginTop={2}>

@@ -1,4 +1,4 @@
-# code-cli
+# kritya
 
 A lean, Claude Code-style coding agent for your terminal, powered by models on
 [build.nvidia.com](https://build.nvidia.com) (Qwen3 Coder, Kimi K2, DeepSeek, GLM,
@@ -6,7 +6,7 @@ Nemotron, ...). Works on Linux, macOS, and Windows.
 
 ```
 cd your-project
-code-cli .
+kritya .
 ```
 
 The agent can read, write, and edit files, search code, and run shell commands —
@@ -19,7 +19,7 @@ autonomously looping until your request is done. Anything that mutates state
    model → "Get API Key").
 2. Set it (any one of these):
    - Put `NVIDIA_API_KEY=nvapi-...` in a `.env` file — checked in the workspace
-     you launch in, the directory you run from, and `~/.code-cli/.env`
+     you launch in, the directory you run from, and `~/.kritya/.env`
    - Linux/macOS: `export NVIDIA_API_KEY=nvapi-...`
    - Windows: `setx NVIDIA_API_KEY nvapi-...` (then open a new terminal)
 3. Install and run:
@@ -27,15 +27,15 @@ autonomously looping until your request is done. Anything that mutates state
 ```bash
 npm install        # from this repo
 npm run build
-npm link           # puts `code-cli` on your PATH
+npm link           # puts `kritya` on your PATH
 cd ~/some-project
-code-cli .
+kritya .
 ```
 
 ## Usage
 
 ```
-code-cli [directory] [options]
+kritya [directory] [options]
 
   -c, --continue     resume the most recent session for this directory
   -r, --resume       pick a past session from a list
@@ -62,7 +62,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 
 - **@ file mentions** — type `@` in your message to autocomplete a file path
   (↑↓ select, Tab/Enter attach); the file's content is sent along with your message.
-- **Project memory** — create a `CODECLI.md` in your workspace root with standing
+- **Project memory** — create a `KRITYA.md` in your workspace root with standing
   instructions ("always use TypeScript", "tests live in /tests"); the agent reads
   it every request.
 - **Sub-task checklist** — for multi-step requests the agent plans first and shows
@@ -81,7 +81,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 
 ## Configuration
 
-`~/.code-cli/config.json`:
+`~/.kritya/config.json`:
 
 ```json
 {
@@ -102,8 +102,8 @@ statusline show estimated dollars alongside token counts.
 catalog change over time — pick an agent-capable (tool-calling) model for best
 results; chat-only models will answer questions but can't edit files.
 
-Sessions are stored as JSONL under `~/.code-cli/sessions/` and reloaded with
-`code-cli -c`.
+Sessions are stored as JSONL under `~/.kritya/sessions/` and reloaded with
+`kritya -c`.
 
 ## Development
 
