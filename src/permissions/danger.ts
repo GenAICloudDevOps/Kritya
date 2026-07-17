@@ -11,17 +11,26 @@ interface DangerPattern {
 }
 
 const PATTERNS: DangerPattern[] = [
-  { re: /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, label: "recursive/forced file deletion (rm -rf)" },
+  {
+    re: /\brm\s+.*(-[a-z]*[rf][a-z]*\b|--recursive\b|--force\b|--no-preserve-root\b)/i,
+    label: "recursive/forced file deletion (rm -rf)",
+  },
   { re: /\brmdir\s+\/s/i, label: "recursive directory deletion" },
-  { re: /\bgit\s+push\b.*(--force|-f)\b/i, label: "force push (rewrites remote history)" },
+  { re: /\bgit\s+push\b.*(--force(-with-lease)?|-f)\b/i, label: "force push (rewrites remote history)" },
   { re: /\bgit\s+reset\s+--hard/i, label: "hard reset (discards local changes)" },
-  { re: /\bgit\s+clean\s+-[a-z]*f/i, label: "git clean (deletes untracked files)" },
+  {
+    re: /\bgit\s+clean\s+.*(-[a-z]*f[a-z]*\b|--force\b)/i,
+    label: "git clean (deletes untracked files)",
+  },
   { re: /\bgit\s+checkout\s+--\s|\bgit\s+restore\b/i, label: "discards uncommitted changes" },
   { re: /\bmkfs\b/i, label: "filesystem format" },
   { re: /\bdd\b.*\bof=\/dev\//i, label: "raw disk write (dd)" },
   { re: />\s*\/dev\/(sd|nvme|hd|disk)/i, label: "writing to a raw disk device" },
-  { re: /\bchmod\s+-R\s+777\b/i, label: "world-writable recursive chmod" },
-  { re: /\bchown\s+-R\b/i, label: "recursive ownership change" },
+  {
+    re: /\bchmod\s+.*(-R\b|--recursive\b).*\b777\b|\bchmod\s+.*\b777\b.*(-R\b|--recursive\b)/i,
+    label: "world-writable recursive chmod",
+  },
+  { re: /\bchown\s+(-R\b|--recursive\b)/i, label: "recursive ownership change" },
   { re: /:\(\)\s*\{.*\}\s*;/, label: "fork bomb" },
   {
     re: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/i,

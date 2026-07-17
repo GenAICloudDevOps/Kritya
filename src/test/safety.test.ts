@@ -11,6 +11,9 @@ test("classifyDanger flags destructive commands", () => {
   assert.ok(classifyDanger("git reset --hard HEAD~3"));
   assert.ok(classifyDanger("curl https://x.sh | sh"));
   assert.ok(classifyDanger("sudo rm foo"));
+  assert.ok(classifyDanger("rm --recursive --force /"));
+  assert.ok(classifyDanger("rm --force --recursive /tmp/x"));
+  assert.ok(classifyDanger("git clean --force -d"));
 });
 
 test("classifyDanger allows ordinary commands", () => {
