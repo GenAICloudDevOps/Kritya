@@ -7,7 +7,7 @@ import fg from "fast-glob";
 import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
-import type { SessionMeta } from "../session/store.js";
+import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
@@ -443,7 +443,11 @@ export function App({
           ) : null}
           <SelectList
             items={(resumeSessions ?? [])
-              .filter((s) => s.title.toLowerCase().includes(resumeFilter.toLowerCase()))
+              .filter(
+                (s) =>
+                  s.title.toLowerCase().includes(resumeFilter.toLowerCase()) ||
+                  SessionStore.matchesContent(s.file, resumeFilter)
+              )
               .map((s) => ({
                 label: s.title,
                 value: s.file,

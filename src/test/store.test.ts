@@ -45,3 +45,33 @@ test("listSessions falls back to a placeholder when there is no real user messag
   assert.equal(sessions[0].title, "(untitled session)");
   assert.equal(sessions[0].count, 1);
 });
+
+test("matchesContent finds a query buried later in the session, past the title preview", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-3`);
+  const workspace = "/tmp/some-workspace-c";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Fix the flaky test in CI" });
+  store.append({ role: "assistant", content: "Sure, digging into the retry logic." });
+  store.append({ role: "user", content: "It's the exponential backoff jitter" });
+
+  const [session] = SessionStore.listSessions(workspace);
+  assert.equal(SessionStore.matchesContent(session.file, "backoff jitter"), true);
+  assert.equal(SessionStore.matchesContent(session.file, "nonexistent phrase"), false);
+});
+
+test("matchesContent is case-insensitive and treats an empty query as always matching", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-4`);
+  const workspace = "/tmp/some-workspace-d";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Refactor the AUTH module" });
+
+  const [session] = SessionStore.listSessions(workspace);
+  assert.equal(SessionStore.matchesContent(session.file, "auth module"), true);
+  assert.equal(SessionStore.matchesContent(session.file, ""), true);
+});

@@ -85,6 +85,24 @@ export class SessionStore {
     return raw.split("\n").filter((line) => line.trim());
   }
 
+  /** True if any message's content in the session file contains query (case-insensitive). Used for --resume search beyond the title preview. */
+  static matchesContent(filePath: string, query: string): boolean {
+    if (!query.trim()) return true;
+    const needle = query.toLowerCase();
+    for (const line of SessionStore.readLines(filePath)) {
+      let message: ChatMessage;
+      try {
+        message = JSON.parse(line) as ChatMessage;
+      } catch {
+        continue;
+      }
+      if (typeof message.content === "string" && message.content.toLowerCase().includes(needle)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static loadLatest(workspace: string): ChatMessage[] | null {
     const latest = SessionStore.listSessions(workspace)[0];
     if (!latest) return null;

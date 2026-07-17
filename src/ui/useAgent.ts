@@ -4,6 +4,7 @@ import type { Agent } from "../agent/loop.js";
 import { gitBranch } from "../git/git.js";
 import { saveConfig, type CliConfig } from "../config/config.js";
 import { contextWindowFor } from "../config/models.js";
+import { crossedContextWarnThreshold } from "../agent/contextWarning.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge, Usage } from "../types.js";
@@ -71,6 +72,7 @@ export function useAgent({
   const [usageByModel, setUsageByModel] = useState<Record<string, Usage>>({});
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [ctxPct, setCtxPct] = useState(0);
+  const ctxPctRef = useRef(0);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -115,11 +117,12 @@ export function useAgent({
     });
     if (!lines.length) return "No usage yet this session.";
     const total = totalCost > 0 ? `\nEstimated total: $${totalCost.toFixed(4)}` : "";
+    const ctxNote = `\nContext window: ${ctxPctRef.current}% used`;
     const hint =
       totalCost > 0
         ? ""
         : `\nTip: add per-model prices (USD per 1M tokens) to ~/.kritya/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4 } }`;
-    return `Usage this session:\n${lines.join("\n")}${total}${hint}`;
+    return `Usage this session:\n${lines.join("\n")}${total}${ctxNote}${hint}`;
   };
 
   const runWebSearch = async (query: string) => {
@@ -181,7 +184,15 @@ export function useAgent({
             );
           },
           onUsage: (u) => {
-            setCtxPct(Math.round(agent.contextUsage() * 100));
+            const pct = Math.round(agent.contextUsage() * 100);
+            if (crossedContextWarnThreshold(ctxPctRef.current, pct)) {
+              addItem({
+                kind: "info",
+                text: `⚠ Context usage at ${pct}% — kritya will auto-compact older history soon to stay within the model's context window.`,
+              });
+            }
+            ctxPctRef.current = pct;
+            setCtxPct(pct);
             const id = modelRef.current;
             setUsageByModel((prev) => ({
               ...prev,
