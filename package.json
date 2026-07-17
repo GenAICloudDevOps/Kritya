@@ -1,0 +1,34 @@
+{
+  "name": "code-cli",
+  "version": "0.1.0",
+  "description": "A lean Claude Code-style coding agent for NVIDIA build.nvidia.com models",
+  "type": "module",
+  "bin": {
+    "code-cli": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.tsx",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.2",
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "openai": "^4.77.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
