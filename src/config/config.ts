@@ -9,6 +9,8 @@ export interface CliConfig {
   customModels?: { id: string; label?: string }[];
   /** USD per 1M tokens, keyed by model ID, for /cost estimates. */
   pricing?: Record<string, { input: number; output: number }>;
+  /** Model context window in tokens (default 120000); drives auto-compaction and the ctx meter. */
+  contextWindow?: number;
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");

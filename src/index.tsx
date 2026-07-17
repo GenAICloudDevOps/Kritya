@@ -124,6 +124,7 @@ const agent = new Agent(
   session,
   initialHistory
 );
+agent.contextWindow = config.contextWindow ?? 120_000;
 
 render(
   <App

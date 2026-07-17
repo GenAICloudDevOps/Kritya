@@ -56,6 +56,7 @@ const COMMANDS: { name: string; description: string }[] = [
   { name: "/model", description: "pick a model, or /model <id> for any NVIDIA model ID" },
   { name: "/web-search", description: "search the web: /web-search <query>" },
   { name: "/undo", description: "revert the last file change the agent made" },
+  { name: "/compact", description: "summarize older conversation to free context space" },
   { name: "/clear", description: "start a fresh conversation" },
   { name: "/cost", description: "show token usage and estimated cost" },
   { name: "/exit", description: "leave" },
@@ -111,6 +112,8 @@ export function App({
   const [model, setModel] = useState(modelRef.current);
   const [usageByModel, setUsageByModel] = useState<Record<string, Usage>>({});
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [ctxPct, setCtxPct] = useState(0);
+  const [steerInput, setSteerInput] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileList, setFileList] = useState<string[]>([]);
@@ -263,6 +266,26 @@ export function App({
       case "/cost":
         addItem({ kind: "info", text: costReport() });
         break;
+      case "/compact":
+        setPhase("working");
+        setActivity("Compacting context…");
+        void agent
+          .compact()
+          .then((note) => {
+            addItem({ kind: "info", text: note });
+            setCtxPct(Math.round(agent.contextUsage() * 100));
+          })
+          .catch((err) =>
+            addItem({
+              kind: "info",
+              text: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+            })
+          )
+          .finally(() => {
+            setActivity(null);
+            setPhase("input");
+          });
+        break;
       case "/exit":
       case "/quit":
         exit();
@@ -348,6 +371,7 @@ export function App({
               setPhase("permission");
             }),
           onUsage: (u) => {
+            setCtxPct(Math.round(agent.contextUsage() * 100));
             const id = modelRef.current;
             setUsageByModel((prev) => ({
               ...prev,
@@ -462,12 +486,34 @@ export function App({
       )}
 
       {phase === "working" && (
-        <Box>
+        <Box flexDirection="column">
           <Spinner
             label={
               activity ? activity : thinking ? "thinking… (Esc to cancel)" : "working… (Esc to cancel)"
             }
           />
+          <Box borderStyle="round" borderColor="yellow" paddingX={1}>
+            <Text color="yellow">↳ </Text>
+            <TextInput
+              value={steerInput}
+              onChange={setSteerInput}
+              onSubmit={(value) => {
+                const text = value.trim();
+                setSteerInput("");
+                if (!text) return;
+                if (text.startsWith("/")) {
+                  addItem({
+                    kind: "info",
+                    text: "Commands are unavailable while the agent is working — press Esc to interrupt first.",
+                  });
+                  return;
+                }
+                addItem({ kind: "user", text: `${text} (queued)` });
+                agent.queueSteer(expandMentions(text));
+              }}
+              placeholder="steer the agent… (Enter to queue)"
+            />
+          </Box>
         </Box>
       )}
 
@@ -551,7 +597,8 @@ export function App({
 
       <Box>
         <Text dimColor>
-          {model} · {totalUsage.promptTokens.toLocaleString()} in /{" "}
+          {model}
+          {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""} · {totalUsage.promptTokens.toLocaleString()} in /{" "}
           {totalUsage.completionTokens.toLocaleString()} out
           {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""} · {path.basename(workspace)}
         </Text>

@@ -2,13 +2,20 @@ import type { NvidiaClient } from "../provider/client.js";
 import type { PermissionManager } from "../permissions/permissions.js";
 import type { SessionStore } from "../session/store.js";
 import type { AgentHandlers, ChatMessage, ToolContext, ToolDef } from "../types.js";
+import { splitForCompaction, renderTranscript } from "./compactor.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 
 const MAX_ITERATIONS = 40;
 const PREVIEW_CHARS = 200;
+const COMPACT_THRESHOLD = 0.8;
 
 export class Agent {
   history: ChatMessage[];
+  /** Prompt size of the most recent model call, from the API's usage report. */
+  lastPromptTokens = 0;
+  /** Model context window in tokens; configurable via config.contextWindow. */
+  contextWindow = 120_000;
+  private steerQueue: string[] = [];
 
   constructor(
     private client: NvidiaClient,
@@ -40,6 +47,59 @@ export class Agent {
     this.session.start(messages);
   }
 
+  /** Queue a user correction typed while the agent is working; it is absorbed before the next model call. */
+  queueSteer(text: string): void {
+    this.steerQueue.push(text);
+  }
+
+  /** Fraction of the context window used by the last model call (0..1). */
+  contextUsage(): number {
+    return Math.min(1, this.lastPromptTokens / this.contextWindow);
+  }
+
+  private drainSteerQueue(): void {
+    while (this.steerQueue.length) {
+      const msg: ChatMessage = {
+        role: "user",
+        content: `[Mid-task instruction from the user — adjust course accordingly]\n${this.steerQueue.shift()!}`,
+      };
+      this.history.push(msg);
+      this.session.append(msg);
+    }
+  }
+
+  /** Summarize older history into one message, keeping the recent tail. */
+  async compact(signal?: AbortSignal): Promise<string> {
+    const { toSummarize, keep } = splitForCompaction(this.history);
+    if (!toSummarize.length) return "Nothing to compact yet.";
+    const result = await this.client.chat(
+      this.getModel(),
+      [
+        {
+          role: "system",
+          content:
+            "You summarize coding-session transcripts. Produce a dense briefing: the user's goals, " +
+            "key decisions, files created/modified (with paths), commands run and their outcomes, " +
+            "current state, and open items. Plain text, no preamble.",
+        },
+        { role: "user", content: renderTranscript(toSummarize) },
+      ],
+      [],
+      { onTextDelta: () => {}, onReasoningDelta: () => {} },
+      signal
+    );
+    const summary = result.text.trim() || "(summary unavailable)";
+    this.history = [
+      { role: "user", content: `[Conversation summary of earlier work]\n${summary}` },
+      ...keep,
+    ];
+    this.session.rotate();
+    this.session.start(this.history);
+    // Rough size estimate until the next model call reports real usage.
+    this.lastPromptTokens = Math.round(JSON.stringify(this.history).length / 4);
+    return `Compacted context: summarized ${toSummarize.length} messages, kept the last ${keep.length}.`;
+  }
+
   async runTurn(userText: string, handlers: AgentHandlers, signal?: AbortSignal): Promise<void> {
     const userMsg: ChatMessage = { role: "user", content: userText };
     this.history.push(userMsg);
@@ -52,6 +112,7 @@ export class Agent {
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      this.drainSteerQueue();
 
       const result = await this.client.chat(
         this.getModel(),
@@ -64,7 +125,10 @@ export class Agent {
         signal
       );
 
-      if (result.usage) handlers.onUsage(result.usage);
+      if (result.usage) {
+        this.lastPromptTokens = result.usage.promptTokens;
+        handlers.onUsage(result.usage);
+      }
       this.history.push(result.message);
       this.session.append(result.message);
       if (result.text.trim()) handlers.onAssistantText(result.text);
@@ -80,6 +144,11 @@ export class Agent {
         };
         this.history.push(toolMsg);
         this.session.append(toolMsg);
+      }
+
+      if (this.contextUsage() > COMPACT_THRESHOLD && this.history.length > 12) {
+        const note = await this.compact(signal);
+        handlers.onToolEnd("compact", "Auto-compacted context", note, false);
       }
     }
 
