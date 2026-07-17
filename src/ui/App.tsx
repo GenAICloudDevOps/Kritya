@@ -12,25 +12,17 @@ import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import type { UndoStack } from "../undo/undo.js";
-import type { PermissionDecision, TaskItem, Usage } from "../types.js";
+import type { ItemBody, Phase, PermissionDecision, TaskItem, Usage } from "../types.js";
 import { Banner } from "./Banner.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
-import { expandCommand, type CustomCommand } from "../commands/custom.js";
-
-type ItemBody =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "tool"; name: string; summary: string; error: boolean; output?: string }
-  | { kind: "info"; text: string }
-  | { kind: "banner"; subtitle: string };
+import type { CustomCommand } from "../commands/custom.js";
+import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
 
 type Item = ItemBody & { id: number };
-
-type Phase = "input" | "working" | "permission" | "model" | "resume";
 
 interface PendingPermission {
   toolName: string;
@@ -56,35 +48,6 @@ export interface AppProps {
   customCommands?: CustomCommand[];
   mcpToolCount?: number;
 }
-
-const COMMANDS: { name: string; description: string }[] = [
-  { name: "/help", description: "show available commands" },
-  { name: "/model", description: "pick a model, or /model <id> for any provider model ID" },
-  {
-    name: "/plan",
-    description: "toggle plan mode (read-only): explore and propose before editing",
-  },
-  { name: "/diff", description: "show the cumulative git diff of this session's changes" },
-  { name: "/redo", description: "reapply the change most recently undone" },
-  { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
-  { name: "/web-search", description: "search the web: /web-search <query>" },
-  { name: "/undo", description: "revert the file changes from the agent's last turn" },
-  { name: "/commit", description: "have the agent stage and commit the current changes" },
-  { name: "/compact", description: "summarize older conversation to free context space" },
-  { name: "/clear", description: "start a fresh conversation" },
-  { name: "/cost", description: "show token usage and estimated cost" },
-  { name: "/exit", description: "leave" },
-  { name: "/quit", description: "leave" },
-];
-
-const HELP_TEXT = `Commands:
-${COMMANDS.map((c) => `  ${c.name.padEnd(14)} ${c.description}`).join("\n")}
-
-Also: @path/to/file attaches a file to your message (with autocomplete).
-@image.png attaches an image for vision-capable models.
-Project memory: put standing instructions in KRITYA.md at your workspace root.
-Keys: Esc cancels · Tab completes · ↑/↓ recalls history · Ctrl+O toggles full
-tool output · Ctrl+C exits`;
 
 /** Preview of tool output: a few lines by default, everything when verbose. */
 function toolOutputPreview(output: string, verbose: boolean): string {
@@ -187,7 +150,7 @@ export function App({
   useEffect(refreshFileList, [refreshFileList]);
 
   const allCommands = [
-    ...COMMANDS,
+    ...BUILTIN_COMMANDS,
     ...customCommands.map((c) => ({ name: c.name, description: c.description })),
   ];
 
@@ -321,123 +284,32 @@ export function App({
   const handleSlash = (raw: string) => {
     const [cmd, ...rest] = raw.trim().split(/\s+/);
     const arg = rest.join(" ");
-    switch (cmd) {
-      case "/help": {
-        const customList = customCommands.length
-          ? `\n\nCustom commands (from .kritya/commands/):\n${customCommands
-              .map((c) => `  ${c.name.padEnd(14)} ${c.description}`)
-              .join("\n")}`
-          : "";
-        const mcpNote = mcpToolCount > 0 ? `\n\n${mcpToolCount} MCP tool(s) loaded.` : "";
-        addItem({ kind: "info", text: HELP_TEXT + customList + mcpNote });
-        break;
-      }
-      case "/model":
-        if (arg) setModelEverywhere(arg);
-        else setPhase("model");
-        break;
-      case "/web-search":
-        if (!arg) addItem({ kind: "info", text: "Usage: /web-search <query>" });
-        else void runWebSearch(arg);
-        break;
-      case "/undo": {
-        const result = undoStack.undo();
-        if (result === null) {
-          addItem({ kind: "info", text: "Nothing to undo." });
-        } else {
-          addItem({ kind: "info", text: `Undo: ${result}` });
-          agent.addUserNote(`[I reverted your last file change via /undo: ${result}]`);
-          refreshFileList();
-        }
-        break;
-      }
-      case "/clear":
-        agent.reset();
-        setTasks([]);
-        addItem({ kind: "info", text: "Conversation cleared." });
-        break;
-      case "/cost":
-        addItem({ kind: "info", text: costReport() });
-        break;
-      case "/compact":
-        setPhase("working");
-        setActivity("Compacting context…");
-        void agent
-          .compact()
-          .then((note) => {
-            addItem({ kind: "info", text: note });
-            setCtxPct(Math.round(agent.contextUsage() * 100));
-          })
-          .catch((err) =>
-            addItem({
-              kind: "info",
-              text: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
-            })
-          )
-          .finally(() => {
-            setActivity(null);
-            setPhase("input");
-          });
-        break;
-      case "/init":
-        addItem({ kind: "user", text: "/init" });
-        void runAgent(
-          "Explore this repository (README, package/build files, src layout, test setup) and write " +
-            "a concise KRITYA.md at the workspace root: what the project is, key commands " +
-            "(build/test/run), architecture in 5-10 bullets, and conventions a coding agent must " +
-            "follow when working here. Keep it under 60 lines."
-        );
-        break;
-      case "/commit":
-        addItem({ kind: "user", text: "/commit" });
-        void runAgent(
-          "Review the current git changes (git status, git diff), stage the appropriate files, " +
-            "and create a commit with a well-written conventional-commit message that describes " +
-            "the change. Do not push. Show the final commit hash and message."
-        );
-        break;
-      case "/plan": {
-        const next = !planMode;
-        setPlanMode(next);
-        agent.planMode = next;
-        addItem({
-          kind: "info",
-          text: next
-            ? "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked. Run /plan again to execute."
-            : "Plan mode OFF — the agent can make changes again.",
-        });
-        break;
-      }
-      case "/diff": {
-        const d = gitDiffStat(workspace);
-        addItem({ kind: "info", text: d || "No git changes (or not a git repo)." });
-        break;
-      }
-      case "/redo": {
-        const result = undoStack.redo();
-        if (result === null) {
-          addItem({ kind: "info", text: "Nothing to redo." });
-        } else {
-          addItem({ kind: "info", text: `Redo: ${result}` });
-          agent.addUserNote(`[I reapplied a previously undone change via /redo: ${result}]`);
-          refreshFileList();
-        }
-        break;
-      }
-      case "/exit":
-      case "/quit":
-        exit();
-        break;
-      default: {
-        const custom = customCommands.find((c) => c.name === cmd);
-        if (custom) {
-          addItem({ kind: "user", text: raw.trim() });
-          void runAgent(expandCommand(custom.body, expandMentions(arg)));
-        } else {
-          addItem({ kind: "info", text: `Unknown command: ${cmd}. Try /help` });
-        }
-      }
-    }
+    const ctx: CommandContext = {
+      arg,
+      raw,
+      agent,
+      workspace,
+      config,
+      undoStack,
+      customCommands,
+      mcpToolCount,
+      planMode,
+      addItem,
+      setPhase,
+      setActivity,
+      setCtxPct,
+      setTasks,
+      setPlanMode,
+      setModelEverywhere,
+      refreshFileList,
+      runAgent,
+      runWebSearch,
+      expandMentions,
+      costReport,
+      gitDiffStat,
+      exit,
+    };
+    void runCommand(cmd, ctx);
   };
 
   const expandMentions = (text: string): string => {

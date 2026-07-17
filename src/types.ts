@@ -7,6 +7,15 @@ export interface TaskItem {
   status: "pending" | "in_progress" | "done";
 }
 
+export type ItemBody =
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; text: string }
+  | { kind: "tool"; name: string; summary: string; error: boolean; output?: string }
+  | { kind: "info"; text: string }
+  | { kind: "banner"; subtitle: string };
+
+export type Phase = "input" | "working" | "permission" | "model" | "resume";
+
 export interface ToolContext {
   /** Absolute path of the workspace root; all file tools are confined to it. */
   workspace: string;
