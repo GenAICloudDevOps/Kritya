@@ -6,7 +6,12 @@ import { gitStatusShort } from "../git/git.js";
 const MEMORY_FILES = ["KRITYA.md", "CODECLI.md"];
 const MEMORY_MAX_CHARS = 4000;
 
-export function buildSystemPrompt(workspace: string): string {
+export function buildSystemPrompt(workspace: string, planMode = false): string {
+  const planSection = planMode
+    ? "\n# PLAN MODE (read-only)\nYou are in plan mode. Do NOT write, edit, or run shell commands — those are blocked. " +
+      "Investigate with read-only tools and present a concrete, step-by-step plan for the user to approve. " +
+      "The user will turn off plan mode when they want you to execute.\n"
+    : "";
   const gitSection = () => {
     const status = gitStatusShort(workspace);
     return status === null ? "" : `\n# Git status (porcelain, branch first)\n${status}\n`;
@@ -47,7 +52,7 @@ You help with software engineering tasks: writing code, fixing bugs, explaining 
 
 # Workspace top-level contents
 ${listing || "(empty)"}
-${gitSection()}${memory}
+${gitSection()}${memory}${planSection}
 # Tool rules
 - All file paths are relative to the workspace root. You cannot access files outside it.
 - Before editing a file, read it first. edit_file requires old_string to match the file exactly and be unique.
