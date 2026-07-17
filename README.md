@@ -99,7 +99,7 @@ full tool output. `Ctrl+C` exits.
   (↑↓ select, Tab/Enter attach); the file's content is sent along with your message.
 - **Project memory** — create a `KRITYA.md` in your workspace root (or run
   `/init` to generate one) with standing instructions; the agent reads it
-  every request. `CODECLI.md` is still honored as a fallback.
+  every request.
 - **Sub-task checklist** — for multi-step requests the agent plans first and shows
   a live ☐/◐/☑ checklist as it works.
 - **Diff preview** — write/edit permission prompts show a red/green line diff of

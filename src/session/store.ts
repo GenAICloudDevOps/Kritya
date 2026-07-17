@@ -74,6 +74,17 @@ export class SessionStore {
     return messages;
   }
 
+  /** Lines of a session file, one JSON message per non-blank line (unparsed). */
+  private static readLines(filePath: string): string[] {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, "utf8");
+    } catch {
+      return [];
+    }
+    return raw.split("\n").filter((line) => line.trim());
+  }
+
   static loadLatest(workspace: string): ChatMessage[] | null {
     const latest = SessionStore.listSessions(workspace)[0];
     if (!latest) return null;
@@ -97,19 +108,26 @@ export class SessionStore {
     const sessions: SessionMeta[] = [];
     for (const f of files.slice(0, 20)) {
       const file = path.join(dir, f);
-      const messages = SessionStore.loadFile(file);
-      if (!messages.length) continue;
-      const firstUser = messages.find(
-        (m) =>
-          m.role === "user" &&
-          typeof m.content === "string" &&
-          m.content.trim() &&
-          !m.content.startsWith("[") // skip synthetic notes (undo, summaries)
-      );
-      const cleaned =
-        firstUser && typeof firstUser.content === "string"
-          ? firstUser.content.replace(/\s+/g, " ").trim()
-          : "";
+      const lines = SessionStore.readLines(file);
+      if (!lines.length) continue;
+      let cleaned = "";
+      for (const line of lines) {
+        let message: ChatMessage;
+        try {
+          message = JSON.parse(line) as ChatMessage;
+        } catch {
+          continue; // skip corrupt lines rather than failing the preview
+        }
+        if (
+          message.role === "user" &&
+          typeof message.content === "string" &&
+          message.content.trim() &&
+          !message.content.startsWith("[") // skip synthetic notes (undo, summaries)
+        ) {
+          cleaned = message.content.replace(/\s+/g, " ").trim();
+          break;
+        }
+      }
       const preview = cleaned ? cleaned.slice(0, 60) : "(no preview)";
       const title = cleaned ? cleaned.slice(0, 48) : "(untitled session)";
       let date = "";
@@ -118,7 +136,7 @@ export class SessionStore {
       } catch {
         // leave empty
       }
-      sessions.push({ file, date, preview, title, count: messages.length });
+      sessions.push({ file, date, preview, title, count: lines.length });
     }
     return sessions;
   }

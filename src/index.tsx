@@ -19,8 +19,7 @@ import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadCustomCommands } from "./commands/custom.js";
 import { gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
-
-const VERSION = "0.3.0";
+import { VERSION } from "./version.js";
 
 const USAGE = `kritya — a lean, provider-agnostic terminal coding agent
 

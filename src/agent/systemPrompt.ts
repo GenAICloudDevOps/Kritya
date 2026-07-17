@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { gitStatusShort } from "../git/git.js";
 
-const MEMORY_FILES = ["KRITYA.md", "CODECLI.md"];
+const MEMORY_FILES = ["KRITYA.md"];
 const MEMORY_MAX_CHARS = 4000;
 
 export function buildSystemPrompt(workspace: string, planMode = false): string {

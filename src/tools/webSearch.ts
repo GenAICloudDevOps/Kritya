@@ -44,6 +44,11 @@ export async function tavilySearch(query: string, maxResults = 5): Promise<strin
   return truncateResult(parts.join("\n\n") || "(no results)");
 }
 
+/** Distinguishes "omitted" (use default) from an explicit value like 0. */
+export function parseMaxResults(raw: unknown, defaultValue = 5): number {
+  return raw === undefined || raw === null ? defaultValue : Number(raw);
+}
+
 export const webSearchTool: ToolDef = {
   name: "web_search",
   description:
@@ -61,6 +66,6 @@ export const webSearchTool: ToolDef = {
   external: true,
   summarize: (args) => `Web search: ${args.query}`,
   async execute(args) {
-    return tavilySearch(String(args.query), Number(args.max_results) || 5);
+    return tavilySearch(String(args.query), parseMaxResults(args.max_results));
   },
 };

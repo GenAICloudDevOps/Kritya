@@ -197,15 +197,22 @@ test("undo reverts all files changed in the same turn together", async () => {
   assert.equal(undo.undo(), null);
 });
 
-test("system prompt includes CODECLI.md project memory", async () => {
+test("system prompt includes KRITYA.md project memory", async () => {
   const ws = await makeWorkspace();
-  await fs.writeFile(path.join(ws, "CODECLI.md"), "Always use TypeScript.");
+  await fs.writeFile(path.join(ws, "KRITYA.md"), "Always use TypeScript.");
   const prompt = buildSystemPrompt(ws);
   assert.ok(prompt.includes("Always use TypeScript."));
   assert.ok(prompt.includes("Project instructions"));
 
   const wsEmpty = await makeWorkspace();
   assert.ok(!buildSystemPrompt(wsEmpty).includes("Project instructions"));
+});
+
+test("system prompt no longer honors the legacy CODECLI.md filename", async () => {
+  const ws = await makeWorkspace();
+  await fs.writeFile(path.join(ws, "CODECLI.md"), "Always use TypeScript.");
+  const prompt = buildSystemPrompt(ws);
+  assert.ok(!prompt.includes("Project instructions"));
 });
 
 test("permission manager: reads never prompt, writes prompt until always", () => {

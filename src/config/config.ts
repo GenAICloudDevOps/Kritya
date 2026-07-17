@@ -48,8 +48,6 @@ export interface McpServerConfig {
 
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-/** Pre-rename config location; read as a fallback so existing users keep their settings. */
-const LEGACY_CONFIG_FILE = path.join(os.homedir(), ".code-cli", "config.json");
 
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 
@@ -111,15 +109,12 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
 }
 
 export function loadConfig(): CliConfig {
-  for (const file of [CONFIG_FILE, LEGACY_CONFIG_FILE]) {
-    try {
-      const raw = fs.readFileSync(file, "utf8");
-      return JSON.parse(raw) as CliConfig;
-    } catch {
-      // try next location
-    }
+  try {
+    const raw = fs.readFileSync(CONFIG_FILE, "utf8");
+    return JSON.parse(raw) as CliConfig;
+  } catch {
+    return {};
   }
-  return {};
 }
 
 export function saveConfig(patch: Partial<CliConfig>): void {

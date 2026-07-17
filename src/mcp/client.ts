@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { McpServerConfig } from "../config/config.js";
 import type { ToolDef } from "../types.js";
+import { VERSION } from "../version.js";
 
 /**
  * Minimal Model Context Protocol client over the stdio transport: newline-
@@ -109,7 +110,7 @@ class McpConnection {
       {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "kritya", version: "0.3.0" },
+        clientInfo: { name: "kritya", version: VERSION },
       },
       CONNECT_TIMEOUT_MS
     );

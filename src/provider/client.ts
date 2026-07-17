@@ -24,9 +24,6 @@ export interface StreamCallbacks {
   onRetry?(attempt: number, status?: number): void;
 }
 
-/** Backward-compatible alias; the client is provider-agnostic. */
-export { ProviderClient as NvidiaClient };
-
 /** Retry transient provider failures (429 / 5xx / network) with backoff. */
 const MAX_ATTEMPTS = 4;
 
