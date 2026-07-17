@@ -7,6 +7,21 @@ import { matchesRule, type PermissionRules } from "./rules.js";
  * for that tool earlier in the session. A deny rule blocks the call outright
  * and cannot be overridden by an allow rule or an "always" choice.
  */
+/**
+ * Key under which an "always allow" decision is recorded for a tool call.
+ * For `shell`, this is scoped to the command's first word (e.g. "git") so
+ * that approving one command doesn't silently pre-approve every future shell
+ * command for the rest of the session — only future commands starting with
+ * the same program name.
+ */
+function alwaysAllowKey(toolName: string, args: Record<string, unknown>): string {
+  if (toolName !== "shell") return toolName;
+  const firstWord = String(args.command ?? "")
+    .trim()
+    .split(/\s+/)[0];
+  return firstWord ? `shell:${firstWord}` : "shell";
+}
+
 export class PermissionManager {
   private alwaysAllowed = new Set<string>();
   private allow: string[];
@@ -29,11 +44,11 @@ export class PermissionManager {
 
   needsPrompt(tool: ToolDef, args: Record<string, unknown> = {}): boolean {
     if (!tool.requiresPermission) return false;
-    if (this.alwaysAllowed.has(tool.name)) return false;
+    if (this.alwaysAllowed.has(alwaysAllowKey(tool.name, args))) return false;
     return !this.allow.some((rule) => matchesRule(rule, tool.name, args));
   }
 
-  record(toolName: string, decision: PermissionDecision): void {
-    if (decision === "always") this.alwaysAllowed.add(toolName);
+  record(toolName: string, decision: PermissionDecision, args: Record<string, unknown> = {}): void {
+    if (decision === "always") this.alwaysAllowed.add(alwaysAllowKey(toolName, args));
   }
 }

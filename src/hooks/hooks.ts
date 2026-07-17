@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
+import { safeCompileRegex } from "../tools/common.js";
 
 /**
  * User-configured shell hooks, from the `hooks` key of settings.json (workspace
@@ -88,7 +89,15 @@ export class HookRunner {
     };
     const outputs: string[] = [];
     for (const def of defs) {
-      if (def.match && !new RegExp(def.match).test(toolName)) continue;
+      if (def.match) {
+        let matches: boolean;
+        try {
+          matches = safeCompileRegex(def.match).test(toolName);
+        } catch {
+          continue; // malformed or unsafe pattern in settings.json — skip this hook
+        }
+        if (!matches) continue;
+      }
       try {
         const out = execSync(def.command, {
           cwd: this.workspace,

@@ -254,7 +254,7 @@ export class Agent {
         danger ?? undefined
       );
       // A forced (danger) prompt does not grant a lasting allowance.
-      if (danger === null) this.permissions.record(tool.name, decision);
+      if (danger === null) this.permissions.record(tool.name, decision, args);
       if (decision === "no") {
         handlers.onToolEnd(name, summary, "denied by user", true);
         return "The user denied permission for this tool call. Do not retry it; ask the user how to proceed or take a different approach.";

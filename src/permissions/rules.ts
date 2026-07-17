@@ -57,6 +57,9 @@ function subjectFor(toolName: string, args: Record<string, unknown>): string {
   return String(args.path ?? args.pattern ?? "").trim();
 }
 
+/** Shell metacharacters that chain/substitute commands (&&, ||, ;, |, `, $(...)). */
+const SHELL_METACHAR_RE = /&&|\|\||[;|`]|\$\(/;
+
 export function matchesRule(
   rule: string,
   toolName: string,
@@ -67,8 +70,24 @@ export function matchesRule(
   const [, ruleTool, pattern] = m;
   if (ruleTool !== toolName) return false;
   if (pattern === undefined) return true;
+  const trimmedPattern = pattern.trim();
   const subject = subjectFor(toolName, args);
-  const regex = new RegExp("^" + pattern.trim().split("*").map(escapeRegExp).join(".*") + "$");
+
+  // A wildcard shell(...) rule (e.g. shell(git *)) is only meant to allow one
+  // command, not an arbitrary chain appended after it. If the actual command
+  // contains shell metacharacters that the allowed pattern itself didn't
+  // spell out, refuse the match so it falls through to a permission prompt
+  // instead of silently auto-approving `git status && rm -rf /`.
+  if (
+    toolName === "shell" &&
+    trimmedPattern.includes("*") &&
+    SHELL_METACHAR_RE.test(subject) &&
+    !SHELL_METACHAR_RE.test(trimmedPattern)
+  ) {
+    return false;
+  }
+
+  const regex = new RegExp("^" + trimmedPattern.split("*").map(escapeRegExp).join(".*") + "$");
   return regex.test(subject);
 }
 

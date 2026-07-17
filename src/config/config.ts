@@ -120,8 +120,16 @@ export function loadConfig(): CliConfig {
 export function saveConfig(patch: Partial<CliConfig>): void {
   const current = loadConfig();
   const next = { ...current, ...patch };
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + "\n");
+  // config.json can hold a literal apiKey — keep it readable only by the owner.
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+  // `mode` on writeFileSync only applies when creating a new file; enforce it
+  // even if config.json pre-existed with looser permissions.
+  try {
+    fs.chmodSync(CONFIG_FILE, 0o600);
+  } catch {
+    // best-effort
+  }
 }
 
 /** Parse simple KEY=VALUE lines; ignores comments, blanks, and export prefixes. */

@@ -34,17 +34,21 @@ export class SessionStore {
   /** Begin a session, optionally seeded with resumed history. */
   start(seed: ChatMessage[] = []): void {
     if (this.ephemeral) return;
-    fs.mkdirSync(this.dir, { recursive: true });
+    // Session transcripts can contain secrets that passed through tool
+    // output — keep them readable only by the owner.
+    fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     if (seed.length) {
-      fs.writeFileSync(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""));
+      fs.writeFileSync(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""), {
+        mode: 0o600,
+      });
     }
   }
 
   append(message: ChatMessage): void {
     if (this.ephemeral) return;
     try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      fs.appendFileSync(this.file, JSON.stringify(message) + "\n");
+      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      fs.appendFileSync(this.file, JSON.stringify(message) + "\n", { mode: 0o600 });
     } catch {
       // Persistence is best-effort; never crash the session over it.
     }

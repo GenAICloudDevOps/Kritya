@@ -61,6 +61,21 @@ export function resolveSafe(workspace: string, p: string): string {
   return abs;
 }
 
+/**
+ * Like {@link resolveSafe} but never throws — returns false for any path
+ * that escapes the workspace (directly or via symlink) or looks like a
+ * secret file. Used by tools (grep) that scan many candidate paths and
+ * should silently skip unsafe ones rather than aborting the whole search.
+ */
+export function isPathSafe(workspace: string, p: string): boolean {
+  try {
+    resolveSafe(workspace, p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const MAX_RESULT_CHARS = 30_000;
 
 export function truncateResult(s: string, max = MAX_RESULT_CHARS): string {
@@ -72,4 +87,26 @@ export function truncateResult(s: string, max = MAX_RESULT_CHARS): string {
 export function truncateTail(s: string, max = MAX_RESULT_CHARS): string {
   if (s.length <= max) return s;
   return `[... truncated, ${s.length - max} earlier characters]\n` + s.slice(-max);
+}
+
+const MAX_REGEX_PATTERN_LENGTH = 500;
+/** Nested-quantifier shapes like (a+)+, (a*)*, (a+)*, (.*)+ — classic catastrophic backtracking. */
+const CATASTROPHIC_BACKTRACKING_RE = /\([^()]*[+*][^()]*\)[+*]/;
+
+/**
+ * Compile a regex supplied by the model or a settings file, rejecting
+ * patterns that are excessively long or match a known catastrophic-
+ * backtracking shape. This is a heuristic backstop, not a guarantee — Node
+ * has no built-in regex execution timeout — but it catches the common cases
+ * (e.g. a model emitting `(a+)+$` as a grep pattern) before they can hang the
+ * process on adversarial input.
+ */
+export function safeCompileRegex(pattern: string, flags?: string): RegExp {
+  if (pattern.length > MAX_REGEX_PATTERN_LENGTH) {
+    throw new Error(`Pattern too long (max ${MAX_REGEX_PATTERN_LENGTH} characters)`);
+  }
+  if (CATASTROPHIC_BACKTRACKING_RE.test(pattern)) {
+    throw new Error("Pattern rejected: nested quantifiers can cause catastrophic backtracking");
+  }
+  return new RegExp(pattern, flags);
 }

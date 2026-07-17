@@ -62,7 +62,10 @@ export const webSearchTool: ToolDef = {
     },
     required: ["query"],
   },
-  requiresPermission: false,
+  // Requires a prompt (rather than running silently) so the query text is
+  // visible before it's sent out — under prompt injection, a search query is
+  // an easy channel to smuggle file contents to an external service.
+  requiresPermission: true,
   external: true,
   summarize: (args) => `Web search: ${args.query}`,
   async execute(args) {

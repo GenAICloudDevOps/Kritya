@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import fg from "fast-glob";
 import type { ToolDef } from "../types.js";
-import { resolveSafe, truncateResult } from "./common.js";
+import { isPathSafe, resolveSafe, safeCompileRegex, truncateResult } from "./common.js";
 import { loadIgnorePatterns } from "./ignore.js";
 
 const MAX_MATCHES = 200;
@@ -29,13 +29,14 @@ export const grepTool: ToolDef = {
   requiresPermission: false,
   summarize: (args) => `Grep /${args.pattern}/ in ${args.path ?? "."}`,
   async execute(args, ctx) {
-    const regex = new RegExp(String(args.pattern));
+    const regex = safeCompileRegex(String(args.pattern));
     const searchRoot = resolveSafe(ctx.workspace, String(args.path ?? "."));
     // Models on Windows sometimes emit backslash paths; fast-glob needs forward slashes.
     const files = await fg(String(args.include ?? "**/*").replaceAll("\\", "/"), {
       cwd: searchRoot,
       dot: false,
       onlyFiles: true,
+      followSymbolicLinks: false,
       ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(ctx.workspace)],
       suppressErrors: true,
     });
@@ -44,6 +45,10 @@ export const grepTool: ToolDef = {
     for (const file of files) {
       if (matches.length >= MAX_MATCHES) break;
       const abs = path.join(searchRoot, file);
+      // Same secret-file and symlink-escape guard as read_file, applied per
+      // matched file (the root-only check above isn't enough for a recursive
+      // glob that can traverse into a sensitive path or a symlink).
+      if (!isPathSafe(ctx.workspace, abs)) continue;
       let stat;
       try {
         stat = await fs.stat(abs);

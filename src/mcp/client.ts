@@ -14,6 +14,29 @@ const PROTOCOL_VERSION = "2024-11-05";
 const CONNECT_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 120_000;
 
+/** Env vars an MCP server's own OS/runtime needs to start up at all, without inheriting API keys. */
+const PASSTHROUGH_ENV_VARS = [
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "SystemRoot",
+  "windir",
+  "TEMP",
+  "TMP",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "NODE_PATH",
+];
+
+function minimalEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of PASSTHROUGH_ENV_VARS) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 interface Pending {
   resolve(value: unknown): void;
   reject(err: Error): void;
@@ -38,7 +61,11 @@ class McpConnection {
     cfg: McpServerConfig
   ) {
     this.proc = spawn(cfg.command, cfg.args ?? [], {
-      env: { ...process.env, ...cfg.env },
+      // Minimal env, not the full process env: every provider API key lives
+      // in process.env, and an MCP server is third-party code the user opted
+      // into but shouldn't automatically receive credentials it never asked
+      // for. Servers that need extra vars declare them in their own `env`.
+      env: { ...minimalEnv(), ...cfg.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.proc.stdout?.setEncoding("utf8");

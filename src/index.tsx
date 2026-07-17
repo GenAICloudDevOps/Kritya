@@ -86,61 +86,22 @@ if (!fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
   process.exit(1);
 }
 
-loadDotEnv([
-  path.join(workspace, ".env"),
-  path.join(process.cwd(), ".env"),
-  path.join(CONFIG_DIR, ".env"),
-]);
-
-const config = loadConfig();
-const provider = resolveProvider(config, args.provider || undefined);
-const apiKey = provider.apiKey;
-if (!apiKey) {
-  const hint =
-    provider.name === "nvidia"
-      ? `Get one at https://build.nvidia.com, then one of:\n` +
-        `  put NVIDIA_API_KEY=nvapi-... in a .env file (workspace or ~/.kritya/.env)\n` +
-        `  export NVIDIA_API_KEY=nvapi-...\n` +
-        `  add "apiKey" to ~/.kritya/config.json`
-      : `Set the API key for provider "${provider.name}" via its env var or a .env file,\n` +
-        `  or add it under providers.${provider.name}.apiKey in ~/.kritya/config.json`;
-  console.error(`No API key found for provider "${provider.name}".\n\n${hint}`);
-  process.exit(1);
-}
+// Only the user's own global .env (~/.kritya/.env) is unconditionally trusted.
+// The workspace's .env — and process.cwd()'s, which is often the same
+// directory — can be authored by whoever's repo this is, so loading it is
+// gated behind the workspace trust prompt below (see resolveWorkspaceTrust).
+loadDotEnv([path.join(CONFIG_DIR, ".env")]);
 
 if (!process.stdin.isTTY) {
   console.error("kritya is interactive and requires a TTY.");
   process.exit(1);
 }
 
-const providerDefaultModel = config.providers?.[provider.name]?.model;
-const modelRef = {
-  current: args.model || config.model || providerDefaultModel || DEFAULT_MODEL,
-};
-const client = new ProviderClient(apiKey, provider.baseUrl, {
-  temperature: provider.temperature,
-  topP: provider.topP,
-  maxTokens: provider.maxTokens,
-});
-const session = new SessionStore(workspace);
-
-const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
-session.start(initialHistory);
-
-const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
-
-process.on("exit", () => {
-  backgroundManager.killAll();
-  shutdownMcp();
-});
-
-const undoStack = new UndoStack();
-const uiBridge: UiBridge = { onTasksUpdate: (_tasks: TaskItem[]) => {} };
-
 /**
- * Whether the workspace's .kritya/settings.json `allow` rules and `hooks`
- * may take effect. Prompts (via a standalone Ink screen) only when that file
- * actually has gated content and it hasn't already been trusted.
+ * Whether the workspace's .kritya/settings.json `allow` rules, `hooks`,
+ * `.env` file, and `.kritya/commands/*.md` may take effect. Prompts (via a
+ * standalone Ink screen) only when that content actually exists and hasn't
+ * already been trusted.
  */
 async function resolveWorkspaceTrust(): Promise<boolean> {
   const hash = gatedContentHash(workspace);
@@ -171,6 +132,50 @@ async function resolveWorkspaceTrust(): Promise<boolean> {
 
 async function main() {
   const trustWorkspace = await resolveWorkspaceTrust();
+  if (trustWorkspace) {
+    loadDotEnv([path.join(workspace, ".env"), path.join(process.cwd(), ".env")]);
+  }
+
+  const config = loadConfig();
+  const provider = resolveProvider(config, args.provider || undefined);
+  const apiKey = provider.apiKey;
+  if (!apiKey) {
+    const hint =
+      provider.name === "nvidia"
+        ? `Get one at https://build.nvidia.com, then one of:\n` +
+          `  put NVIDIA_API_KEY=nvapi-... in a .env file (workspace or ~/.kritya/.env)\n` +
+          `  export NVIDIA_API_KEY=nvapi-...\n` +
+          `  add "apiKey" to ~/.kritya/config.json`
+        : `Set the API key for provider "${provider.name}" via its env var or a .env file,\n` +
+          `  or add it under providers.${provider.name}.apiKey in ~/.kritya/config.json`;
+    console.error(`No API key found for provider "${provider.name}".\n\n${hint}`);
+    process.exit(1);
+  }
+
+  const providerDefaultModel = config.providers?.[provider.name]?.model;
+  const modelRef = {
+    current: args.model || config.model || providerDefaultModel || DEFAULT_MODEL,
+  };
+  const client = new ProviderClient(apiKey, provider.baseUrl, {
+    temperature: provider.temperature,
+    topP: provider.topP,
+    maxTokens: provider.maxTokens,
+  });
+  const session = new SessionStore(workspace);
+
+  const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
+  session.start(initialHistory);
+
+  const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
+
+  process.on("exit", () => {
+    backgroundManager.killAll();
+    shutdownMcp();
+  });
+
+  const undoStack = new UndoStack();
+  const uiBridge: UiBridge = { onTasksUpdate: (_tasks: TaskItem[]) => {} };
+
   // MCP servers (if any) contribute extra tools; loading is resilient.
   const mcpTools: ToolDef[] = await loadMcpTools(config.mcpServers);
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
@@ -235,7 +240,7 @@ async function main() {
       undoStack={undoStack}
       uiBridge={uiBridge}
       resumeSessions={resumeSessions.length ? resumeSessions : undefined}
-      customCommands={loadCustomCommands(workspace)}
+      customCommands={loadCustomCommands(workspace, trustWorkspace)}
       mcpToolCount={mcpTools.length}
     />
   );

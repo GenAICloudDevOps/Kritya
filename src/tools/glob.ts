@@ -1,6 +1,7 @@
+import path from "node:path";
 import fg from "fast-glob";
 import type { ToolDef } from "../types.js";
-import { truncateResult } from "./common.js";
+import { isPathSafe, truncateResult } from "./common.js";
 import { loadIgnorePatterns } from "./ignore.js";
 
 export const globTool: ToolDef = {
@@ -23,11 +24,13 @@ export const globTool: ToolDef = {
       cwd: ctx.workspace,
       dot: false,
       onlyFiles: true,
+      followSymbolicLinks: false,
       ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(ctx.workspace)],
       suppressErrors: true,
     });
-    const capped = files.sort().slice(0, 200);
-    const suffix = files.length > 200 ? `\n... [${files.length - 200} more]` : "";
+    const safeFiles = files.filter((f) => isPathSafe(ctx.workspace, path.join(ctx.workspace, f)));
+    const capped = safeFiles.sort().slice(0, 200);
+    const suffix = safeFiles.length > 200 ? `\n... [${safeFiles.length - 200} more]` : "";
     return truncateResult(capped.join("\n") + suffix || "(no matches)");
   },
 };
