@@ -16,7 +16,8 @@ export const globTool: ToolDef = {
   requiresPermission: false,
   summarize: (args) => `Glob ${args.pattern}`,
   async execute(args, ctx) {
-    const files = await fg(String(args.pattern), {
+    // Models on Windows sometimes emit backslash paths; fast-glob needs forward slashes.
+    const files = await fg(String(args.pattern).replaceAll("\\", "/"), {
       cwd: ctx.workspace,
       dot: false,
       onlyFiles: true,

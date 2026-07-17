@@ -23,6 +23,8 @@ export interface ToolDef {
   parameters: Record<string, unknown>;
   /** Whether the tool mutates state and must be approved by the user. */
   requiresPermission: boolean;
+  /** Tool returns content from outside the workspace (web); output is wrapped as untrusted. */
+  external?: boolean;
   /** One-line human-readable description of a concrete invocation. */
   summarize(args: Record<string, unknown>): string;
   /** Optional diff/preview shown in the permission prompt. */

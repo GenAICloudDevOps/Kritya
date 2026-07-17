@@ -56,6 +56,7 @@ export const webSearchTool: ToolDef = {
     required: ["query"],
   },
   requiresPermission: false,
+  external: true,
   summarize: (args) => `Web search: ${args.query}`,
   async execute(args) {
     return tavilySearch(String(args.query), Number(args.max_results) || 5);

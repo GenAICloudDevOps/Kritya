@@ -29,7 +29,8 @@ export const grepTool: ToolDef = {
   async execute(args, ctx) {
     const regex = new RegExp(String(args.pattern));
     const searchRoot = resolveSafe(ctx.workspace, String(args.path ?? "."));
-    const files = await fg(String(args.include ?? "**/*"), {
+    // Models on Windows sometimes emit backslash paths; fast-glob needs forward slashes.
+    const files = await fg(String(args.include ?? "**/*").replaceAll("\\", "/"), {
       cwd: searchRoot,
       dot: false,
       onlyFiles: true,

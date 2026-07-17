@@ -49,8 +49,11 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | Command | What it does |
 | --- | --- |
 | `/model` | interactive model picker (`/model <id>` sets any NVIDIA model ID directly) |
+| `/init` | scan the repo and generate a `KRITYA.md` project-memory file |
+| `/commit` | have the agent review, stage, and commit the current git changes |
 | `/web-search <query>` | search the web via Tavily; results are shown and added to context |
-| `/undo` | revert the last file change the agent made (up to 50 steps) |
+| `/undo` | revert all file changes from the agent's last turn |
+| `/compact` | summarize older conversation to free context space |
 | `/clear` | start a fresh conversation |
 | `/cost` | token usage and estimated $ (see Pricing below) |
 | `/help` | command list |
@@ -60,24 +63,57 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 
 ### More features
 
+- **Steer mid-run** — type while the agent is working and press Enter; your
+  message is queued and absorbed before its next step (no need to interrupt).
+- **Auto-compaction** — when the conversation nears the model's context window
+  (80% of `contextWindow`, default 120k tokens), older turns are summarized
+  automatically; the statusline shows current usage as `ctx N%`.
+- **Background processes** — the agent can start dev servers/watchers with
+  `background: true`, read their output (`bg_output`), and stop them
+  (`bg_kill`); everything is killed when kritya exits. Foreground commands
+  accept a `timeout_seconds` (default 120), and long output keeps the tail,
+  where the errors are.
+- **Git aware** — the statusline shows the current branch, the agent sees
+  `git status` each request, and `/undo` checkpoints are per turn.
 - **@ file mentions** — type `@` in your message to autocomplete a file path
   (↑↓ select, Tab/Enter attach); the file's content is sent along with your message.
-- **Project memory** — create a `KRITYA.md` in your workspace root with standing
-  instructions ("always use TypeScript", "tests live in /tests"); the agent reads
-  it every request.
+- **Project memory** — create a `KRITYA.md` in your workspace root (or run
+  `/init` to generate one) with standing instructions; the agent reads it
+  every request. `CODECLI.md` is still honored as a fallback.
 - **Sub-task checklist** — for multi-step requests the agent plans first and shows
   a live ☐/◐/☑ checklist as it works.
 - **Diff preview** — write/edit permission prompts show a red/green line diff of
-  exactly what will change before you approve.
+  exactly what will change before you approve; code blocks in answers are
+  syntax-highlighted.
+- **Session search** — `kritya -r` lists past sessions by title (first message);
+  type to filter.
 - **Web search tool** — besides `/web-search`, the agent can search on its own when
-  it needs current information (needs `TAVILY_API_KEY` in `.env`, free at tavily.com).
+  it needs current information (needs `TAVILY_API_KEY` in `.env`, free at
+  tavily.com). Web content is delimited as untrusted so pages can't inject
+  instructions into the agent.
 
 ## Permissions
 
-- Read-only tools (`read_file`, `list_dir`, `glob`, `grep`) run without asking.
+- Read-only tools (`read_file`, `list_dir`, `glob`, `grep`, `bg_output`) run
+  without asking.
 - Mutating tools (`write_file`, `edit_file`, `shell`) prompt: **Yes / Yes, always
   for this session / No**.
 - File tools are confined to the workspace directory you launched in.
+
+### Allowlists
+
+Skip prompts for commands you always trust via `.kritya/settings.json` in your
+workspace (per-project) or `~/.kritya/settings.json` (global):
+
+```json
+{
+  "allow": ["shell(npm test)", "shell(git status)", "shell(git diff*)", "write_file"]
+}
+```
+
+A bare tool name allows that tool; `shell(pattern)` allows shell commands
+matching the pattern, where `*` is a wildcard. Matching is anchored —
+`shell(npm test)` does **not** allow `npm test && something-else`.
 
 ## Configuration
 
@@ -91,7 +127,8 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
   "customModels": [{ "id": "some-org/new-model", "label": "New Model" }],
   "pricing": {
     "nvidia/nemotron-3-super-120b-a12b": { "input": 0.6, "output": 2.4 }
-  }
+  },
+  "contextWindow": 120000
 }
 ```
 
@@ -114,6 +151,7 @@ npm test        # build + unit tests
 ```
 
 Architecture: `src/provider` (NVIDIA OpenAI-compatible streaming client) →
-`src/agent` (the tool-call loop + system prompt) → `src/tools` (7 plain-object
-tools) → `src/ui` (Ink/React terminal UI), with `src/permissions` and
-`src/session` supporting. See `docs/superpowers/specs/` for the design doc.
+`src/agent` (the tool-call loop, compaction, system prompt) → `src/tools`
+(plain-object tools) → `src/ui` (Ink/React terminal UI), with
+`src/permissions`, `src/session`, `src/shell` (background processes), and
+`src/git` supporting. See `docs/superpowers/specs/` for the design doc.

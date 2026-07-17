@@ -55,6 +55,7 @@ export interface AppProps {
 const COMMANDS: { name: string; description: string }[] = [
   { name: "/help", description: "show available commands" },
   { name: "/model", description: "pick a model, or /model <id> for any NVIDIA model ID" },
+  { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
   { name: "/web-search", description: "search the web: /web-search <query>" },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
   { name: "/commit", description: "have the agent stage and commit the current changes" },
@@ -295,6 +296,15 @@ export function App({
             setActivity(null);
             setPhase("input");
           });
+        break;
+      case "/init":
+        addItem({ kind: "user", text: "/init" });
+        void runAgent(
+          "Explore this repository (README, package/build files, src layout, test setup) and write " +
+            "a concise KRITYA.md at the workspace root: what the project is, key commands " +
+            "(build/test/run), architecture in 5-10 bullets, and conventions a coding agent must " +
+            "follow when working here. Keep it under 60 lines."
+        );
         break;
       case "/commit":
         addItem({ kind: "user", text: "/commit" });
