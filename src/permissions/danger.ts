@@ -16,7 +16,10 @@ const PATTERNS: DangerPattern[] = [
     label: "recursive/forced file deletion (rm -rf)",
   },
   { re: /\brmdir\s+\/s/i, label: "recursive directory deletion" },
-  { re: /\bgit\s+push\b.*(--force(-with-lease)?|-f)\b/i, label: "force push (rewrites remote history)" },
+  {
+    re: /\bgit\s+push\b.*(--force(-with-lease)?|-f)\b/i,
+    label: "force push (rewrites remote history)",
+  },
   { re: /\bgit\s+reset\s+--hard/i, label: "hard reset (discards local changes)" },
   {
     re: /\bgit\s+clean\s+.*(-[a-z]*f[a-z]*\b|--force\b)/i,
