@@ -8,12 +8,15 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { updateTasksTool } from "./tasks.js";
 import { webSearchTool } from "./webSearch.js";
+import { bgOutputTool, bgKillTool } from "./bg.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   readFileTool,
   writeFileTool,
   editFileTool,
   shellTool,
+  bgOutputTool,
+  bgKillTool,
   listDirTool,
   globTool,
   grepTool,

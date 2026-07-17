@@ -180,7 +180,7 @@ export class Agent {
       summary = name;
     }
 
-    if (this.permissions.needsPrompt(tool)) {
+    if (this.permissions.needsPrompt(tool, args)) {
       let diff: string | undefined;
       if (tool.preview) {
         try {

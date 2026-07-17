@@ -13,8 +13,10 @@ import {
 } from "./config/config.js";
 import { DEFAULT_MODEL } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
+import { loadAllowRules } from "./permissions/rules.js";
 import { NvidiaClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
+import { backgroundManager } from "./shell/background.js";
 import { ALL_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
@@ -108,6 +110,8 @@ session.start(initialHistory);
 
 const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
 
+process.on("exit", () => backgroundManager.killAll());
+
 const undoStack = new UndoStack();
 const uiBridge: UiBridge = { onTasksUpdate: (_tasks: TaskItem[]) => {} };
 
@@ -120,7 +124,7 @@ const agent = new Agent(
     undo: undoStack,
     onTasksUpdate: (tasks) => uiBridge.onTasksUpdate(tasks),
   },
-  new PermissionManager(),
+  new PermissionManager(loadAllowRules(workspace)),
   session,
   initialHistory
 );

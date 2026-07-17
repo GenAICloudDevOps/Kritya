@@ -1,25 +1,50 @@
 import { exec } from "node:child_process";
+import { backgroundManager } from "../shell/background.js";
 import type { ToolDef } from "../types.js";
-import { truncateResult } from "./common.js";
+import { truncateTail } from "./common.js";
 
-const TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_S = 120;
+const MAX_TIMEOUT_S = 600;
 
 export const shellTool: ToolDef = {
   name: "shell",
   description:
-    "Run a shell command in the workspace root (sh on Linux/macOS, cmd on Windows). " +
-    "Returns stdout, stderr, and the exit code. Times out after 2 minutes.",
+    "Run a shell command from the workspace root (sh on Linux/macOS, cmd on Windows). " +
+    "Returns stdout, stderr, and the exit code. Use `cd subdir && cmd` to run in a subdirectory. " +
+    "For long-running processes (dev servers, watchers) pass background:true — the command " +
+    "returns an id immediately; use bg_output to read its output and bg_kill to stop it. " +
+    "Foreground commands time out after timeout_seconds (default 120, max 600).",
   parameters: {
     type: "object",
     properties: {
       command: { type: "string", description: "The command to run" },
+      timeout_seconds: {
+        type: "number",
+        description: "Foreground timeout in seconds (default 120, max 600)",
+      },
+      background: {
+        type: "boolean",
+        description: "Run detached for servers/watchers; returns an id for bg_output/bg_kill",
+      },
     },
     required: ["command"],
   },
   requiresPermission: true,
-  summarize: (args) => `Run: ${args.command}`,
+  summarize: (args) => `Run${args.background ? " in background" : ""}: ${args.command}`,
   execute(args, ctx) {
     const command = String(args.command);
+
+    if (args.background) {
+      const { id } = backgroundManager.start(command, ctx.workspace);
+      return Promise.resolve(
+        `Started background process ${id}: ${command}\nUse bg_output {"id":"${id}"} to read its output and bg_kill {"id":"${id}"} to stop it.`
+      );
+    }
+
+    const timeoutS = Math.min(
+      Math.max(Number(args.timeout_seconds) || DEFAULT_TIMEOUT_S, 1),
+      MAX_TIMEOUT_S
+    );
     // exec (not execFile) on purpose: this tool exists to run arbitrary
     // shell commands, and every invocation is gated by a user permission prompt.
     return new Promise((resolve) => {
@@ -27,7 +52,7 @@ export const shellTool: ToolDef = {
         command,
         {
           cwd: ctx.workspace,
-          timeout: TIMEOUT_MS,
+          timeout: timeoutS * 1000,
           maxBuffer: 10 * 1024 * 1024,
           windowsHide: true,
         },
@@ -37,12 +62,14 @@ export const shellTool: ToolDef = {
           if (stderr) parts.push(`[stderr]\n${stderr.trimEnd()}`);
           if (error) {
             if (error.killed) {
-              parts.push(`[command timed out after ${TIMEOUT_MS / 1000}s]`);
+              parts.push(
+                `[command timed out after ${timeoutS}s — for servers/watchers use background:true]`
+              );
             } else {
               parts.push(`[exit code: ${error.code ?? "unknown"}]`);
             }
           }
-          resolve(truncateResult(parts.join("\n") || "(no output)"));
+          resolve(truncateTail(parts.join("\n") || "(no output)"));
         }
       );
     });

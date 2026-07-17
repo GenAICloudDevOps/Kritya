@@ -19,3 +19,9 @@ export function truncateResult(s: string, max = MAX_RESULT_CHARS): string {
   if (s.length <= max) return s;
   return s.slice(0, max) + `\n... [truncated, ${s.length - max} more characters]`;
 }
+
+/** Truncate keeping the END — for command output, where errors and summaries come last. */
+export function truncateTail(s: string, max = MAX_RESULT_CHARS): string {
+  if (s.length <= max) return s;
+  return `[... truncated, ${s.length - max} earlier characters]\n` + s.slice(-max);
+}

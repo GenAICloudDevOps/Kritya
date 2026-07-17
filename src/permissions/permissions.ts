@@ -1,15 +1,20 @@
 import type { PermissionDecision, ToolDef } from "../types.js";
+import { matchesRule } from "./rules.js";
 
 /**
- * Session-scoped permission policy. Read-only tools never prompt; mutating
- * tools prompt unless the user chose "always allow" for that tool earlier
- * in the session.
+ * Permission policy. Read-only tools never prompt; mutating tools prompt
+ * unless allowed by a settings-file rule or the user chose "always allow"
+ * for that tool earlier in the session.
  */
 export class PermissionManager {
   private alwaysAllowed = new Set<string>();
 
-  needsPrompt(tool: ToolDef): boolean {
-    return tool.requiresPermission && !this.alwaysAllowed.has(tool.name);
+  constructor(private rules: string[] = []) {}
+
+  needsPrompt(tool: ToolDef, args: Record<string, unknown> = {}): boolean {
+    if (!tool.requiresPermission) return false;
+    if (this.alwaysAllowed.has(tool.name)) return false;
+    return !this.rules.some((rule) => matchesRule(rule, tool.name, args));
   }
 
   record(toolName: string, decision: PermissionDecision): void {
