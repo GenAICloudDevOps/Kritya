@@ -64,6 +64,7 @@ export function Banner({ subtitle }: { subtitle?: string }) {
         </Text>
       )}
       <Box marginTop={2}>{subtitle ? <Text dimColor>{center(subtitle)}</Text> : null}</Box>
+      <Text dimColor>{center("AI can make mistakes. Verify important output.")}</Text>
     </Box>
   );
 }

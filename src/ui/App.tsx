@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
 import path from "node:path";
@@ -63,7 +63,9 @@ export function App({
   mcpToolCount = 0,
 }: AppProps) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const [input, setInput] = useState("");
+  const [inputKey, setInputKey] = useState(0);
   const [steerInput, setSteerInput] = useState("");
   const [resumeFilter, setResumeFilter] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
@@ -71,8 +73,39 @@ export function App({
   const [fileList, setFileList] = useState<string[]>([]);
   const [verbose, setVerbose] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [staticKey, setStaticKey] = useState(0);
   const inputHistory = useRef<string[]>([]);
   const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
+
+  // Ink's <Static> flushes each item once at whatever width was current at the
+  // time; already-flushed history doesn't rewrap when the terminal is
+  // resized mid-turn. Remounting <Static> makes Ink treat all items as newly
+  // added, so it reflows them at the new width through Ink's own safe
+  // static-flush path. Don't write raw ANSI escapes ourselves here — Ink
+  // tracks previously-written line counts internally (via log-update) to
+  // erase and redraw the live input region; writing to stdout outside that
+  // path desyncs the bookkeeping and corrupts the next redraw. Only remount
+  // when the column count actually changed — panel actions that only change
+  // height (e.g. VS Code adding/removing a split terminal, which fires
+  // 'resize' too) shouldn't trigger a reflow, since there's nothing to rewrap.
+  const lastColumns = useRef(stdout?.columns);
+  useEffect(() => {
+    if (!stdout) return;
+    let timer: NodeJS.Timeout | undefined;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (stdout.columns === lastColumns.current) return;
+        lastColumns.current = stdout.columns;
+        setStaticKey((k) => k + 1);
+      }, 150);
+    };
+    stdout.on("resize", onResize);
+    return () => {
+      clearTimeout(timer);
+      stdout.off("resize", onResize);
+    };
+  }, [stdout]);
 
   const refreshFileList = useCallback(() => {
     fg("**/*", {
@@ -162,6 +195,7 @@ export function App({
     if (!mentionMatch) return;
     const head = input.slice(0, mentionMatch.index + mentionMatch[1].length);
     setInput(`${head}@${file} `);
+    setInputKey((k) => k + 1);
     setFileIndex(0);
   };
 
@@ -203,7 +237,10 @@ export function App({
     if (suggestions.length) {
       if (key.upArrow) setCmdIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
       else if (key.downArrow) setCmdIndex((i) => (i + 1) % suggestions.length);
-      else if (key.tab) setInput(suggestions[selectedCmd].name + " ");
+      else if (key.tab) {
+        setInput(suggestions[selectedCmd].name + " ");
+        setInputKey((k) => k + 1);
+      }
     } else if (fileSuggestions.length) {
       if (key.upArrow)
         setFileIndex((i) => (i - 1 + fileSuggestions.length) % fileSuggestions.length);
@@ -285,6 +322,7 @@ export function App({
     // Enter while command suggestions are open selects the highlighted command instead of sending.
     if (suggestions.length && value.trim() !== suggestions[selectedCmd].name) {
       setInput(suggestions[selectedCmd].name + " ");
+      setInputKey((k) => k + 1);
       setCmdIndex(0);
       return;
     }
@@ -316,7 +354,7 @@ export function App({
 
   return (
     <Box flexDirection="column">
-      <Static items={items}>
+      <Static key={staticKey} items={items}>
         {(item) => (
           <Box key={item.id} marginBottom={item.kind === "tool" ? 0 : 1} flexDirection="column">
             {item.kind === "user" && (
@@ -464,6 +502,7 @@ export function App({
           <Box borderStyle="round" borderColor="gray" paddingX={1}>
             <Text color="green">❯ </Text>
             <TextInput
+              key={inputKey}
               value={input}
               onChange={(v) => {
                 setInput(v.replace(/\t/g, ""));
@@ -476,7 +515,7 @@ export function App({
           {suggestions.length > 0 && (
             <Box flexDirection="column" paddingLeft={2}>
               {suggestions.map((c, i) => (
-                <Text key={c.name} color={i === selectedCmd ? "green" : undefined}>
+                <Text key={c.name} color={i === selectedCmd ? "cyan" : undefined}>
                   {i === selectedCmd ? "❯ " : "  "}
                   <Text bold={i === selectedCmd}>{c.name}</Text>
                   <Text dimColor> — {c.description}</Text>
@@ -488,7 +527,7 @@ export function App({
           {fileSuggestions.length > 0 && (
             <Box flexDirection="column" paddingLeft={2}>
               {fileSuggestions.map((f, i) => (
-                <Text key={f} color={i === selectedFile ? "green" : undefined}>
+                <Text key={f} color={i === selectedFile ? "cyan" : undefined}>
                   {i === selectedFile ? "❯ " : "  "}
                   {f}
                 </Text>
