@@ -114,9 +114,7 @@ export class LspClient {
       this.request("initialize", {
         processId: process.pid,
         rootUri: pathToFileURL(this.workspace).href,
-        workspaceFolders: [
-          { uri: pathToFileURL(this.workspace).href, name: "workspace" },
-        ],
+        workspaceFolders: [{ uri: pathToFileURL(this.workspace).href, name: "workspace" }],
         capabilities: {
           textDocument: {
             synchronization: { didSave: false },
@@ -171,7 +169,11 @@ export class LspClient {
     this.proc.stdin.write(body);
   }
 
-  private request(method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
+  private request(
+    method: string,
+    params: unknown,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ): Promise<unknown> {
     if (this.dead) return Promise.reject(new Error(this.deathReason));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
