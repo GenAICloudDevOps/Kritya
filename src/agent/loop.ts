@@ -6,6 +6,7 @@ import { splitForCompaction, renderTranscript } from "./compactor.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { classifyDanger } from "../permissions/danger.js";
 import type { HookRunner } from "../hooks/hooks.js";
+import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
 
 const DEFAULT_MAX_STEPS = 40;
 
@@ -39,6 +40,15 @@ export class Agent {
   maxSteps = DEFAULT_MAX_STEPS;
   /** When true, mutating tools are auto-denied (plan / read-only mode). */
   planMode = false;
+  /**
+   * When true, compaction also distills durable project facts out of the
+   * summarized-away messages and merges them into KRITYA.md, so useful
+   * context isn't lost once it scrolls out of the transcript. Off by
+   * default — only the main interactive agent opts in; subagents (which
+   * also run this same loop) should never write to the user's project
+   * memory on their own.
+   */
+  autoMemory = false;
   /** Optional user-configured shell hooks around tool calls and turn end. */
   hooks?: HookRunner;
   private steerQueue: string[] = [];
@@ -155,7 +165,29 @@ export class Agent {
     this.session.start(this.history);
     // Rough size estimate until the next model call reports real usage.
     this.lastPromptTokens = Math.round(JSON.stringify(this.history).length / 4);
-    return `Compacted context: summarized ${toSummarize.length} messages, kept the last ${keep.length}.`;
+    const note = `Compacted context: summarized ${toSummarize.length} messages, kept the last ${keep.length}.`;
+
+    if (!this.autoMemory) return note;
+    // Best-effort: memory distillation is a nice-to-have, never let it fail
+    // (or block on) the compaction it's piggybacking on.
+    try {
+      const existing = readProjectMemory(this.ctx.workspace);
+      const facts = await extractMemoryFacts(
+        this.client,
+        this.getModel(),
+        toSummarize,
+        renderTranscript(toSummarize),
+        existing,
+        signal
+      );
+      const added = mergeProjectMemory(this.ctx.workspace, facts);
+      if (added.length) {
+        return `${note}\nUpdated KRITYA.md with ${added.length} new project fact(s):\n${added.map((f) => `  - ${f}`).join("\n")}`;
+      }
+    } catch {
+      // memory distillation is best-effort; compaction itself still succeeded
+    }
+    return note;
   }
 
   async runTurn(

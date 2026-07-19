@@ -406,6 +406,10 @@ async function main() {
   agent.contextWindow = contextWindowFor(modelRef.current, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
+  // Only the main interactive agent distills durable facts into KRITYA.md on
+  // compaction — subagents (read-only or write) never do, even though they
+  // run the same Agent class and can also trigger auto-compaction.
+  agent.autoMemory = true;
 
   render(
     <App

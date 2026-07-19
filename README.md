@@ -93,9 +93,17 @@ full tool output. `Ctrl+C` exits.
   reapplies them. Undo is multi-level.
 - **Steer mid-run** — type while the agent is working and press Enter; your
   message is queued and absorbed before its next step (no need to interrupt).
-- **Auto-compaction** — when the conversation nears the model's context window
-  (80% of `contextWindow`, default 120k tokens), older turns are summarized
-  automatically; the statusline shows current usage as `ctx N%`.
+- **Auto-compaction → self-improving project memory** — when the conversation
+  nears the model's context window (80% of `contextWindow`, default 120k
+  tokens), older turns are summarized automatically; the statusline shows
+  current usage as `ctx N%`. Compaction (auto or manual `/compact`) also
+  distills durable, objective facts out of what's being summarized away —
+  build/test commands, package manager, conventions actually observed — and
+  merges any new ones into a `## Learned by kritya` section in `KRITYA.md`,
+  deduplicated and capped at 20 facts. Anything you or `/init` wrote above
+  that section is left untouched. It's scoped to describing the project, not
+  storing instructions, since this file is read back as background context on
+  every future run.
 - **Background processes** — the agent can start dev servers/watchers with
   `background: true`, read their output (`bg_output`), and stop them
   (`bg_kill`); everything is killed when kritya exits. Foreground commands
