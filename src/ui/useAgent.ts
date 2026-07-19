@@ -81,6 +81,9 @@ export function useAgent({
   const ctxPctRef = useRef(0);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
+  const [acceptEdits, setAcceptEdits] = useState(false);
+  const [autoApprovedCount, setAutoApprovedCount] = useState(0);
+  const hasConfirmedAcceptEdits = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const addItem = useCallback((item: ItemBody) => {
@@ -96,6 +99,55 @@ export function useAgent({
       });
     };
   }, [uiBridge, addItem]);
+
+  useEffect(() => {
+    agent.onAutoApprove = () => setAutoApprovedCount((n) => n + 1);
+  }, [agent]);
+
+  const enterAcceptEdits = () => {
+    hasConfirmedAcceptEdits.current = true;
+    agent.acceptEdits = true;
+    setAcceptEdits(true);
+    setAutoApprovedCount(0);
+    addItem({
+      kind: "info",
+      text:
+        "Accept-edits mode ON — file writes/edits auto-approve without asking. Destructive shell " +
+        "commands (rm -rf, force-push, etc.) still always ask. Shift+Tab again for plan mode, once " +
+        "more for normal.",
+    });
+  };
+
+  /** Cycles normal → accept-edits → plan → normal. First entry into accept-edits this session pauses on a confirmation instead of switching immediately. */
+  const cycleMode = () => {
+    if (planMode) {
+      agent.planMode = false;
+      setPlanMode(false);
+      addItem({ kind: "info", text: "Plan mode OFF — the agent can make changes again." });
+      return;
+    }
+    if (acceptEdits) {
+      agent.acceptEdits = false;
+      setAcceptEdits(false);
+      agent.planMode = true;
+      setPlanMode(true);
+      addItem({
+        kind: "info",
+        text: "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked.",
+      });
+      return;
+    }
+    if (!hasConfirmedAcceptEdits.current) {
+      setPhase("confirmMode");
+      return;
+    }
+    enterAcceptEdits();
+  };
+
+  const onAcceptEditsConfirm = (confirmed: boolean) => {
+    setPhase("input");
+    if (confirmed) enterAcceptEdits();
+  };
 
   const setModelEverywhere = (id: string) => {
     modelRef.current = id;
@@ -311,6 +363,11 @@ export function useAgent({
     branch,
     planMode,
     setPlanMode,
+    acceptEdits,
+    setAcceptEdits,
+    autoApprovedCount,
+    cycleMode,
+    onAcceptEditsConfirm,
     abortRef,
     setModelEverywhere,
     costReport,

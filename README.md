@@ -73,9 +73,16 @@ full tool output. `Ctrl+C` exits.
 
 ### More features
 
-- **Plan mode** (`/plan`) — a read-only mode where the agent explores and
-  proposes a step-by-step plan; writes, edits, and shell are blocked until you
-  run `/plan` again. Great for unfamiliar repositories.
+- **Trust levels** — `Shift+Tab` cycles **normal** (every write/edit asks
+  first) → **accept-edits** (file writes/edits auto-approve, no prompt) →
+  **plan** (read-only, nothing executes) → back to normal. The statusline
+  always shows which one you're in, with a running `(N auto-approved)` count
+  in accept-edits mode so you know how much slipped through before checking
+  `/diff`. Destructive shell commands (`rm -rf`, force-push, etc.) always
+  still prompt, in every mode — that guard never turns off. The first time you
+  switch into accept-edits mode each session, kritya asks you to confirm first
+  so it's a deliberate choice, not an accidental keypress. `/plan` still works
+  as its own command and is equivalent to cycling into plan mode.
 - **Subagents** — the agent can dispatch one or more focused investigations to
   fresh contexts at once (`spawn_agent`), each returning only its findings —
   keeps the main conversation lean on big searches. It can also dispatch

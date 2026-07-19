@@ -14,7 +14,7 @@ export type ItemBody =
   | { kind: "info"; text: string }
   | { kind: "banner"; subtitle: string };
 
-export type Phase = "input" | "working" | "permission" | "model" | "resume";
+export type Phase = "input" | "working" | "permission" | "model" | "resume" | "confirmMode";
 
 export interface UiBridge {
   onTasksUpdate(tasks: TaskItem[]): void;

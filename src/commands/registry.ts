@@ -35,8 +35,8 @@ ${BUILTIN_COMMANDS.map((c) => `  ${c.name.padEnd(14)} ${c.description}`).join("\
 Also: @path/to/file attaches a file to your message (with autocomplete).
 @image.png attaches an image for vision-capable models.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
-Keys: Esc cancels · Tab completes · ↑/↓ recalls history · Ctrl+O toggles full
-tool output · Ctrl+C exits`;
+Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/plan
+mode · ↑/↓ recalls history · Ctrl+O toggles full tool output · Ctrl+C exits`;
 
 /** Everything a command handler needs from the UI to do its work. */
 export interface CommandContext {
@@ -49,6 +49,8 @@ export interface CommandContext {
   customCommands: CustomCommand[];
   mcpToolCount: number;
   planMode: boolean;
+  acceptEdits: boolean;
+  setAcceptEdits(v: boolean): void;
   addItem(item: ItemBody): void;
   setPhase(phase: Phase): void;
   setActivity(activity: string | null): void;
@@ -147,6 +149,12 @@ const handlers: Record<string, CommandHandler> = {
     const next = !ctx.planMode;
     ctx.setPlanMode(next);
     ctx.agent.planMode = next;
+    // /plan and Shift+Tab's accept-edits mode are mutually exclusive; entering
+    // one via either path must turn the other off.
+    if (next && ctx.acceptEdits) {
+      ctx.agent.acceptEdits = false;
+      ctx.setAcceptEdits(false);
+    }
     ctx.addItem({
       kind: "info",
       text: next

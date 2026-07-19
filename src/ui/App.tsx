@@ -144,6 +144,11 @@ export function App({
     branch,
     planMode,
     setPlanMode,
+    acceptEdits,
+    setAcceptEdits,
+    autoApprovedCount,
+    cycleMode,
+    onAcceptEditsConfirm,
     abortRef,
     setModelEverywhere,
     costReport,
@@ -212,6 +217,19 @@ export function App({
       setVerbose((v) => !v);
       return;
     }
+    // Shift+Tab cycles normal → accept-edits → plan → normal. Only from the
+    // plain input state — not mid-permission-prompt, mid-resume-picker, etc.
+    if (key.tab && key.shift && phase === "input") {
+      cycleMode();
+      return;
+    }
+    // First-time accept-edits confirmation: Yes proceeds, anything else cancels.
+    if (phase === "confirmMode") {
+      const c = _input.toLowerCase();
+      if (c === "y" || key.return) onAcceptEditsConfirm(true);
+      else if (c === "n" || key.escape) onAcceptEditsConfirm(false);
+      return;
+    }
     // History recall with ↑/↓ when no autocomplete popup is open.
     if (phase === "input" && !suggestions.length && !fileSuggestions.length) {
       const hist = inputHistory.current;
@@ -266,6 +284,8 @@ export function App({
       customCommands,
       mcpToolCount,
       planMode,
+      acceptEdits,
+      setAcceptEdits,
       addItem,
       setPhase,
       setActivity,
@@ -460,6 +480,24 @@ export function App({
         />
       )}
 
+      {phase === "confirmMode" && (
+        <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
+          <Text bold color="green">
+            Switch to accept-edits mode?
+          </Text>
+          <Text>File writes and edits will auto-approve without asking.</Text>
+          <Text dimColor>
+            Destructive shell commands (rm -rf, force-push, etc.) always still ask, in every mode.
+          </Text>
+          <Text dimColor>Shift+Tab again moves to plan mode; once more back to normal.</Text>
+          <Box marginTop={1}>
+            <Text>
+              <Text color="green">Yes (y)</Text> · No (n/Esc)
+            </Text>
+          </Box>
+        </Box>
+      )}
+
       {phase === "model" && (
         <ModelPicker
           current={model}
@@ -544,7 +582,13 @@ export function App({
 
       <Box>
         <Text dimColor>
-          {planMode ? <Text color="cyan">plan · </Text> : ""}
+          {planMode ? (
+            <Text color="cyan">plan · </Text>
+          ) : acceptEdits ? (
+            <Text color="green">accept edits ({autoApprovedCount} auto-approved) · </Text>
+          ) : (
+            ""
+          )}
           {model}
           {branch ? ` · ⎇ ${branch}` : ""}
           {tasks.length > 0

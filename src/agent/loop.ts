@@ -30,6 +30,15 @@ function fenceExternal(output: string): string {
 const PREVIEW_CHARS = 4000;
 const COMPACT_THRESHOLD = 0.8;
 
+/**
+ * Tools "accept edits" mode auto-approves without prompting. Deliberately
+ * narrow: file edits only, never `shell` — a shell command can do far more
+ * than edit one file, so it keeps asking even in this mode. Destructive shell
+ * commands are unaffected either way; that guard lives in classifyDanger and
+ * applies regardless of any mode.
+ */
+const ACCEPT_EDITS_TOOL_NAMES = new Set(["write_file", "edit_file", "write_document"]);
+
 export class Agent {
   history: ChatMessage[];
   /** Prompt size of the most recent model call, from the API's usage report. */
@@ -40,6 +49,10 @@ export class Agent {
   maxSteps = DEFAULT_MAX_STEPS;
   /** When true, mutating tools are auto-denied (plan / read-only mode). */
   planMode = false;
+  /** When true, file-edit tools auto-approve without prompting (see ACCEPT_EDITS_TOOL_NAMES). */
+  acceptEdits = false;
+  /** Fires each time a tool call is auto-approved because of acceptEdits, for a UI counter. */
+  onAutoApprove?: () => void;
   /**
    * When true, compaction also distills durable project facts out of the
    * summarized-away messages and merges them into KRITYA.md, so useful
@@ -323,7 +336,15 @@ export class Agent {
     // Destructive shell commands always prompt with a warning, even if allowlisted.
     const danger = tool.name === "shell" ? classifyDanger(String(args.command ?? "")) : null;
 
-    if (danger !== null || this.permissions.needsPrompt(tool, args)) {
+    const autoApproveEdit =
+      this.acceptEdits &&
+      danger === null &&
+      tool.requiresPermission &&
+      ACCEPT_EDITS_TOOL_NAMES.has(tool.name);
+
+    if (autoApproveEdit) {
+      this.onAutoApprove?.();
+    } else if (danger !== null || this.permissions.needsPrompt(tool, args)) {
       let diff: string | undefined;
       if (tool.preview) {
         try {
