@@ -306,8 +306,22 @@ async function main() {
 
     const commitState = commitWorktree(wt, `kritya subagent: ${task.slice(0, 72)}`);
     if (commitState === "clean") {
-      removeWorktree(workspace, wt, true);
-      return { task, write: true, summary: finalText.trim() || "(no changes made)" };
+      const cleaned = removeWorktree(workspace, wt, true);
+      const summary = finalText.trim() || "(no changes made)";
+      // Surface this rather than silently leave an empty orphaned branch: a
+      // failed `git branch -D` (e.g. a transient ref lock) shouldn't look
+      // identical to a subagent that genuinely made no changes.
+      return cleaned
+        ? { task, write: true, summary }
+        : {
+            task,
+            write: true,
+            summary,
+            error:
+              `made no changes, but its empty scratch branch "${wt.branch}" could not be ` +
+              `auto-deleted (a transient git lock) — safe to remove manually with ` +
+              `\`git branch -D ${wt.branch}\``,
+          };
     }
     if (commitState === "failed") {
       // Don't discard the worktree: the subagent's edits are real work, even
