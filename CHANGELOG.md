@@ -4,6 +4,21 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **LSP integration**: three new read-only tools — `lsp_definition`,
+  `lsp_references`, and `lsp_diagnostics` — give the agent semantic code
+  navigation and type-error feedback from real language servers
+  (TypeScript/JavaScript via `typescript-language-server`, Python via
+  `pyright`, Go via `gopls`, Rust via `rust-analyzer`, C/C++ via `clangd`).
+  The client is a dependency-free JSON-RPC-over-stdio implementation; servers
+  are detected per file type, spawned on first use, kept warm across turns,
+  respawned if they crash, and reported with an install hint when missing.
+  Queries wait for the server's initial project indexing (via
+  `workDoneProgress`) so cross-file results are never silently incomplete.
+
 ## [0.4.0] — 2026-07-17
 
 ### Security

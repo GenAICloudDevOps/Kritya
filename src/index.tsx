@@ -10,6 +10,7 @@ import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { backgroundManager } from "./shell/background.js";
+import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS, READONLY_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
@@ -233,6 +234,7 @@ async function main() {
 
   const cleanup = () => {
     backgroundManager.killAll();
+    lspManager.disposeAll();
     shutdownMcp();
     undoStack.closeAll();
   };

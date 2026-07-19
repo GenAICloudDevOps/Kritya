@@ -12,6 +12,7 @@ import { bgOutputTool, bgKillTool } from "./bg.js";
 import { spawnAgentTool } from "./subagent.js";
 import { spawnWriteAgentTool } from "./writeAgent.js";
 import { readDocumentTool, writeDocumentTool } from "./document.js";
+import { lspDefinitionTool, lspReferencesTool, lspDiagnosticsTool } from "./lsp.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   readFileTool,
@@ -23,6 +24,9 @@ export const ALL_TOOLS: ToolDef[] = [
   listDirTool,
   globTool,
   grepTool,
+  lspDefinitionTool,
+  lspReferencesTool,
+  lspDiagnosticsTool,
   updateTasksTool,
   webSearchTool,
   spawnAgentTool,
@@ -37,5 +41,8 @@ export const READONLY_TOOLS: ToolDef[] = [
   listDirTool,
   globTool,
   grepTool,
+  lspDefinitionTool,
+  lspReferencesTool,
+  lspDiagnosticsTool,
   readDocumentTool,
 ];

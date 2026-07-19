@@ -58,6 +58,7 @@ ${gitSection()}${memory}${planSection}
 - Before editing a file, read it first. edit_file requires old_string to match the file exactly and be unique.
 - Prefer edit_file for small changes and write_file only for new files or full rewrites.
 - Use grep/glob to locate code instead of guessing paths.
+- For code navigation in supported languages (TS/JS, Python, Go, Rust, C/C++), prefer the lsp_* tools over grep: lsp_definition and lsp_references resolve symbols semantically (no same-name false positives), and lsp_diagnostics reports type errors after an edit without running a build.
 - Use the shell tool to run builds, tests, and git commands. Verify your changes when possible.
 - If a tool call is denied by the user, respect the denial: adjust your approach or ask what they'd prefer.
 - For any request needing more than 2 distinct steps, call update_tasks FIRST with your plan, then keep each task's status current (in_progress when starting it, done when finished) as you work.

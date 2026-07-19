@@ -148,6 +148,14 @@ full tool output. `Ctrl+C` exits.
   it needs current information (needs `TAVILY_API_KEY` in `.env`, free at
   tavily.com). Web content is delimited as untrusted so pages can't inject
   instructions into the agent.
+- **LSP integration** — the agent gets go-to-definition, find-references, and
+  live diagnostics from real language servers (`lsp_definition`,
+  `lsp_references`, `lsp_diagnostics`), resolved semantically instead of by
+  text search. Supports TypeScript/JavaScript, Python, Go, Rust, and C/C++ —
+  it uses whichever servers you have installed (`typescript-language-server`,
+  `pyright`, `gopls`, `rust-analyzer`, `clangd`) and tells the agent the
+  install command when one is missing. Servers spawn on first use, stay warm
+  for the session, and never require configuration.
 
 ## Headless / CI mode
 

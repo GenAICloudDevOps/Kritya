@@ -7,6 +7,7 @@ import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { backgroundManager } from "./shell/background.js";
+import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
@@ -170,6 +171,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   } finally {
     clearTimeout(timer);
     backgroundManager.killAll();
+    lspManager.disposeAll();
     shutdownMcp();
   }
 
