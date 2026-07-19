@@ -18,6 +18,8 @@ export type Phase = "input" | "working" | "permission" | "model" | "resume";
 
 export interface UiBridge {
   onTasksUpdate(tasks: TaskItem[]): void;
+  /** Fires when the file-watcher detects an edit kritya didn't make itself. */
+  onExternalEdit?(relPath: string): void;
 }
 
 /** One subagent dispatch request: a self-contained task, and whether it may mutate files. */

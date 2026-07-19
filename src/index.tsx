@@ -177,6 +177,7 @@ async function main() {
   const cleanup = () => {
     backgroundManager.killAll();
     shutdownMcp();
+    undoStack.closeAll();
   };
   process.on("exit", cleanup);
   // Default signal handling terminates WITHOUT firing "exit", which would
@@ -197,7 +198,11 @@ async function main() {
   SessionStore.cleanupOldSessions();
 
   const undoStack = new UndoStack();
-  const uiBridge: UiBridge = { onTasksUpdate: (_tasks: TaskItem[]) => {} };
+  const uiBridge: UiBridge = {
+    onTasksUpdate: (_tasks: TaskItem[]) => {},
+    onExternalEdit: (_relPath: string) => {},
+  };
+  undoStack.onExternalChange = (relPath) => uiBridge.onExternalEdit?.(relPath);
 
   // MCP servers (if any) contribute extra tools; loading is resilient.
   const mcpTools: ToolDef[] = await loadMcpTools(config.mcpServers);

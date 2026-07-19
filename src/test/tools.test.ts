@@ -214,6 +214,39 @@ test("undo reverts all files changed in the same turn together", async () => {
   assert.equal(undo.undo(), null);
 });
 
+test("undo checkpoints an external edit made between turns via the file watcher", async () => {
+  const ws = await makeWorkspace();
+  const undo = new UndoStack();
+  const abs = path.join(ws, "w.txt");
+  let notified = "";
+  undo.onExternalChange = (relPath) => {
+    notified = relPath;
+  };
+
+  undo.beginTurn();
+  undo.snapshot(abs, "w.txt");
+  await fs.writeFile(abs, "kritya-wrote-this");
+
+  // Wait past the own-write grace window so the watcher treats the next
+  // change as external, then simulate the user hand-editing the file.
+  await new Promise((r) => setTimeout(r, 900));
+  await fs.writeFile(abs, "user-hand-edited-this");
+
+  // fs.watch delivers change events asynchronously; poll briefly for it.
+  const deadline = Date.now() + 3000;
+  while (undo.size < 2 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  assert.equal(notified, "w.txt");
+  assert.match(undo.undo() ?? "", /Restored/);
+  assert.equal(await fs.readFile(abs, "utf8"), "kritya-wrote-this");
+  assert.match(undo.redo() ?? "", /Restored/);
+  assert.equal(await fs.readFile(abs, "utf8"), "user-hand-edited-this");
+
+  undo.closeAll();
+});
+
 test("system prompt includes KRITYA.md project memory", async () => {
   const ws = await makeWorkspace();
   await fs.writeFile(path.join(ws, "KRITYA.md"), "Always use TypeScript.");

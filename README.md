@@ -90,7 +90,10 @@ full tool output. `Ctrl+C` exits.
 - **Image attachments** — `@screenshot.png` sends the image to vision-capable
   models alongside your message.
 - **Undo / redo** — `/undo` reverts the last turn's file changes; `/redo`
-  reapplies them. Undo is multi-level.
+  reapplies them. Undo is multi-level. A file watcher also checkpoints edits
+  you make yourself (in your own editor) to any file kritya has touched this
+  session, as their own step in the right order — so hand-editing a file
+  between turns and later running `/undo` never silently discards that edit.
 - **Steer mid-run** — type while the agent is working and press Enter; your
   message is queued and absorbed before its next step (no need to interrupt).
 - **Auto-compaction → self-improving project memory** — when the conversation

@@ -89,7 +89,13 @@ export function useAgent({
 
   useEffect(() => {
     uiBridge.onTasksUpdate = setTasks;
-  }, [uiBridge]);
+    uiBridge.onExternalEdit = (relPath) => {
+      addItem({
+        kind: "info",
+        text: `Detected an external edit to ${relPath} (made outside kritya) — checkpointed for /undo.`,
+      });
+    };
+  }, [uiBridge, addItem]);
 
   const setModelEverywhere = (id: string) => {
     modelRef.current = id;
