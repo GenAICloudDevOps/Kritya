@@ -26,6 +26,7 @@ export interface UseAgentParams {
   config: CliConfig;
   uiBridge: UiBridge;
   resumedCount: number;
+  initialTasks?: TaskItem[];
   resumeSessions?: SessionMeta[];
   refreshFileList(): void;
 }
@@ -42,6 +43,7 @@ export function useAgent({
   config,
   uiBridge,
   resumedCount,
+  initialTasks,
   resumeSessions,
   refreshFileList,
 }: UseAgentParams) {
@@ -55,10 +57,14 @@ export function useAgent({
       },
     ];
     if (resumedCount > 0) {
+      const done = initialTasks?.filter((t) => t.status === "done").length ?? 0;
+      const taskNote = initialTasks?.length
+        ? ` — checklist restored (${done}/${initialTasks.length} done)`
+        : "";
       initial.push({
         id: nextId.current++,
         kind: "info",
-        text: `Resumed previous session (${resumedCount} messages).`,
+        text: `Resumed previous session (${resumedCount} messages)${taskNote}.`,
       });
     }
     return initial;
@@ -70,7 +76,7 @@ export function useAgent({
   const [permission, setPermission] = useState<PendingPermission | null>(null);
   const [model, setModel] = useState(modelRef.current);
   const [usageByModel, setUsageByModel] = useState<Record<string, Usage>>({});
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>(initialTasks ?? []);
   const [ctxPct, setCtxPct] = useState(0);
   const ctxPctRef = useRef(0);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
@@ -266,9 +272,15 @@ export function useAgent({
     }
     const meta = resumeSessions?.find((s) => s.file === file);
     const messages = agentLoadSession(file);
+    const restoredTasks = SessionStore.loadTasksForSession(file);
+    setTasks(restoredTasks);
+    const done = restoredTasks.filter((t) => t.status === "done").length;
+    const taskNote = restoredTasks.length
+      ? ` — checklist restored (${done}/${restoredTasks.length} done)`
+      : "";
     addItem({
       kind: "info",
-      text: `Resumed session from ${meta?.date ?? "?"} (${messages} messages).`,
+      text: `Resumed session from ${meta?.date ?? "?"} (${messages} messages)${taskNote}.`,
     });
   };
 

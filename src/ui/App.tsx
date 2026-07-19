@@ -11,7 +11,7 @@ import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
-import type { UiBridge } from "../types.js";
+import type { TaskItem, UiBridge } from "../types.js";
 import { Banner } from "./Banner.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -30,6 +30,8 @@ export interface AppProps {
   modelRef: { current: string };
   config: CliConfig;
   resumedCount: number;
+  /** Task checklist saved alongside the resumed session (via -c), if any. */
+  initialTasks?: TaskItem[];
   undoStack: UndoStack;
   uiBridge: UiBridge;
   resumeSessions?: SessionMeta[];
@@ -56,6 +58,7 @@ export function App({
   modelRef,
   config,
   resumedCount,
+  initialTasks,
   undoStack,
   uiBridge,
   resumeSessions,
@@ -155,6 +158,7 @@ export function App({
     config,
     uiBridge,
     resumedCount,
+    initialTasks,
     resumeSessions,
     refreshFileList,
   });
@@ -543,6 +547,9 @@ export function App({
           {planMode ? <Text color="cyan">plan · </Text> : ""}
           {model}
           {branch ? ` · ⎇ ${branch}` : ""}
+          {tasks.length > 0
+            ? ` · tasks ${tasks.filter((t) => t.status === "done").length}/${tasks.length}`
+            : ""}
           {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""}
           {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
           {totalUsage.promptTokens.toLocaleString()} in /{" "}

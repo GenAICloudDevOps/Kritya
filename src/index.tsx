@@ -169,6 +169,7 @@ async function main() {
   const session = new SessionStore(workspace);
 
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
+  const initialTasks = args.continue ? SessionStore.loadLatestTasks(workspace) : [];
   session.start(initialHistory);
 
   const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
@@ -396,7 +397,10 @@ async function main() {
     {
       workspace,
       undo: undoStack,
-      onTasksUpdate: (t) => uiBridge.onTasksUpdate(t),
+      onTasksUpdate: (t) => {
+        uiBridge.onTasksUpdate(t);
+        session.saveTasks(t);
+      },
       spawnAgents,
     },
     new PermissionManager(loadRules(workspace, trustWorkspace)),
@@ -418,6 +422,7 @@ async function main() {
       modelRef={modelRef}
       config={config}
       resumedCount={initialHistory.length}
+      initialTasks={initialTasks}
       undoStack={undoStack}
       uiBridge={uiBridge}
       resumeSessions={resumeSessions.length ? resumeSessions : undefined}

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
-import type { ChatMessage } from "../types.js";
+import type { ChatMessage, TaskItem } from "../types.js";
 
 function sessionDir(workspace: string): string {
   const hash = crypto.createHash("sha1").update(workspace).digest("hex").slice(0, 12);
@@ -29,6 +29,52 @@ export class SessionStore {
   private newFilePath(): string {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     return path.join(this.dir, `${stamp}.jsonl`);
+  }
+
+  /** Path of the sidecar file that holds this session's task checklist. */
+  private tasksFilePath(): string {
+    return SessionStore.tasksFilePathFor(this.file);
+  }
+
+  private static tasksFilePathFor(sessionFile: string): string {
+    return sessionFile.replace(/\.jsonl$/, ".tasks.json");
+  }
+
+  /**
+   * Persists the current task checklist alongside the session, so `-c`/`-r`
+   * can restore not just the conversation but what was done vs. pending.
+   * Best-effort, same as append() — never let this crash a turn.
+   */
+  saveTasks(tasks: TaskItem[]): void {
+    if (this.ephemeral) return;
+    try {
+      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      if (!tasks.length) {
+        fs.rmSync(this.tasksFilePath(), { force: true });
+        return;
+      }
+      fs.writeFileSync(this.tasksFilePath(), JSON.stringify(tasks), { mode: 0o600 });
+    } catch {
+      // best-effort
+    }
+  }
+
+  /** Loads the task checklist saved alongside a given session file, if any. */
+  static loadTasksForSession(sessionFile: string): TaskItem[] {
+    try {
+      const raw = fs.readFileSync(SessionStore.tasksFilePathFor(sessionFile), "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (t): t is TaskItem =>
+          !!t &&
+          typeof t === "object" &&
+          typeof (t as TaskItem).text === "string" &&
+          ["pending", "in_progress", "done"].includes((t as TaskItem).status)
+      );
+    } catch {
+      return [];
+    }
   }
 
   /** Begin a session, optionally seeded with resumed history. */
@@ -129,7 +175,10 @@ export class SessionStore {
         if (!f.endsWith(".jsonl")) continue;
         const file = path.join(dir, f);
         try {
-          if (fs.statSync(file).mtimeMs < cutoff) fs.unlinkSync(file);
+          if (fs.statSync(file).mtimeMs < cutoff) {
+            fs.unlinkSync(file);
+            fs.rmSync(SessionStore.tasksFilePathFor(file), { force: true });
+          }
         } catch {
           // best-effort
         }
@@ -142,6 +191,12 @@ export class SessionStore {
     if (!latest) return null;
     const messages = SessionStore.loadFile(latest.file);
     return messages.length ? messages : null;
+  }
+
+  /** The task checklist saved alongside the most recent session for `workspace`, if any. */
+  static loadLatestTasks(workspace: string): TaskItem[] {
+    const latest = SessionStore.listSessions(workspace)[0];
+    return latest ? SessionStore.loadTasksForSession(latest.file) : [];
   }
 
   /** Sessions for a workspace, newest first, with a preview of the first user message. */

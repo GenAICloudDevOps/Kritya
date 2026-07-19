@@ -116,8 +116,12 @@ full tool output. `Ctrl+C` exits.
 - **Project memory** — create a `KRITYA.md` in your workspace root (or run
   `/init` to generate one) with standing instructions; the agent reads it
   every request.
-- **Sub-task checklist** — for multi-step requests the agent plans first and shows
-  a live ☐/◐/☑ checklist as it works.
+- **Sub-task checklist → resumable plans** — for multi-step requests the agent
+  plans first and shows a live ☐/◐/☑ checklist as it works, with a compact
+  `tasks N/M` summary in the statusline. The checklist is saved alongside the
+  session, so `kritya -c` (and picking a session via `-r`) restores not just
+  the conversation but exactly which steps were done, in progress, or still
+  pending.
 - **Diff preview** — write/edit permission prompts show a red/green line diff of
   exactly what will change before you approve; code blocks in answers are
   syntax-highlighted.
