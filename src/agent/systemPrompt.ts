@@ -6,6 +6,19 @@ import { gitStatusShort } from "../git/git.js";
 const MEMORY_FILES = ["KRITYA.md"];
 const MEMORY_MAX_CHARS = 4000;
 
+/**
+ * The system prompt is ordered for prompt-cache stability. Providers cache the
+ * request prefix and reuse it up to the first changed token, so the prompt is
+ * laid out from least- to most-volatile:
+ *
+ *   1. identity + tool rules + style — fixed for the whole session
+ *   2. project memory (KRITYA.md)   — changes rarely (manual edits, compaction)
+ *   3. environment, workspace listing, git status, plan mode — change between
+ *      turns, so they sit last where a change invalidates the least cache
+ *
+ * Keep it that way: adding anything volatile (dates, git output, listings)
+ * above the memory section throws away the cached prefix on every turn.
+ */
 export function buildSystemPrompt(workspace: string, planMode = false): string {
   const planSection = planMode
     ? "\n# PLAN MODE (read-only)\nYou are in plan mode. Do NOT write, edit, or run shell commands — those are blocked. " +
@@ -45,14 +58,6 @@ export function buildSystemPrompt(workspace: string, planMode = false): string {
 
 You help with software engineering tasks: writing code, fixing bugs, explaining code, running commands, and refactoring. Work autonomously: use your tools to explore, make changes, and verify them, then report the outcome concisely.
 
-# Environment
-- OS: ${os.platform()} (${os.release()})
-- Workspace root: ${workspace}
-- Date: ${new Date().toDateString()}
-
-# Workspace top-level contents
-${listing || "(empty)"}
-${gitSection()}${memory}${planSection}
 # Tool rules
 - All file paths are relative to the workspace root. You cannot access files outside it.
 - Before editing a file, read it first. edit_file requires old_string to match the file exactly and be unique.
@@ -68,5 +73,14 @@ ${gitSection()}${memory}${planSection}
 # Style
 - Be concise. Answer directly, no filler.
 - When you finish a task, summarize what changed in a few sentences.
-- Use markdown code blocks for code.`;
+- Use markdown code blocks for code.
+${memory}
+# Environment
+- OS: ${os.platform()} (${os.release()})
+- Workspace root: ${workspace}
+- Date: ${new Date().toDateString()}
+
+# Workspace top-level contents
+${listing || "(empty)"}
+${gitSection()}${planSection}`;
 }

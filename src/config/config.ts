@@ -29,8 +29,10 @@ export interface CliConfig {
   /** Named providers; entries here override or extend BUILTIN_PROVIDERS. */
   providers?: Record<string, ProviderConfig>;
   customModels?: { id: string; label?: string }[];
-  /** USD per 1M tokens, keyed by model ID, for /cost estimates. */
-  pricing?: Record<string, { input: number; output: number }>;
+  /** USD per 1M tokens, keyed by model ID, for /cost estimates. `cachedInput` is the
+   * (discounted) rate for prompt tokens served from the provider's cache; when set,
+   * /cost prices cached tokens at it and reports the savings. */
+  pricing?: Record<string, { input: number; output: number; cachedInput?: number }>;
   /** Model context window in tokens; overrides the per-model default. Drives auto-compaction and the ctx meter. */
   contextWindow?: number;
   /** Max model round-trips per request before kritya stops and asks (default 40). */

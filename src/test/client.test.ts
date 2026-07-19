@@ -6,7 +6,11 @@ import type { ChatMessage } from "../types.js";
 /** Minimal shape of an OpenAI streaming chunk, as consumed by chatOnce. */
 interface FakeChunk {
   choices?: [{ delta: Record<string, unknown> }];
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }
 
 async function* fakeStream(chunks: FakeChunk[]): AsyncGenerator<FakeChunk> {
@@ -105,7 +109,28 @@ test("chatOnce captures usage when present on any chunk", async () => {
 
   const result = await client.chat("m", [], [], noopCallbacks);
 
-  assert.deepEqual(result.usage, { promptTokens: 10, completionTokens: 5 });
+  assert.deepEqual(result.usage, { promptTokens: 10, completionTokens: 5, cachedPromptTokens: 0 });
+});
+
+test("chatOnce captures cached prompt tokens from prompt_tokens_details", async () => {
+  const client = clientWithStream([
+    {
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 75 },
+      },
+      choices: [{ delta: { content: "hi" } }],
+    },
+  ]);
+
+  const result = await client.chat("m", [], [], noopCallbacks);
+
+  assert.deepEqual(result.usage, {
+    promptTokens: 100,
+    completionTokens: 5,
+    cachedPromptTokens: 75,
+  });
 });
 
 test("chatOnce forwards text and reasoning deltas via callbacks", async () => {

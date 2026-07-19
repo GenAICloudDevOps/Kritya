@@ -136,6 +136,7 @@ export class ProviderClient {
         usage = {
           promptTokens: chunk.usage.prompt_tokens ?? 0,
           completionTokens: chunk.usage.completion_tokens ?? 0,
+          cachedPromptTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
         };
       }
       const delta = chunk.choices?.[0]?.delta;

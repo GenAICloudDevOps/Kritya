@@ -616,8 +616,11 @@ export function App({
             ""
           )}
           {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
-          {totalUsage.promptTokens.toLocaleString()} in /{" "}
-          {totalUsage.completionTokens.toLocaleString()} out
+          {totalUsage.promptTokens.toLocaleString()} in
+          {(totalUsage.cachedPromptTokens ?? 0) > 0
+            ? ` (${Math.round(((totalUsage.cachedPromptTokens ?? 0) / totalUsage.promptTokens) * 100)}% cached)`
+            : ""}{" "}
+          / {totalUsage.completionTokens.toLocaleString()} out
           {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""}
           {verbose ? " · verbose" : ""} · {path.basename(workspace)}
         </Text>

@@ -258,6 +258,47 @@ test("system prompt includes KRITYA.md project memory", async () => {
   assert.ok(!buildSystemPrompt(wsEmpty).includes("Project instructions"));
 });
 
+test("system prompt keeps a cache-stable prefix: volatile sections come last", async () => {
+  const ws = await makeWorkspace();
+  await fs.writeFile(path.join(ws, "KRITYA.md"), "Prefer tabs.");
+  const prompt = buildSystemPrompt(ws);
+
+  // Stable sections (rules/style), then memory, then volatile (env, listing,
+  // git status, plan mode) — in that order, so a workspace change only
+  // invalidates the provider's prompt cache from the volatile tail onward.
+  const order = [
+    "# Tool rules",
+    "# Style",
+    "Prefer tabs.",
+    "# Environment",
+    "# Workspace top-level contents",
+  ];
+  const positions = order.map((s) => prompt.indexOf(s));
+  assert.ok(
+    positions.every((p, i) => p !== -1 && (i === 0 || p > positions[i - 1])),
+    `sections out of order: ${order.map((s, i) => `${s}@${positions[i]}`).join(", ")}`
+  );
+
+  // The prefix before the volatile tail must be identical across workspaces
+  // with the same memory — nothing workspace- or time-dependent above it.
+  const ws2 = await makeWorkspace();
+  await fs.writeFile(path.join(ws2, "KRITYA.md"), "Prefer tabs.");
+  await fs.writeFile(path.join(ws2, "extra-file.txt"), "changes the listing");
+  const prompt2 = buildSystemPrompt(ws2);
+  assert.equal(
+    prompt.slice(0, prompt.indexOf("# Environment")),
+    prompt2.slice(0, prompt2.indexOf("# Environment"))
+  );
+
+  // Plan mode must not disturb the stable prefix either.
+  const planPrompt = buildSystemPrompt(ws, true);
+  assert.equal(
+    prompt.slice(0, prompt.indexOf("# Environment")),
+    planPrompt.slice(0, planPrompt.indexOf("# Environment"))
+  );
+  assert.ok(planPrompt.includes("PLAN MODE"));
+});
+
 test("system prompt no longer honors the legacy CODECLI.md filename", async () => {
   const ws = await makeWorkspace();
   await fs.writeFile(path.join(ws, "CODECLI.md"), "Always use TypeScript.");

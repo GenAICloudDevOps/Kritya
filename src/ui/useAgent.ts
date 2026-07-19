@@ -5,7 +5,12 @@ import { gitBranch } from "../git/git.js";
 import { saveConfig, type CliConfig } from "../config/config.js";
 import { contextWindowFor } from "../config/models.js";
 import { crossedContextWarnThreshold } from "../agent/contextWarning.js";
-import { crossedBudgetWarnThreshold, tokenBudgetFor } from "../agent/budget.js";
+import {
+  cacheSavingsFor,
+  costFor,
+  crossedBudgetWarnThreshold,
+  tokenBudgetFor,
+} from "../agent/budget.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge, Usage } from "../types.js";
@@ -168,26 +173,35 @@ export function useAgent({
     (acc, u) => ({
       promptTokens: acc.promptTokens + u.promptTokens,
       completionTokens: acc.completionTokens + u.completionTokens,
+      cachedPromptTokens: (acc.cachedPromptTokens ?? 0) + (u.cachedPromptTokens ?? 0),
     }),
-    { promptTokens: 0, completionTokens: 0 }
+    { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 }
   );
 
   const totalCost = Object.entries(usageByModel).reduce((sum, [id, u]) => {
     const p = config.pricing?.[id];
-    if (!p) return sum;
-    return sum + (u.promptTokens / 1e6) * p.input + (u.completionTokens / 1e6) * p.output;
+    return p ? sum + costFor(u, p) : sum;
   }, 0);
 
   const costReport = () => {
     const lines = Object.entries(usageByModel).map(([id, u]) => {
       const p = config.pricing?.[id];
-      const dollars = p
-        ? ` ≈ $${((u.promptTokens / 1e6) * p.input + (u.completionTokens / 1e6) * p.output).toFixed(4)}`
-        : "";
-      return `  ${id}: ${u.promptTokens.toLocaleString()} in / ${u.completionTokens.toLocaleString()} out${dollars}`;
+      const dollars = p ? ` ≈ $${costFor(u, p).toFixed(4)}` : "";
+      const cached = u.cachedPromptTokens ?? 0;
+      const hitRate =
+        cached > 0 && u.promptTokens > 0
+          ? ` (${cached.toLocaleString()} cached, ${Math.round((cached / u.promptTokens) * 100)}% hit rate)`
+          : "";
+      return `  ${id}: ${u.promptTokens.toLocaleString()} in${hitRate} / ${u.completionTokens.toLocaleString()} out${dollars}`;
     });
     if (!lines.length) return "No usage yet this session.";
-    const total = totalCost > 0 ? `\nEstimated total: $${totalCost.toFixed(4)}` : "";
+    const totalSavings = Object.entries(usageByModel).reduce((sum, [id, u]) => {
+      const p = config.pricing?.[id];
+      return p ? sum + cacheSavingsFor(u, p) : sum;
+    }, 0);
+    const savingsNote =
+      totalSavings > 0 ? ` (saved $${totalSavings.toFixed(4)} via prompt caching)` : "";
+    const total = totalCost > 0 ? `\nEstimated total: $${totalCost.toFixed(4)}${savingsNote}` : "";
     const ctxNote = `\nContext window: ${ctxPctRef.current}% used`;
     const budgetNote =
       `\nToken budget: ${budgetUsed.toLocaleString()} / ${tokenBudget.toLocaleString()} ` +
@@ -195,7 +209,7 @@ export function useAgent({
     const hint =
       totalCost > 0
         ? ""
-        : `\nTip: add per-model prices (USD per 1M tokens) to ~/.kritya/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4 } }`;
+        : `\nTip: add per-model prices (USD per 1M tokens) to ~/.kritya/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4, "cachedInput": 0.15 } }\n("cachedInput" is optional — the discounted rate for cache-hit prompt tokens, for cache-savings reporting.)`;
     return `Usage this session:\n${lines.join("\n")}${total}${ctxNote}${budgetNote}${hint}`;
   };
 
@@ -304,6 +318,8 @@ export function useAgent({
               [id]: {
                 promptTokens: (prev[id]?.promptTokens ?? 0) + u.promptTokens,
                 completionTokens: (prev[id]?.completionTokens ?? 0) + u.completionTokens,
+                cachedPromptTokens:
+                  (prev[id]?.cachedPromptTokens ?? 0) + (u.cachedPromptTokens ?? 0),
               },
             }));
 

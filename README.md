@@ -148,6 +148,12 @@ full tool output. `Ctrl+C` exits.
   it needs current information (needs `TAVILY_API_KEY` in `.env`, free at
   tavily.com). Web content is delimited as untrusted so pages can't inject
   instructions into the agent.
+- **Prompt-caching awareness** — the system prompt is ordered stable-first
+  (identity and rules → project memory → volatile git status/listing last) so
+  providers can reuse their cached prompt prefix across turns instead of
+  re-reading everything. `/cost` and the statusline show how many prompt
+  tokens were served from the provider's cache; add an optional
+  `"cachedInput"` rate to your `pricing` config to see the dollar savings.
 - **LSP integration** — the agent gets go-to-definition, find-references, and
   live diagnostics from real language servers (`lsp_definition`,
   `lsp_references`, `lsp_diagnostics`), resolved semantically instead of by

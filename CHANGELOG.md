@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Prompt-caching awareness**: the system prompt is reordered for cache
+  stability — stable content first (identity, tool rules, style), then
+  project memory (KRITYA.md), with volatile sections (environment, workspace
+  listing, git status, plan mode) last, so a changed git status no longer
+  invalidates the provider's cached prefix for the whole prompt. The provider
+  client now reads `prompt_tokens_details.cached_tokens`; `/cost` reports
+  cached tokens and hit rate per model, the statusline shows the session
+  cache-hit percentage, and headless `--output json` includes
+  `usage.cachedPromptTokens`. An optional `pricing.<model>.cachedInput` rate
+  (USD/1M) prices cache hits at the discounted rate and reports the savings.
+
 - **LSP integration**: three new read-only tools — `lsp_definition`,
   `lsp_references`, and `lsp_diagnostics` — give the agent semantic code
   navigation and type-error feedback from real language servers

@@ -37,7 +37,7 @@ interface HeadlessResult {
   result: string;
   error?: string;
   toolCalls: ToolCallRecord[];
-  usage: { promptTokens: number; completionTokens: number };
+  usage: { promptTokens: number; completionTokens: number; cachedPromptTokens: number };
   durationMs: number;
   model?: string;
 }
@@ -82,7 +82,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
       result: "",
       error: `No API key found for provider "${provider.name}". Set it via env var, a .env file, or ~/.kritya/config.json.`,
       toolCalls: [],
-      usage: { promptTokens: 0, completionTokens: 0 },
+      usage: { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 },
       durationMs: 0,
     });
   }
@@ -122,7 +122,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
 
   const toolCalls: ToolCallRecord[] = [];
-  let usage = { promptTokens: 0, completionTokens: 0 };
+  let usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
   let finalText = "";
 
   const controller = new AbortController();
@@ -152,6 +152,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
       usage = {
         promptTokens: usage.promptTokens + u.promptTokens,
         completionTokens: usage.completionTokens + u.completionTokens,
+        cachedPromptTokens: usage.cachedPromptTokens + (u.cachedPromptTokens ?? 0),
       };
     },
   };

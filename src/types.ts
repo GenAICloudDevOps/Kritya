@@ -79,6 +79,8 @@ export type PermissionDecision = "yes" | "always" | "no";
 export interface Usage {
   promptTokens: number;
   completionTokens: number;
+  /** Prompt tokens served from the provider's prompt cache (subset of promptTokens). */
+  cachedPromptTokens?: number;
 }
 
 /** Callbacks through which the agent loop reports progress to the UI. */
