@@ -63,6 +63,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | `/compact`            | summarize older conversation to free context space                      |
 | `/clear`              | start a fresh conversation                                              |
 | `/cost`               | token usage and estimated $ (see Pricing below)                         |
+| `/budget`             | show session token budget; `/budget reset` or `/budget <number>`        |
 | `/help`               | command list                                                            |
 | `/exit`               | quit                                                                    |
 
@@ -114,6 +115,12 @@ full tool output. `Ctrl+C` exits.
   that section is left untouched. It's scoped to describing the project, not
   storing instructions, since this file is read back as background context on
   every future run.
+- **Token budget** — a session-wide cap on combined prompt + completion
+  tokens across every turn and model (default 1,000,000; set `tokenBudget` in
+  config, or `/budget <number>` mid-session). The statusline shows `budget N%`
+  once usage starts, turning yellow past 80% with a one-time warning, then
+  stops further turns entirely at 100% until you run `/budget reset` (clears
+  the count) or `/budget <number>` (raises the cap). `/cost` also reports it.
 - **Background processes** — the agent can start dev servers/watchers with
   `background: true`, read their output (`bg_output`), and stop them
   (`bg_kill`); everything is killed when kritya exits. Foreground commands
@@ -196,12 +203,17 @@ rule would otherwise cover them.
   "pricing": {
     "nvidia/nemotron-3-super-120b-a12b": { "input": 0.6, "output": 2.4 }
   },
-  "contextWindow": 120000
+  "contextWindow": 120000,
+  "tokenBudget": 1000000
 }
 ```
 
 `pricing` is optional (USD per 1M tokens per model). When set, `/cost` and the
 statusline show estimated dollars alongside token counts.
+
+`tokenBudget` caps combined prompt + completion tokens for the whole session
+(default 1,000,000); kritya warns at 80% and stops further turns at 100% until
+`/budget reset` or `/budget <number>`.
 
 `customModels` entries show up in the `/model` picker. Model IDs change over
 time — pick an agent-capable (tool-calling) model for best results; chat-only

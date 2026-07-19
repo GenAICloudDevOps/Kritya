@@ -141,6 +141,12 @@ export function App({
     setTasks,
     ctxPct,
     setCtxPct,
+    tokenBudget,
+    budgetPct,
+    budgetUsed,
+    budgetStopped,
+    resetBudget,
+    setBudgetLimit,
     branch,
     planMode,
     setPlanMode,
@@ -286,6 +292,12 @@ export function App({
       planMode,
       acceptEdits,
       setAcceptEdits,
+      tokenBudget,
+      budgetPct,
+      budgetUsed,
+      budgetStopped,
+      resetBudget,
+      setBudgetLimit,
       addItem,
       setPhase,
       setActivity,
@@ -595,6 +607,14 @@ export function App({
             ? ` · tasks ${tasks.filter((t) => t.status === "done").length}/${tasks.length}`
             : ""}
           {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""}
+          {budgetPct > 0 ? (
+            <Text color={budgetStopped ? "red" : budgetPct >= 80 ? "yellow" : undefined}>
+              {" "}
+              · budget {budgetPct}%
+            </Text>
+          ) : (
+            ""
+          )}
           {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
           {totalUsage.promptTokens.toLocaleString()} in /{" "}
           {totalUsage.completionTokens.toLocaleString()} out

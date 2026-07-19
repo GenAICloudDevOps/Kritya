@@ -25,6 +25,10 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/compact", description: "summarize older conversation to free context space" },
   { name: "/clear", description: "start a fresh conversation" },
   { name: "/cost", description: "show token usage and estimated cost" },
+  {
+    name: "/budget",
+    description: "show session token budget, /budget reset, or /budget <number> to set it",
+  },
   { name: "/exit", description: "leave" },
   { name: "/quit", description: "leave" },
 ];
@@ -51,6 +55,12 @@ export interface CommandContext {
   planMode: boolean;
   acceptEdits: boolean;
   setAcceptEdits(v: boolean): void;
+  tokenBudget: number;
+  budgetPct: number;
+  budgetUsed: number;
+  budgetStopped: boolean;
+  resetBudget(): void;
+  setBudgetLimit(n: number): void;
   addItem(item: ItemBody): void;
   setPhase(phase: Phase): void;
   setActivity(activity: string | null): void;
@@ -107,6 +117,32 @@ const handlers: Record<string, CommandHandler> = {
   },
   "/cost": (ctx) => {
     ctx.addItem({ kind: "info", text: ctx.costReport() });
+  },
+  "/budget": (ctx) => {
+    const arg = ctx.arg.trim().toLowerCase();
+    if (!arg) {
+      const status = ctx.budgetStopped ? " — STOPPED" : "";
+      ctx.addItem({
+        kind: "info",
+        text:
+          `Token budget: ${ctx.budgetUsed.toLocaleString()} / ${ctx.tokenBudget.toLocaleString()} ` +
+          `(${ctx.budgetPct}%)${status}\nUsage: /budget reset · /budget <number>`,
+      });
+      return;
+    }
+    if (arg === "reset") {
+      ctx.resetBudget();
+      return;
+    }
+    const n = Number(arg.replace(/[,_]/g, ""));
+    if (!Number.isFinite(n) || n <= 0) {
+      ctx.addItem({
+        kind: "info",
+        text: `Invalid budget "${ctx.arg}". Use /budget <number>, e.g. /budget 2000000.`,
+      });
+      return;
+    }
+    ctx.setBudgetLimit(Math.round(n));
   },
   "/compact": (ctx) => {
     ctx.setPhase("working");

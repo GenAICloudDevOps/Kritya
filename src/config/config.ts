@@ -35,6 +35,8 @@ export interface CliConfig {
   contextWindow?: number;
   /** Max model round-trips per request before kritya stops and asks (default 40). */
   maxSteps?: number;
+  /** Session token budget (prompt + completion tokens combined, across all turns/models). Default 1,000,000. */
+  tokenBudget?: number;
   /** MCP servers to launch and expose as tools (stdio transport). */
   mcpServers?: Record<string, McpServerConfig>;
 }

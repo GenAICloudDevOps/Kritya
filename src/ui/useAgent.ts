@@ -5,6 +5,7 @@ import { gitBranch } from "../git/git.js";
 import { saveConfig, type CliConfig } from "../config/config.js";
 import { contextWindowFor } from "../config/models.js";
 import { crossedContextWarnThreshold } from "../agent/contextWarning.js";
+import { crossedBudgetWarnThreshold, tokenBudgetFor } from "../agent/budget.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge, Usage } from "../types.js";
@@ -79,6 +80,12 @@ export function useAgent({
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks ?? []);
   const [ctxPct, setCtxPct] = useState(0);
   const ctxPctRef = useRef(0);
+  const [tokenBudget, setTokenBudget] = useState(() => tokenBudgetFor(config));
+  const [budgetPct, setBudgetPct] = useState(0);
+  const budgetPctRef = useRef(0);
+  const [budgetUsed, setBudgetUsed] = useState(0);
+  const totalTokensRef = useRef(0);
+  const [budgetStopped, setBudgetStopped] = useState(false);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
   const [acceptEdits, setAcceptEdits] = useState(false);
@@ -182,11 +189,32 @@ export function useAgent({
     if (!lines.length) return "No usage yet this session.";
     const total = totalCost > 0 ? `\nEstimated total: $${totalCost.toFixed(4)}` : "";
     const ctxNote = `\nContext window: ${ctxPctRef.current}% used`;
+    const budgetNote =
+      `\nToken budget: ${budgetUsed.toLocaleString()} / ${tokenBudget.toLocaleString()} ` +
+      `(${budgetPct}%)${budgetStopped ? " — STOPPED, run /budget reset or /budget <number>" : ""}`;
     const hint =
       totalCost > 0
         ? ""
         : `\nTip: add per-model prices (USD per 1M tokens) to ~/.kritya/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4 } }`;
-    return `Usage this session:\n${lines.join("\n")}${total}${ctxNote}${hint}`;
+    return `Usage this session:\n${lines.join("\n")}${total}${ctxNote}${budgetNote}${hint}`;
+  };
+
+  const resetBudget = () => {
+    totalTokensRef.current = 0;
+    budgetPctRef.current = 0;
+    setBudgetUsed(0);
+    setBudgetPct(0);
+    setBudgetStopped(false);
+    addItem({ kind: "info", text: "Token budget usage reset for this session." });
+  };
+
+  const setBudgetLimit = (n: number) => {
+    setTokenBudget(n);
+    const pct = Math.min(999, Math.round((totalTokensRef.current / n) * 100));
+    budgetPctRef.current = pct;
+    setBudgetPct(pct);
+    if (pct < 100) setBudgetStopped(false);
+    addItem({ kind: "info", text: `Token budget set to ${n.toLocaleString()} for this session.` });
   };
 
   const runWebSearch = async (query: string) => {
@@ -208,6 +236,16 @@ export function useAgent({
   };
 
   const runAgent = async (text: string, images: string[] = []) => {
+    if (budgetStopped) {
+      addItem({
+        kind: "info",
+        text:
+          `Token budget reached (${totalTokensRef.current.toLocaleString()} / ` +
+          `${tokenBudget.toLocaleString()} tokens) — run /budget reset to clear it, or ` +
+          `/budget <number> to raise the cap, before continuing.`,
+      });
+      return;
+    }
     setPhase("working");
     const ac = new AbortController();
     abortRef.current = ac;
@@ -268,6 +306,32 @@ export function useAgent({
                 completionTokens: (prev[id]?.completionTokens ?? 0) + u.completionTokens,
               },
             }));
+
+            totalTokensRef.current += u.promptTokens + u.completionTokens;
+            setBudgetUsed(totalTokensRef.current);
+            const bPct = Math.min(999, Math.round((totalTokensRef.current / tokenBudget) * 100));
+            if (crossedBudgetWarnThreshold(budgetPctRef.current, bPct)) {
+              addItem({
+                kind: "info",
+                text:
+                  `⚠ Token budget at ${bPct}% (${totalTokensRef.current.toLocaleString()} / ` +
+                  `${tokenBudget.toLocaleString()} tokens this session). kritya will stop once it ` +
+                  `hits 100% — run /budget to check or raise it.`,
+              });
+            }
+            if (bPct >= 100 && budgetPctRef.current < 100) {
+              addItem({
+                kind: "info",
+                text:
+                  `⛔ Token budget reached (${totalTokensRef.current.toLocaleString()} / ` +
+                  `${tokenBudget.toLocaleString()} tokens). Stopping further turns — run ` +
+                  `/budget reset to clear it, or /budget <number> to raise the cap.`,
+              });
+              setBudgetStopped(true);
+              abortRef.current?.abort();
+            }
+            budgetPctRef.current = bPct;
+            setBudgetPct(bPct);
           },
         },
         ac.signal,
@@ -360,6 +424,12 @@ export function useAgent({
     setTasks,
     ctxPct,
     setCtxPct,
+    tokenBudget,
+    budgetPct,
+    budgetUsed,
+    budgetStopped,
+    resetBudget,
+    setBudgetLimit,
     branch,
     planMode,
     setPlanMode,
