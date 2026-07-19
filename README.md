@@ -149,6 +149,51 @@ full tool output. `Ctrl+C` exits.
   tavily.com). Web content is delimited as untrusted so pages can't inject
   instructions into the agent.
 
+## Headless / CI mode
+
+Run one prompt to completion with no terminal UI and no TTY requirement —
+for scripts, CI pipelines, and GitHub Actions:
+
+```bash
+kritya --prompt "fix the failing tests" --output json
+```
+
+Exits `0` on success, `1` on failure — check `$?` in a pipeline. `--output json`
+prints a single JSON object on stdout: `{success, result, error, toolCalls,
+usage, durationMs, model}`. Plain `--output text` (the default) just prints
+the agent's final answer.
+
+There's no terminal to show a permission prompt, so headless mode never
+blocks waiting for one:
+
+- Mutating tool calls are denied by default unless covered by an `allow` rule
+  in `.kritya/settings.json`, or `--allow-all` is passed to approve them all.
+- Destructive commands (`rm -rf`, force-push, etc.) are **always** denied,
+  even with `--allow-all` — there's no one to confirm them, so that guard
+  never turns off.
+- The workspace's own `.kritya/settings.json`, hooks, `.env`, and custom
+  commands only take effect with `--trust`, or if the workspace was already
+  trusted in a prior interactive session — never silently, since CI often
+  checks out untrusted branches/PRs.
+- `--timeout <seconds>` caps the whole run (default 1800); a stuck turn is
+  aborted rather than hanging a CI job forever.
+
+Example GitHub Actions step:
+
+```yaml
+- name: Fix failing tests with kritya
+  env:
+    NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+  run: |
+    npx kritya --prompt "run the test suite, fix any failing tests, and show a diff" \
+      --output json --allow-all > result.json
+    cat result.json
+```
+
+Subagents (`spawn_agent`/`spawn_write_agent`) aren't available in headless
+mode — a single prompt/response doesn't need the parallel-dispatch machinery
+they're built for.
+
 ## Permissions
 
 - Read-only tools (`read_file`, `list_dir`, `glob`, `grep`, `bg_output`) run

@@ -19,6 +19,7 @@ import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadCustomCommands } from "./commands/custom.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
+import { runHeadless } from "./headless.js";
 import {
   createWorktree,
   commitWorktree,
@@ -42,6 +43,19 @@ Options:
   -h, --help          show this help
   -v, --version       show version
 
+Headless / CI mode (no terminal UI, exits with 0 on success / 1 on failure):
+  --prompt <text>     run this one prompt to completion, then exit
+  --output <fmt>      text (default) or json — a single JSON object on stdout
+                      with {success, result, error, toolCalls, usage, durationMs}
+  --allow-all         auto-approve tool calls that would otherwise prompt
+                      (destructive commands are still always denied — there's
+                      no terminal to confirm them)
+  --trust             trust the workspace's own .kritya/settings.json allow
+                      rules, hooks, .env, and custom commands (off by default,
+                      since CI often checks out untrusted branches/PRs)
+  --timeout <seconds> hard wall-clock cap for the whole run (default 1800)
+  --non-interactive   accepted for compatibility; implied by --prompt
+
 Setup:
   1. Get an API key at https://build.nvidia.com (free credits available)
   2. export NVIDIA_API_KEY=nvapi-...        (Linux/macOS)
@@ -59,6 +73,11 @@ function parseArgs(argv: string[]) {
     provider: "",
     help: false,
     version: false,
+    prompt: "",
+    output: "text" as "text" | "json",
+    allowAll: false,
+    trust: false,
+    timeoutSeconds: 1800,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -68,7 +87,20 @@ function parseArgs(argv: string[]) {
     else if (a === "-p" || a === "--provider") args.provider = argv[++i] ?? "";
     else if (a === "-h" || a === "--help") args.help = true;
     else if (a === "-v" || a === "--version") args.version = true;
-    else if (!a.startsWith("-")) args.dir = a;
+    else if (a === "--prompt") args.prompt = argv[++i] ?? "";
+    else if (a === "--output") {
+      const v = argv[++i] ?? "";
+      if (v !== "text" && v !== "json") {
+        console.error(`--output must be "text" or "json", got "${v}"`);
+        process.exit(1);
+      }
+      args.output = v;
+    } else if (a === "--allow-all") args.allowAll = true;
+    else if (a === "--trust") args.trust = true;
+    else if (a === "--timeout") args.timeoutSeconds = Number(argv[++i]) || args.timeoutSeconds;
+    else if (a === "--non-interactive") {
+      // implied by --prompt; accepted so scripts can pass it explicitly
+    } else if (!a.startsWith("-")) args.dir = a;
     else {
       console.error(`Unknown option: ${a}\n\n${USAGE}`);
       process.exit(1);
@@ -94,14 +126,39 @@ if (!fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
   process.exit(1);
 }
 
-// Only the user's own global .env (~/.kritya/.env) is unconditionally trusted.
-// The workspace's .env can be authored by whoever's repo this is, so loading
-// it is gated behind the workspace trust prompt below (see resolveWorkspaceTrust).
-loadDotEnv([path.join(CONFIG_DIR, ".env")]);
+// Headless mode: run one prompt to completion with no terminal UI at all, and
+// no TTY requirement — this is what makes `kritya --prompt "..."` usable from
+// CI/scripts. Everything else in this file (the TTY check, the Ink app) is
+// only for the interactive path, so it's skipped entirely here.
+if (args.prompt) {
+  runHeadless({
+    dir: args.dir,
+    prompt: args.prompt,
+    provider: args.provider,
+    model: args.model,
+    continue: args.continue,
+    output: args.output,
+    allowAll: args.allowAll,
+    trust: args.trust,
+    timeoutSeconds: args.timeoutSeconds,
+  }).then((code) => process.exit(code));
+} else {
+  runInteractive();
+}
 
-if (!process.stdin.isTTY) {
-  console.error("kritya is interactive and requires a TTY.");
-  process.exit(1);
+function runInteractive(): void {
+  // Only the user's own global .env (~/.kritya/.env) is unconditionally
+  // trusted. The workspace's .env can be authored by whoever's repo this is,
+  // so loading it is gated behind the workspace trust prompt below (see
+  // resolveWorkspaceTrust).
+  loadDotEnv([path.join(CONFIG_DIR, ".env")]);
+
+  if (!process.stdin.isTTY) {
+    console.error("kritya is interactive and requires a TTY.");
+    process.exit(1);
+  }
+
+  void main();
 }
 
 /**
@@ -436,5 +493,3 @@ async function main() {
     />
   );
 }
-
-void main();
