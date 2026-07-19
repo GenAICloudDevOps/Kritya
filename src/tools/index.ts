@@ -10,6 +10,7 @@ import { updateTasksTool } from "./tasks.js";
 import { webSearchTool } from "./webSearch.js";
 import { bgOutputTool, bgKillTool } from "./bg.js";
 import { spawnAgentTool } from "./subagent.js";
+import { spawnWriteAgentTool } from "./writeAgent.js";
 import { readDocumentTool, writeDocumentTool } from "./document.js";
 
 export const ALL_TOOLS: ToolDef[] = [
@@ -25,6 +26,7 @@ export const ALL_TOOLS: ToolDef[] = [
   updateTasksTool,
   webSearchTool,
   spawnAgentTool,
+  spawnWriteAgentTool,
   readDocumentTool,
   writeDocumentTool,
 ];

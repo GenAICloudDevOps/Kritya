@@ -19,6 +19,14 @@ import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadCustomCommands } from "./commands/custom.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
+import {
+  createWorktree,
+  commitWorktree,
+  worktreeDiffStat,
+  removeWorktree,
+  isGitRepo,
+} from "./agent/worktree.js";
+import type { AgentHandlers, SubagentResult, SubagentSpec } from "./types.js";
 import { VERSION } from "./version.js";
 
 const USAGE = `kritya — a lean, provider-agnostic terminal coding agent
@@ -194,13 +202,43 @@ async function main() {
   const mcpTools: ToolDef[] = await loadMcpTools(config.mcpServers);
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
-  // A read-only subagent for wide searches; shares the model and workspace but
-  // has its own fresh context and cannot mutate anything.
-  const spawnSubagent = async (task: string, signal?: AbortSignal): Promise<string> => {
+  // Subagents never get spawn_agent/spawn_write_agent themselves — otherwise a
+  // subagent could spawn more subagents unboundedly (fork-bomb-style resource
+  // exhaustion) with no human in the loop to notice.
+  const nonRecursive = (list: ToolDef[]) =>
+    list.filter((t) => t.name !== "spawn_agent" && t.name !== "spawn_write_agent");
+  const readOnlySubTools = [...READONLY_TOOLS, ...mcpTools.filter((t) => !t.requiresPermission)];
+  const writeSubTools = [
+    ...nonRecursive(ALL_TOOLS),
+    ...mcpTools.filter((t) => !t.requiresPermission),
+  ];
+
+  // Hard caps so a runaway or hung subagent can't stall the session or burn
+  // unbounded API/compute: a wall-clock timeout per subagent, and a bound on
+  // how many run at once.
+  const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+  const SUBAGENT_CONCURRENCY = 3;
+
+  function silentHandlers(
+    onFinalText: (t: string) => void,
+    requestPermission: AgentHandlers["requestPermission"]
+  ): AgentHandlers {
+    return {
+      onTextDelta: () => {},
+      onReasoningDelta: () => {},
+      onAssistantText: onFinalText,
+      onToolStart: () => {},
+      onToolEnd: () => {},
+      requestPermission,
+      onUsage: () => {},
+    };
+  }
+
+  async function runReadOnlyAgent(task: string, signal: AbortSignal): Promise<SubagentResult> {
     const sub = new Agent(
       client,
       () => modelRef.current,
-      [...READONLY_TOOLS, ...mcpTools.filter((t) => !t.requiresPermission)],
+      readOnlySubTools,
       { workspace },
       new PermissionManager(),
       new SessionStore(workspace, true),
@@ -210,20 +248,131 @@ async function main() {
     let finalText = "";
     await sub.runTurn(
       task,
-      {
-        onTextDelta: () => {},
-        onReasoningDelta: () => {},
-        onAssistantText: (t) => {
-          finalText = t;
-        },
-        onToolStart: () => {},
-        onToolEnd: () => {},
-        requestPermission: async () => "no",
-        onUsage: () => {},
-      },
+      // read-only tools never require permission, so this is never invoked
+      silentHandlers(
+        (t) => (finalText = t),
+        async () => "no"
+      ),
       signal
     );
-    return finalText.trim() || "(subagent returned no findings)";
+    return { task, write: false, summary: finalText.trim() || "(subagent returned no findings)" };
+  }
+
+  async function runWriteAgent(task: string, signal: AbortSignal): Promise<SubagentResult> {
+    if (!isGitRepo(workspace)) {
+      return {
+        task,
+        write: true,
+        summary: "",
+        error:
+          "the workspace is not a git repository, so an isolated worktree could not be created",
+      };
+    }
+    const wt = createWorktree(workspace);
+    if (!wt) {
+      return { task, write: true, summary: "", error: "failed to create an isolated git worktree" };
+    }
+
+    let finalText = "";
+    try {
+      // Auto-allow ordinary writes/edits/shell (no human is watching this run),
+      // but a destructive command still forces `warning` via classifyDanger in
+      // the agent loop regardless of the allowlist — fail-safe deny it there,
+      // since there's no one to confirm it and letting it run unattended would
+      // be unsafe even inside an isolated worktree (it still has real shell/
+      // network access).
+      const sub = new Agent(
+        client,
+        () => modelRef.current,
+        writeSubTools,
+        { workspace: wt.dir },
+        new PermissionManager({ allow: ["write_file", "edit_file", "shell(*)"], deny: [] }),
+        new SessionStore(wt.dir, true),
+        []
+      );
+      sub.maxSteps = 30;
+      await sub.runTurn(
+        task,
+        silentHandlers(
+          (t) => (finalText = t),
+          async (_name, _summary, _diff, warning) => (warning ? "no" : "yes")
+        ),
+        signal
+      );
+    } catch (err) {
+      if (!finalText)
+        finalText = `(subagent stopped: ${err instanceof Error ? err.message : String(err)})`;
+    }
+
+    const commitState = commitWorktree(wt, `kritya subagent: ${task.slice(0, 72)}`);
+    if (commitState === "clean") {
+      removeWorktree(workspace, wt, true);
+      return { task, write: true, summary: finalText.trim() || "(no changes made)" };
+    }
+    if (commitState === "failed") {
+      // Don't discard the worktree: the subagent's edits are real work, even
+      // if a commit hook rejected them. Leave it on disk for manual recovery.
+      return {
+        task,
+        write: true,
+        summary: finalText.trim(),
+        error: `changes could not be committed (a commit hook may have rejected them) — left uncommitted at ${wt.dir}`,
+      };
+    }
+    const diffstat = worktreeDiffStat(workspace, wt);
+    removeWorktree(workspace, wt, false);
+    return {
+      task,
+      write: true,
+      branch: wt.branch,
+      summary: `${finalText.trim() || "(no summary)"}${diffstat ? `\n\n${diffstat}` : ""}`,
+    };
+  }
+
+  async function runOneAgent(
+    spec: SubagentSpec,
+    parentSignal?: AbortSignal
+  ): Promise<SubagentResult> {
+    const controller = new AbortController();
+    const onParentAbort = () => controller.abort();
+    parentSignal?.addEventListener("abort", onParentAbort);
+    const timer = setTimeout(() => controller.abort(), SUBAGENT_TIMEOUT_MS);
+    try {
+      return spec.write
+        ? await runWriteAgent(spec.task, controller.signal)
+        : await runReadOnlyAgent(spec.task, controller.signal);
+    } catch (err) {
+      return {
+        task: spec.task,
+        write: Boolean(spec.write),
+        summary: "",
+        error: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      clearTimeout(timer);
+      parentSignal?.removeEventListener("abort", onParentAbort);
+    }
+  }
+
+  // Runs subagents concurrently, capped at SUBAGENT_CONCURRENCY at a time, so
+  // a burst of parallel tasks can't exhaust API rate limits or system resources.
+  const spawnAgents = async (
+    specs: SubagentSpec[],
+    signal?: AbortSignal
+  ): Promise<SubagentResult[]> => {
+    const results: SubagentResult[] = new Array(specs.length);
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(SUBAGENT_CONCURRENCY, specs.length) },
+      async () => {
+        while (next < specs.length) {
+          const i = next++;
+          results[i] = await runOneAgent(specs[i], signal);
+        }
+      }
+    );
+    await Promise.all(workers);
+    return results;
   };
 
   const agent = new Agent(
@@ -234,7 +383,7 @@ async function main() {
       workspace,
       undo: undoStack,
       onTasksUpdate: (t) => uiBridge.onTasksUpdate(t),
-      spawnSubagent,
+      spawnAgents,
     },
     new PermissionManager(loadRules(workspace, trustWorkspace)),
     session,

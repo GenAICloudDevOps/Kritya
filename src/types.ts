@@ -20,6 +20,25 @@ export interface UiBridge {
   onTasksUpdate(tasks: TaskItem[]): void;
 }
 
+/** One subagent dispatch request: a self-contained task, and whether it may mutate files. */
+export interface SubagentSpec {
+  task: string;
+  /** If true, runs in an isolated git worktree/branch with write+shell access. */
+  write?: boolean;
+}
+
+/** Outcome of one subagent run. */
+export interface SubagentResult {
+  task: string;
+  write: boolean;
+  /** The subagent's findings, or a summary of what it changed. */
+  summary: string;
+  /** Set for write agents that committed changes — the branch holding them. */
+  branch?: string;
+  /** Set if the subagent's work could not be safely reconciled (e.g. commit hook rejected it). */
+  error?: string;
+}
+
 export interface ToolContext {
   /** Absolute path of the workspace root; all file tools are confined to it. */
   workspace: string;
@@ -27,8 +46,13 @@ export interface ToolContext {
   undo?: { snapshot(absPath: string, relPath: string): void; beginTurn?(): void };
   /** Lets the update_tasks tool push checklist changes to the UI. */
   onTasksUpdate?(tasks: TaskItem[]): void;
-  /** Runs a read-only subagent on a focused task and returns its findings. */
-  spawnSubagent?(task: string, signal?: AbortSignal): Promise<string>;
+  /**
+   * Runs one or more subagents concurrently, each with its own fresh context.
+   * Read-only agents can only inspect the repo. Write agents get an isolated
+   * git worktree + branch, so their edits and shell commands never touch the
+   * real working tree until the user reviews and merges the branch.
+   */
+  spawnAgents?(specs: SubagentSpec[], signal?: AbortSignal): Promise<SubagentResult[]>;
 }
 
 export interface ToolDef {

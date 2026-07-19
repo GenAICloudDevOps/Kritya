@@ -76,9 +76,17 @@ full tool output. `Ctrl+C` exits.
 - **Plan mode** (`/plan`) — a read-only mode where the agent explores and
   proposes a step-by-step plan; writes, edits, and shell are blocked until you
   run `/plan` again. Great for unfamiliar repositories.
-- **Subagents** — the agent can dispatch a focused, read-only investigation to a
-  fresh context (`spawn_agent`) that returns only its findings, keeping the main
-  conversation lean on big searches.
+- **Subagents** — the agent can dispatch one or more focused investigations to
+  fresh contexts at once (`spawn_agent`), each returning only its findings —
+  keeps the main conversation lean on big searches. It can also dispatch
+  **write-capable subagents** (`spawn_write_agent`) for independent chunks of
+  work that can proceed in parallel; each one is isolated on its own git
+  branch/worktree, so its edits and shell commands never touch your real
+  working tree — review the diff and merge the branch yourself when ready.
+  Destructive commands (`rm -rf`, force push, etc.) are always blocked inside
+  a write subagent, since there's no one there to confirm them; each subagent
+  also has a hard time limit and no more than 3 (read) / 4 (write) run in one
+  call.
 - **Image attachments** — `@screenshot.png` sends the image to vision-capable
   models alongside your message.
 - **Undo / redo** — `/undo` reverts the last turn's file changes; `/redo`
