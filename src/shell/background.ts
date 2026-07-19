@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
+import { scrubbedShellEnv } from "../config/config.js";
 
 const MAX_BUFFER_CHARS = 50_000;
 
@@ -25,9 +26,10 @@ class BackgroundManager {
     const isWindows = os.platform() === "win32";
     // detached on POSIX puts the command in its own process group, so kill()
     // can signal the whole tree (sh + whatever it spawned), not just sh.
+    // scrubbedShellEnv: background commands must not inherit provider API keys.
     const proc = isWindows
-      ? spawn("cmd", ["/c", command], { cwd, windowsHide: true })
-      : spawn("sh", ["-c", command], { cwd, detached: true });
+      ? spawn("cmd", ["/c", command], { cwd, env: scrubbedShellEnv(), windowsHide: true })
+      : spawn("sh", ["-c", command], { cwd, env: scrubbedShellEnv(), detached: true });
     const entry: BgProcess = { proc, command, buffer: "", exitCode: null, running: true };
 
     const append = (chunk: Buffer) => {

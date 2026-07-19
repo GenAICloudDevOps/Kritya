@@ -62,6 +62,23 @@ test("resolveSafe allows symlinks that stay inside the workspace", async () => {
   assert.equal(resolveSafe(ws, "alias/file.txt"), path.join(ws, "alias", "file.txt"));
 });
 
+test("resolveSafe blocks credential-store and key files", async () => {
+  const ws = await makeWorkspace();
+  for (const p of [
+    ".npmrc",
+    ".netrc",
+    ".pypirc",
+    ".git-credentials",
+    "certs/client.p12",
+    "certs/client.pfx",
+  ]) {
+    assert.throws(() => resolveSafe(ws, p), new RegExp("secret"), `${p} should be blocked`);
+  }
+  // Ordinary files with similar names stay accessible.
+  assert.ok(resolveSafe(ws, "npmrc.md"));
+  assert.ok(resolveSafe(ws, "src/token.ts"));
+});
+
 test("truncateResult caps long output", () => {
   const out = truncateResult("x".repeat(100), 10);
   assert.ok(out.startsWith("xxxxxxxxxx"));

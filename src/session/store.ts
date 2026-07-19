@@ -107,6 +107,36 @@ export class SessionStore {
     return false;
   }
 
+  /** Delete session files older than `retentionDays` across all workspaces. Best-effort. */
+  static cleanupOldSessions(retentionDays = 30): void {
+    const root = path.join(CONFIG_DIR, "sessions");
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    let dirs: string[];
+    try {
+      dirs = fs.readdirSync(root);
+    } catch {
+      return;
+    }
+    for (const d of dirs) {
+      const dir = path.join(root, d);
+      let files: string[];
+      try {
+        files = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        if (!f.endsWith(".jsonl")) continue;
+        const file = path.join(dir, f);
+        try {
+          if (fs.statSync(file).mtimeMs < cutoff) fs.unlinkSync(file);
+        } catch {
+          // best-effort
+        }
+      }
+    }
+  }
+
   static loadLatest(workspace: string): ChatMessage[] | null {
     const latest = SessionStore.listSessions(workspace)[0];
     if (!latest) return null;

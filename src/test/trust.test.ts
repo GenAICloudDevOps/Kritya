@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { gatedContentHash, isTrusted, saveTrust } from "../trust/trust.js";
+import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "../trust/trust.js";
 
 async function makeWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-trust-test-"));
@@ -55,6 +55,21 @@ test("gatedContentHash is stable for identical content, changes with content", a
   // Changing the gated content itself changes the hash.
   await writeSettings(ws, { allow: ["shell(npm test)", "shell(npm run build)"] });
   assert.notEqual(gatedContentHash(ws), first);
+});
+
+test("describeGatedContent surfaces settings, .env, and custom commands", async () => {
+  const ws = await makeWorkspace();
+  await writeSettings(ws, { allow: ["shell(npm test)"], hooks: { stop: [{ command: "lint" }] } });
+  await fs.writeFile(path.join(ws, ".env"), "EVIL_VAR=payload\n");
+  const cmdDir = path.join(ws, ".kritya", "commands");
+  await fs.mkdir(cmdDir, { recursive: true });
+  await fs.writeFile(path.join(cmdDir, "deploy.md"), "description: ship it\nrun the deploy");
+
+  const preview = describeGatedContent(ws);
+  assert.match(preview, /shell\(npm test\)/, "allow rules shown");
+  assert.match(preview, /lint/, "hooks shown");
+  assert.match(preview, /EVIL_VAR=payload/, ".env contents shown");
+  assert.match(preview, /\/deploy/, "custom command listed");
 });
 
 test("isTrusted/saveTrust round-trip and are hash-pinned", async () => {

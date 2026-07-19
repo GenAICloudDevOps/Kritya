@@ -26,11 +26,11 @@ export const spawnAgentTool: ToolDef = {
     required: ["task"],
   },
   requiresPermission: false,
-  async execute(args, ctx) {
+  async execute(args, ctx, signal) {
     const task = String(args.task ?? "").trim();
     if (!task) return "Error: task is required.";
     if (!ctx.spawnSubagent) return "Error: subagents are not available in this session.";
-    return ctx.spawnSubagent(task);
+    return ctx.spawnSubagent(task, signal);
   },
   summarize: (args) => `Subagent: ${String(args.task ?? "").slice(0, 60)}`,
 };

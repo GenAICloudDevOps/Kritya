@@ -28,6 +28,12 @@ const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /(^|[\\/])id_ed25519(\.[^\\/]*)?$/i,
   /\.pem$/i,
   /\.key$/i,
+  /(^|[\\/])\.npmrc$/i,
+  /(^|[\\/])\.netrc$/i,
+  /(^|[\\/])\.pypirc$/i,
+  /(^|[\\/])\.git-credentials$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
 ];
 
 function isSensitivePath(relPath: string): boolean {

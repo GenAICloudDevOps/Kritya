@@ -18,7 +18,7 @@ import type { TaskItem, ToolDef } from "./types.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadCustomCommands } from "./commands/custom.js";
-import { gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
+import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
 import { VERSION } from "./version.js";
 
 const USAGE = `kritya — a lean, provider-agnostic terminal coding agent
@@ -87,9 +87,8 @@ if (!fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
 }
 
 // Only the user's own global .env (~/.kritya/.env) is unconditionally trusted.
-// The workspace's .env — and process.cwd()'s, which is often the same
-// directory — can be authored by whoever's repo this is, so loading it is
-// gated behind the workspace trust prompt below (see resolveWorkspaceTrust).
+// The workspace's .env can be authored by whoever's repo this is, so loading
+// it is gated behind the workspace trust prompt below (see resolveWorkspaceTrust).
 loadDotEnv([path.join(CONFIG_DIR, ".env")]);
 
 if (!process.stdin.isTTY) {
@@ -108,12 +107,7 @@ async function resolveWorkspaceTrust(): Promise<boolean> {
   if (!hash) return true;
   if (isTrusted(workspace, hash)) return true;
 
-  let preview: string;
-  try {
-    preview = fs.readFileSync(path.join(workspace, ".kritya", "settings.json"), "utf8");
-  } catch {
-    preview = "(could not re-read settings.json)";
-  }
+  const preview = describeGatedContent(workspace);
 
   return new Promise((resolve) => {
     const instance = render(
@@ -133,7 +127,10 @@ async function resolveWorkspaceTrust(): Promise<boolean> {
 async function main() {
   const trustWorkspace = await resolveWorkspaceTrust();
   if (trustWorkspace) {
-    loadDotEnv([path.join(workspace, ".env"), path.join(process.cwd(), ".env")]);
+    // Only the workspace's own .env — it's part of the trust-gated content.
+    // The launch directory's .env is deliberately NOT loaded: it can belong to
+    // an unrelated (possibly cloned) repo and is invisible to the trust hash.
+    loadDotEnv([path.join(workspace, ".env")]);
   }
 
   const config = loadConfig();
@@ -168,10 +165,27 @@ async function main() {
 
   const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
 
-  process.on("exit", () => {
+  const cleanup = () => {
     backgroundManager.killAll();
     shutdownMcp();
-  });
+  };
+  process.on("exit", cleanup);
+  // Default signal handling terminates WITHOUT firing "exit", which would
+  // orphan background dev servers and MCP children (e.g. when the terminal
+  // window closes → SIGHUP). Clean up, then exit with the conventional code.
+  for (const [sig, code] of [
+    ["SIGTERM", 143],
+    ["SIGHUP", 129],
+  ] as const) {
+    process.on(sig, () => {
+      cleanup();
+      process.exit(code);
+    });
+  }
+
+  // Best-effort retention: session transcripts can contain secrets that passed
+  // through tool output; don't let them accumulate forever.
+  SessionStore.cleanupOldSessions();
 
   const undoStack = new UndoStack();
   const uiBridge: UiBridge = { onTasksUpdate: (_tasks: TaskItem[]) => {} };

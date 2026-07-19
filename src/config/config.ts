@@ -132,6 +132,23 @@ export function saveConfig(patch: Partial<CliConfig>): void {
   }
 }
 
+/**
+ * A copy of process.env with kritya-managed secrets removed. Every built-in
+ * provider key and the web-search key end in _API_KEY; commands the agent runs
+ * (and user hooks) have no business reading them, and under prompt injection
+ * an approved-looking shell command is an easy exfiltration channel. Commands
+ * that genuinely need such a key must receive it explicitly (e.g. inline in
+ * the command), same as MCP servers declare theirs via `env`.
+ */
+export function scrubbedShellEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/_API_KEY$/i.test(key)) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 /** Parse simple KEY=VALUE lines; ignores comments, blanks, and export prefixes. */
 export function parseDotEnv(raw: string): Record<string, string> {
   const vars: Record<string, string> = {};

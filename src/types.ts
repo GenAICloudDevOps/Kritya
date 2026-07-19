@@ -44,7 +44,8 @@ export interface ToolDef {
   summarize(args: Record<string, unknown>): string;
   /** Optional diff/preview shown in the permission prompt. */
   preview?(args: Record<string, unknown>, ctx: ToolContext): Promise<string | null>;
-  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
+  /** `signal` aborts when the user cancels; long-running tools should honor it. */
+  execute(args: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>;
 }
 
 export type PermissionDecision = "yes" | "always" | "no";

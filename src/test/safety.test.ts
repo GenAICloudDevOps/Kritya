@@ -16,11 +16,30 @@ test("classifyDanger flags destructive commands", () => {
   assert.ok(classifyDanger("git clean --force -d"));
 });
 
+test("classifyDanger flags Windows and additional POSIX destructive commands", () => {
+  assert.ok(classifyDanger("del /s /q build"));
+  assert.ok(classifyDanger("rd /s /q build"));
+  assert.ok(classifyDanger("format c:"));
+  assert.ok(classifyDanger("Remove-Item -Recurse -Force .\\build"));
+  assert.ok(classifyDanger("find . -name '*.log' -delete"));
+  assert.ok(classifyDanger("shred -u secrets.txt"));
+  assert.ok(classifyDanger("truncate -s 0 app.log"));
+  assert.ok(classifyDanger("ls *.tmp | xargs rm"));
+  assert.ok(classifyDanger("git branch -D feature/x"));
+  assert.ok(classifyDanger("git restore src/index.ts"));
+  assert.ok(classifyDanger("git restore --staged --worktree src/index.ts"));
+});
+
 test("classifyDanger allows ordinary commands", () => {
   assert.equal(classifyDanger("npm test"), null);
   assert.equal(classifyDanger("git status"), null);
   assert.equal(classifyDanger("ls -la"), null);
   assert.equal(classifyDanger("git push origin main"), null);
+  // Unstaging is safe — must not be flagged.
+  assert.equal(classifyDanger("git restore --staged src/index.ts"), null);
+  // Deleting a merged branch (-d) is safe, unlike -D.
+  assert.equal(classifyDanger("git branch -d feature/x"), null);
+  assert.equal(classifyDanger("npm run format"), null);
 });
 
 test("deny rules block matching calls and win over allow", () => {

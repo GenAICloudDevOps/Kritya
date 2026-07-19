@@ -25,7 +25,24 @@ const PATTERNS: DangerPattern[] = [
     re: /\bgit\s+clean\s+.*(-[a-z]*f[a-z]*\b|--force\b)/i,
     label: "git clean (deletes untracked files)",
   },
-  { re: /\bgit\s+checkout\s+--\s|\bgit\s+restore\b/i, label: "discards uncommitted changes" },
+  {
+    // git restore discards working-tree changes — except the pure --staged
+    // form, which only unstages (safe) unless --worktree is also given.
+    re: /\bgit\s+checkout\s+--\s|\bgit\s+restore\b(?!\s+--staged\b(?!.*--worktree))/i,
+    label: "discards uncommitted changes",
+  },
+  { re: /\bgit\s+branch\s+(?:\S+\s+)*-D\b/, label: "force-deleting a branch" },
+  { re: /\bfind\b.*\s-delete\b/i, label: "bulk file deletion (find -delete)" },
+  { re: /\bshred\b/i, label: "irrecoverable file destruction (shred)" },
+  { re: /\btruncate\b.*\s-s\s*0\b/i, label: "truncating a file to zero size" },
+  { re: /\bxargs\b.*\brm\b/i, label: "bulk file deletion (xargs rm)" },
+  { re: /\bdel\b\s+\S*\/(s|q|f)\b/i, label: "bulk file deletion (del)" },
+  { re: /\brd\s+\/s/i, label: "recursive directory deletion (rd /s)" },
+  { re: /\bformat\s+[a-z]:/i, label: "disk format" },
+  {
+    re: /\bremove-item\b.*(-recurse\b|-force\b)/i,
+    label: "recursive/forced deletion (Remove-Item)",
+  },
   { re: /\bmkfs\b/i, label: "filesystem format" },
   { re: /\bdd\b.*\bof=\/dev\//i, label: "raw disk write (dd)" },
   { re: />\s*\/dev\/(sd|nvme|hd|disk)/i, label: "writing to a raw disk device" },

@@ -33,7 +33,16 @@ export class UndoStack {
   /** Capture the current state of a file before it is modified. */
   snapshot(absPath: string, relPath: string): void {
     this.entries.push({ relPath, absPath, content: readOrNull(absPath), turn: this.turn });
-    if (this.entries.length > MAX_ENTRIES) this.entries.shift();
+    // Evict whole turns, never part of one — a half-evicted turn would make
+    // /undo silently restore only some of that turn's files. If a single turn
+    // alone exceeds the cap, keep it intact rather than truncate it.
+    while (
+      this.entries.length > MAX_ENTRIES &&
+      this.entries[0].turn !== this.entries[this.entries.length - 1].turn
+    ) {
+      const oldest = this.entries[0].turn;
+      while (this.entries.length && this.entries[0].turn === oldest) this.entries.shift();
+    }
     // A fresh change invalidates any redo history.
     this.redoStack = [];
   }

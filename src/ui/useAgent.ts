@@ -179,6 +179,9 @@ export function useAgent({
               setPhase("permission");
             }),
           onRetry: (attempt, status) => {
+            // Drop the partial text the failed attempt streamed, or the
+            // retried answer would appear twice.
+            setStream("");
             setActivity(
               `Provider error${status ? ` (${status})` : ""} — retrying (attempt ${attempt})…`
             );

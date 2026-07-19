@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { SelectList } from "./SelectList.js";
 
-const MAX_PREVIEW_LINES = 30;
+const MAX_PREVIEW_LINES = 40;
 
 export function TrustPrompt({
   workspace,
@@ -9,7 +9,7 @@ export function TrustPrompt({
   onDecision,
 }: {
   workspace: string;
-  /** Raw contents of the workspace's .kritya/settings.json, for review. */
+  /** Rendering of ALL trust-gated content (settings, .env, custom commands), for review. */
   preview: string;
   onDecision(trust: boolean): void;
 }) {
@@ -22,8 +22,9 @@ export function TrustPrompt({
         Untrusted workspace settings
       </Text>
       <Text>
-        {workspace} has a .kritya/settings.json with `allow` rules and/or `hooks` that would run
-        automatically. Review it below before trusting this workspace.
+        {workspace} ships content that would take effect automatically: settings `allow` rules or
+        `hooks`, a `.env` file, and/or custom slash commands. Everything you would be approving is
+        shown below — review it before trusting this workspace.
       </Text>
       <Box flexDirection="column" marginTop={1}>
         {shown.map((line, i) => (

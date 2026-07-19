@@ -20,3 +20,17 @@ test("loadConfig no longer falls back to the legacy .code-cli config path", asyn
   const { loadConfig } = await import(`../config/config.js?t=${Date.now()}`);
   assert.deepEqual(loadConfig(), {});
 });
+
+test("scrubbedShellEnv removes *_API_KEY vars but keeps the rest", async () => {
+  process.env.KRITYA_TEST_API_KEY = "sekrit";
+  process.env.KRITYA_TEST_PLAIN = "ok";
+  try {
+    const { scrubbedShellEnv } = await import(`../config/config.js?t=${Date.now()}`);
+    const env = scrubbedShellEnv();
+    assert.equal(env.KRITYA_TEST_API_KEY, undefined);
+    assert.equal(env.KRITYA_TEST_PLAIN, "ok");
+  } finally {
+    delete process.env.KRITYA_TEST_API_KEY;
+    delete process.env.KRITYA_TEST_PLAIN;
+  }
+});

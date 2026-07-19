@@ -1,7 +1,7 @@
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { CONFIG_DIR } from "../config/config.js";
+import { CONFIG_DIR, scrubbedShellEnv } from "../config/config.js";
 import { safeCompileRegex } from "../tools/common.js";
 
 /**
@@ -63,6 +63,28 @@ export function loadHooks(workspace: string, trustWorkspace = true): HooksConfig
   return merged;
 }
 
+/** Run one hook command without blocking the event loop (the Ink UI stays live). */
+function execHook(
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): Promise<{ ok: boolean; output: string }> {
+  return new Promise((resolve) => {
+    exec(
+      command,
+      { cwd, env, timeout: HOOK_TIMEOUT_MS, windowsHide: true, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        if (error) {
+          const output = (stderr || stdout || error.message || "hook failed").toString().trim();
+          resolve({ ok: false, output });
+        } else {
+          resolve({ ok: true, output: (stdout ?? "").trim() });
+        }
+      }
+    );
+  });
+}
+
 export class HookRunner {
   constructor(
     private hooks: HooksConfig,
@@ -74,14 +96,16 @@ export class HookRunner {
   }
 
   /** Run tool-related hooks. For preToolUse, `blocked` is true if a blocking hook failed. */
-  runToolHooks(
+  async runToolHooks(
     event: "preToolUse" | "postToolUse",
     toolName: string,
     args: Record<string, unknown>
-  ): HookResult {
+  ): Promise<HookResult> {
     const defs = this.hooks[event] ?? [];
+    // scrubbedShellEnv: hooks are arbitrary commands and must not silently
+    // inherit provider API keys from kritya's own environment.
     const env = {
-      ...process.env,
+      ...scrubbedShellEnv(),
       KRITYA_TOOL_NAME: toolName,
       KRITYA_TOOL_PATH: String(args.path ?? ""),
       KRITYA_TOOL_COMMAND: String(args.command ?? ""),
@@ -98,41 +122,22 @@ export class HookRunner {
         }
         if (!matches) continue;
       }
-      try {
-        const out = execSync(def.command, {
-          cwd: this.workspace,
-          env,
-          timeout: HOOK_TIMEOUT_MS,
-          stdio: ["ignore", "pipe", "pipe"],
-          encoding: "utf8",
-        });
-        if (out.trim()) outputs.push(out.trim());
-      } catch (err) {
-        const e = err as { stdout?: string; stderr?: string; message?: string };
-        const detail = (e.stderr || e.stdout || e.message || "hook failed").toString().trim();
-        outputs.push(detail);
-        if (event === "preToolUse" && def.blocking) {
-          return {
-            blocked: true,
-            output: `A preToolUse hook blocked this ${toolName} call:\n${detail}`,
-          };
-        }
+      const { ok, output } = await execHook(def.command, this.workspace, env);
+      if (output) outputs.push(output);
+      if (!ok && event === "preToolUse" && def.blocking) {
+        return {
+          blocked: true,
+          output: `A preToolUse hook blocked this ${toolName} call:\n${output}`,
+        };
       }
     }
     return { blocked: false, output: outputs.join("\n") };
   }
 
-  runStop(): void {
+  async runStop(): Promise<void> {
     for (const def of this.hooks.stop ?? []) {
-      try {
-        execSync(def.command, {
-          cwd: this.workspace,
-          timeout: HOOK_TIMEOUT_MS,
-          stdio: "ignore",
-        });
-      } catch {
-        // stop hooks are best-effort.
-      }
+      // stop hooks are best-effort; failures are ignored.
+      await execHook(def.command, this.workspace, scrubbedShellEnv());
     }
   }
 }

@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import { scrubbedShellEnv } from "../config/config.js";
 import { gitDiffStat } from "../git/git.js";
 import { backgroundManager } from "../shell/background.js";
 import type { ToolDef } from "../types.js";
@@ -41,7 +42,7 @@ export const shellTool: ToolDef = {
     if (!GIT_MUTATING_RE.test(command)) return null;
     return gitDiffStat(ctx.workspace) || null;
   },
-  execute(args, ctx) {
+  execute(args, ctx, signal) {
     const command = String(args.command);
 
     if (args.background) {
@@ -62,16 +63,20 @@ export const shellTool: ToolDef = {
         command,
         {
           cwd: ctx.workspace,
+          env: scrubbedShellEnv(),
           timeout: timeoutS * 1000,
           maxBuffer: 10 * 1024 * 1024,
           windowsHide: true,
+          signal,
         },
         (error, stdout, stderr) => {
           const parts: string[] = [];
           if (stdout) parts.push(stdout.trimEnd());
           if (stderr) parts.push(`[stderr]\n${stderr.trimEnd()}`);
           if (error) {
-            if (error.killed) {
+            if (signal?.aborted) {
+              parts.push("[command cancelled by user]");
+            } else if (error.killed) {
               parts.push(
                 `[command timed out after ${timeoutS}s — for servers/watchers use background:true]`
               );

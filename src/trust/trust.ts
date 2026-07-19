@@ -90,6 +90,36 @@ function readGatedContent(workspace: string): GatedContent | null {
 }
 
 /**
+ * A human-readable rendering of ALL the gated content, for the trust prompt.
+ * The user must be able to see everything they're approving — not just
+ * settings.json but the .env contents and each custom command file.
+ */
+export function describeGatedContent(workspace: string): string {
+  const { allow, hooks } = readSettingsGatedContent(workspace);
+  const env = readEnvFile(workspace);
+  const commands = readCommandFiles(workspace);
+  const sections: string[] = [];
+  if ((allow && allow.length > 0) || hooks) {
+    sections.push(
+      `.kritya/settings.json (allow rules / hooks):\n${JSON.stringify({ allow, hooks }, null, 2)}`
+    );
+  }
+  if (env !== undefined) {
+    sections.push(`.env (loaded into the environment of every command):\n${env.trimEnd()}`);
+  }
+  if (commands) {
+    const list = Object.entries(commands)
+      .map(([file, body]) => {
+        const first = body.split("\n")[0]?.trim().slice(0, 80) ?? "";
+        return `  /${file.replace(/\.md$/, "")} — ${first || "(empty)"}`;
+      })
+      .join("\n");
+    sections.push(`.kritya/commands/ (custom slash commands — prompts run as you):\n${list}`);
+  }
+  return sections.join("\n\n") || "(no gated content)";
+}
+
+/**
  * A stable hash of the workspace's gated content (allow rules, hooks, .env,
  * and custom command files), or null if there's nothing to gate. A null
  * result means trust never needs to be asked.
