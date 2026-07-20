@@ -6,7 +6,13 @@ import type { ChatResult, ParsedToolCall } from "../provider/client.js";
 import type { ProviderClient } from "../provider/client.js";
 import { PermissionManager } from "../permissions/permissions.js";
 import { SessionStore } from "../session/store.js";
-import type { AgentHandlers, ChatMessage, PermissionDecision, ToolContext, ToolDef } from "../types.js";
+import type {
+  AgentHandlers,
+  ChatMessage,
+  PermissionDecision,
+  ToolContext,
+  ToolDef,
+} from "../types.js";
 
 /**
  * Scripts a sequence of model round-trips: call N of `client.chat()` returns
@@ -17,7 +23,8 @@ function scriptedClient(rounds: ChatResult[]): { client: ProviderClient; callCou
   let i = 0;
   const client = {
     chat: async (): Promise<ChatResult> => {
-      if (i >= rounds.length) throw new Error(`unexpected chat() call #${i + 1} — only ${rounds.length} scripted`);
+      if (i >= rounds.length)
+        throw new Error(`unexpected chat() call #${i + 1} — only ${rounds.length} scripted`);
       return rounds[i++];
     },
   } as unknown as ProviderClient;
