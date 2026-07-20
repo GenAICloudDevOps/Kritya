@@ -36,8 +36,14 @@ const NAMED_PATTERNS: NamedPattern[] = [
   { kind: "Google API key", re: /\bAIza[0-9A-Za-z\-_]{35}\b/g },
   { kind: "Stripe key", re: /\b(sk|rk)_(live|test)_[0-9a-zA-Z]{20,}\b/g },
   { kind: "Anthropic API key", re: /\bsk-ant-[A-Za-z0-9\-_]{20,}\b/g },
-  { kind: "OpenAI API key", re: /\bsk-[A-Za-z0-9]{20,}T3BlbkFJ[A-Za-z0-9]{20,}\b|\bsk-proj-[A-Za-z0-9\-_]{20,}\b/g },
-  { kind: "JSON Web Token", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
+  {
+    kind: "OpenAI API key",
+    re: /\bsk-[A-Za-z0-9]{20,}T3BlbkFJ[A-Za-z0-9]{20,}\b|\bsk-proj-[A-Za-z0-9\-_]{20,}\b/g,
+  },
+  {
+    kind: "JSON Web Token",
+    re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+  },
   {
     kind: "Private key block",
     re: /-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g,
@@ -62,9 +68,11 @@ function shannonEntropy(s: string): number {
 
 /** Placeholder-looking values (env var refs, obvious examples) that shouldn't be flagged. */
 function looksLikePlaceholder(value: string): boolean {
-  if (/^(x+|\*+|0+|1+|<[^>]+>|\{\{.*\}\}|\$\{?[A-Z0-9_]+\}?|your[_-]|example|changeme|placeholder|dummy|fake|test)/i.test(
-    value
-  )) {
+  if (
+    /^(x+|\*+|0+|1+|<[^>]+>|\{\{.*\}\}|\$\{?[A-Z0-9_]+\}?|your[_-]|example|changeme|placeholder|dummy|fake|test)/i.test(
+      value
+    )
+  ) {
     return true;
   }
   // Low variety of distinct characters (e.g. "aaaaaaaaaaaaaaaaaaaa") is not a real secret.

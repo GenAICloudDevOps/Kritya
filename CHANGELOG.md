@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Mid-session provider failover**: a new `/provider` command lists every
+  configured provider and lets you switch (`/provider openai`) without losing
+  the conversation — only the underlying HTTP client is swapped, history and
+  undo state are untouched. When a request exhausts its retries (429/5xx with
+  exponential backoff, already automatic), kritya now surfaces this as a
+  distinct error and suggests a configured fallback provider; headless mode
+  does the same via `--provider`.
+
+- **Session crash-safety**: the task-checklist sidecar and a resumed
+  session's seed file are now written atomically (tmp-file + rename), so a
+  crash mid-write can't corrupt them. Append-per-turn session files already
+  degrade gracefully (a truncated last line is skipped, not the whole
+  session) — now documented and covered by tests.
+
 - **Prompt-caching awareness**: the system prompt is reordered for cache
   stability — stable content first (identity, tool rules, style), then
   project memory (KRITYA.md), with volatile sections (environment, workspace

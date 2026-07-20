@@ -7,6 +7,7 @@ import fg from "fast-glob";
 import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
+import type { ProviderClient } from "../provider/client.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
@@ -28,8 +29,11 @@ export interface AppProps {
   agent: Agent;
   workspace: string;
   modelRef: { current: string };
+  providerRef: { current: string };
   config: CliConfig;
   resumedCount: number;
+  /** Updates the client subagents (spawn_agent) construct with, so a /provider switch applies to them too. */
+  onSwitchClient(client: ProviderClient): void;
   /** Task checklist saved alongside the resumed session (via -c), if any. */
   initialTasks?: TaskItem[];
   undoStack: UndoStack;
@@ -60,6 +64,7 @@ export function App({
   agent,
   workspace,
   modelRef,
+  providerRef,
   config,
   resumedCount,
   initialTasks,
@@ -68,6 +73,7 @@ export function App({
   resumeSessions,
   customCommands = [],
   mcpToolCount = 0,
+  onSwitchClient,
 }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -143,6 +149,7 @@ export function App({
     setActivity,
     permission,
     model,
+    provider,
     totalUsage,
     totalCost,
     tasks,
@@ -165,6 +172,7 @@ export function App({
     onAcceptEditsConfirm,
     abortRef,
     setModelEverywhere,
+    setProviderEverywhere,
     costReport,
     runAgent,
     runWebSearch,
@@ -174,12 +182,14 @@ export function App({
     agent,
     workspace,
     modelRef,
+    providerRef,
     config,
     uiBridge,
     resumedCount,
     initialTasks,
     resumeSessions,
     refreshFileList,
+    onSwitchClient,
   });
 
   // Tick an elapsed-seconds counter while the agent is working.
@@ -313,6 +323,8 @@ export function App({
       setTasks,
       setPlanMode,
       setModelEverywhere,
+      provider,
+      setProviderEverywhere,
       refreshFileList,
       runAgent,
       runWebSearch,

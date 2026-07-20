@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ProviderClient } from "../provider/client.js";
+import { ProviderClient, RetryExhaustedError } from "../provider/client.js";
 import type { ChatMessage } from "../types.js";
 
 /** Minimal shape of an OpenAI streaming chunk, as consumed by chatOnce. */
@@ -131,6 +131,53 @@ test("chatOnce captures cached prompt tokens from prompt_tokens_details", async 
     completionTokens: 5,
     cachedPromptTokens: 75,
   });
+});
+
+test("chat retries a 429 with backoff, then throws RetryExhaustedError once attempts are exhausted", async () => {
+  let calls = 0;
+  const client = new ProviderClient("fake-key");
+  (client as unknown as { client: { chat: { completions: { create: unknown } } } }).client = {
+    chat: {
+      completions: {
+        create: async () => {
+          calls++;
+          const err = new Error("rate limited") as Error & { status: number };
+          err.status = 429;
+          throw err;
+        },
+      },
+    },
+  };
+
+  const retryAttempts: number[] = [];
+  const promise = client.chat("m", [], [], {
+    ...noopCallbacks,
+    onRetry: (attempt) => retryAttempts.push(attempt),
+  });
+
+  await assert.rejects(promise, RetryExhaustedError);
+  assert.equal(calls, 4); // MAX_ATTEMPTS
+  assert.deepEqual(retryAttempts, [1, 2, 3]); // one onRetry per retry, not the final failed attempt
+});
+
+test("chat does not retry a non-retryable (e.g. 400) error", async () => {
+  const client = new ProviderClient("fake-key");
+  let calls = 0;
+  (client as unknown as { client: { chat: { completions: { create: unknown } } } }).client = {
+    chat: {
+      completions: {
+        create: async () => {
+          calls++;
+          const err = new Error("bad request") as Error & { status: number };
+          err.status = 400;
+          throw err;
+        },
+      },
+    },
+  };
+
+  await assert.rejects(client.chat("m", [], [], noopCallbacks), /bad request/);
+  assert.equal(calls, 1);
 });
 
 test("chatOnce forwards text and reasoning deltas via callbacks", async () => {

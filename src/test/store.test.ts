@@ -75,3 +75,46 @@ test("matchesContent is case-insensitive and treats an empty query as always mat
   assert.equal(SessionStore.matchesContent(session.file, "auth module"), true);
   assert.equal(SessionStore.matchesContent(session.file, ""), true);
 });
+
+test("loadFile recovers all complete messages when the last line was truncated mid-write (crash simulation)", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-5`);
+  const workspace = "/tmp/some-workspace-e";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "first message" });
+  store.append({ role: "assistant", content: "second message" });
+
+  const [session] = SessionStore.listSessions(workspace);
+  const full = await fs.readFile(session.file, "utf8");
+  // Simulate a crash mid-append: chop the trailing line partway through,
+  // like a process killed mid-write to the last JSON line.
+  const truncated = full.slice(0, full.length - 10);
+  await fs.writeFile(session.file, truncated, "utf8");
+
+  const messages = SessionStore.loadFile(session.file);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].content, "first message");
+});
+
+test("saveTasks/loadTasksForSession round-trip and never leave a partial file (rename is atomic)", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-6`);
+  const workspace = "/tmp/some-workspace-f";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "hi" });
+  const [session] = SessionStore.listSessions(workspace);
+
+  store.saveTasks([{ text: "do the thing", status: "pending" }]);
+  const loaded = SessionStore.loadTasksForSession(session.file);
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0].text, "do the thing");
+
+  // No leftover .tmp-* file should remain in the session directory after a
+  // successful save — writeFileAtomic renames it into place.
+  const dirFiles = await fs.readdir(path.dirname(session.file));
+  assert.ok(!dirFiles.some((f) => f.includes(".tmp-")));
+});

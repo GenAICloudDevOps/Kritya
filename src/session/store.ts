@@ -10,6 +10,23 @@ function sessionDir(workspace: string): string {
 }
 
 /**
+ * Write `data` to `filePath` without ever leaving a truncated/partial file
+ * behind if the process crashes or is killed mid-write: write to a sibling
+ * tmp file first, then rename it over the target. A rename is a single
+ * filesystem metadata operation (atomic on both POSIX and Windows/NTFS), so
+ * readers only ever see the old complete file or the new complete file, never
+ * something in between.
+ */
+function writeFileAtomic(filePath: string, data: string, mode: number): void {
+  const tmp = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  fs.writeFileSync(tmp, data, { mode });
+  fs.renameSync(tmp, filePath);
+}
+
+/**
  * Persists the conversation as one JSON message per line. A session maps to
  * one file; --continue reloads the most recent file for the workspace.
  */
@@ -53,7 +70,7 @@ export class SessionStore {
         fs.rmSync(this.tasksFilePath(), { force: true });
         return;
       }
-      fs.writeFileSync(this.tasksFilePath(), JSON.stringify(tasks), { mode: 0o600 });
+      writeFileAtomic(this.tasksFilePath(), JSON.stringify(tasks), 0o600);
     } catch {
       // best-effort
     }
@@ -84,12 +101,18 @@ export class SessionStore {
     // output — keep them readable only by the owner.
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     if (seed.length) {
-      fs.writeFileSync(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""), {
-        mode: 0o600,
-      });
+      writeFileAtomic(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""), 0o600);
     }
   }
 
+  /**
+   * Appends one JSON-encoded message per call — a crash mid-write can only
+   * ever corrupt the single line currently being written, never anything
+   * appended before it (each prior line was already a completed, separate
+   * write). loadFile/matchesContent/listSessions all parse line-by-line and
+   * skip a line that fails JSON.parse, so a truncated last line loses at
+   * most that one message rather than the whole session.
+   */
   append(message: ChatMessage): void {
     if (this.ephemeral) return;
     try {

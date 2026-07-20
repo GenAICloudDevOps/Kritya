@@ -1,6 +1,6 @@
 import type { Agent } from "../agent/loop.js";
 import { mcpStatus } from "../mcp/client.js";
-import type { CliConfig } from "../config/config.js";
+import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
@@ -13,6 +13,10 @@ export interface CommandDef {
 export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/help", description: "show available commands" },
   { name: "/model", description: "pick a model, or /model <id> for any provider model ID" },
+  {
+    name: "/provider",
+    description: "list providers, or /provider <name> to switch mid-session (keeps history)",
+  },
   {
     name: "/plan",
     description: "toggle plan mode (read-only): explore and propose before editing",
@@ -70,6 +74,8 @@ export interface CommandContext {
   setTasks(tasks: TaskItem[]): void;
   setPlanMode(next: boolean): void;
   setModelEverywhere(id: string): void;
+  provider: string;
+  setProviderEverywhere(name: string): void;
   refreshFileList(): void;
   runAgent(text: string, images?: string[]): Promise<void>;
   runWebSearch(query: string): Promise<void>;
@@ -94,6 +100,24 @@ const handlers: Record<string, CommandHandler> = {
   "/model": (ctx) => {
     if (ctx.arg) ctx.setModelEverywhere(ctx.arg);
     else ctx.setPhase("model");
+  },
+  "/provider": (ctx) => {
+    if (!ctx.arg) {
+      const lines = listProviders(ctx.config).map((p) => {
+        const marker = p.name === ctx.provider ? "*" : " ";
+        const note = p.hasKey ? "" : "  (no API key configured)";
+        return `  ${marker} ${p.name}${note}`;
+      });
+      ctx.addItem({
+        kind: "info",
+        text:
+          `Providers (* = active):\n${lines.join("\n")}\n\n` +
+          `Switch with /provider <name> — conversation history is kept. ` +
+          `If a request keeps failing (429/5xx after retries), switch to any provider marked with a key.`,
+      });
+      return;
+    }
+    ctx.setProviderEverywhere(ctx.arg);
   },
   "/mcp": (ctx) => {
     const statuses = mcpStatus();

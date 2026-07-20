@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import path from "node:path";
 import type { Agent } from "../agent/loop.js";
 import { gitBranch } from "../git/git.js";
-import { saveConfig, type CliConfig } from "../config/config.js";
+import { listProviders, resolveProvider, saveConfig, type CliConfig } from "../config/config.js";
 import { contextWindowFor } from "../config/models.js";
+import { ProviderClient, RetryExhaustedError } from "../provider/client.js";
 import { crossedContextWarnThreshold } from "../agent/contextWarning.js";
 import {
   cacheSavingsFor,
@@ -29,12 +30,15 @@ export interface UseAgentParams {
   agent: Agent;
   workspace: string;
   modelRef: { current: string };
+  providerRef: { current: string };
   config: CliConfig;
   uiBridge: UiBridge;
   resumedCount: number;
   initialTasks?: TaskItem[];
   resumeSessions?: SessionMeta[];
   refreshFileList(): void;
+  /** Updates the client subagents (spawn_agent) construct with, so a provider switch applies to them too. */
+  onSwitchClient(client: ProviderClient): void;
 }
 
 /**
@@ -46,12 +50,14 @@ export function useAgent({
   agent,
   workspace,
   modelRef,
+  providerRef,
   config,
   uiBridge,
   resumedCount,
   initialTasks,
   resumeSessions,
   refreshFileList,
+  onSwitchClient,
 }: UseAgentParams) {
   const nextId = useRef(0);
   const [items, setItems] = useState<Item[]>(() => {
@@ -81,6 +87,7 @@ export function useAgent({
   const [activity, setActivity] = useState<string | null>(null);
   const [permission, setPermission] = useState<PendingPermission | null>(null);
   const [model, setModel] = useState(modelRef.current);
+  const [provider, setProvider] = useState(providerRef.current);
   const [usageByModel, setUsageByModel] = useState<Record<string, Usage>>({});
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks ?? []);
   const [ctxPct, setCtxPct] = useState(0);
@@ -167,6 +174,45 @@ export function useAgent({
     agent.contextWindow = contextWindowFor(id, config);
     saveConfig({ model: id });
     addItem({ kind: "info", text: `Model set to ${id}` });
+  };
+
+  /**
+   * Switch the active provider mid-session — e.g. as a fallback when the
+   * current one keeps timing out or rate-limiting. Only the underlying HTTP
+   * client changes; `agent.history` (and the persisted session file) are
+   * untouched, so the conversation carries over.
+   */
+  const setProviderEverywhere = (name: string) => {
+    const resolved = resolveProvider(config, name);
+    if (!resolved.apiKey) {
+      addItem({
+        kind: "info",
+        text:
+          `No API key found for provider "${name}". Set its env var, a .env file, or ` +
+          `providers.${name}.apiKey in ~/.kritya/config.json, then try again.`,
+      });
+      return;
+    }
+    const newClient = new ProviderClient(resolved.apiKey, resolved.baseUrl, {
+      temperature: resolved.temperature,
+      topP: resolved.topP,
+      maxTokens: resolved.maxTokens,
+    });
+    agent.setClient(newClient);
+    onSwitchClient(newClient);
+    providerRef.current = name;
+    setProvider(name);
+    saveConfig({ provider: name });
+
+    const providerDefaultModel = config.providers?.[name]?.model;
+    let note = `Switched provider to ${name} — conversation history kept.`;
+    if (providerDefaultModel && providerDefaultModel !== modelRef.current) {
+      setModelEverywhere(providerDefaultModel);
+      note = `Switched provider to ${name} (model: ${providerDefaultModel}) — conversation history kept.`;
+    } else {
+      note += ` Model "${modelRef.current}" carried over — /model to change it if it isn't offered here.`;
+    }
+    addItem({ kind: "info", text: note });
   };
 
   const totalUsage = Object.values(usageByModel).reduce(
@@ -357,12 +403,29 @@ export function useAgent({
       const isAbort =
         (err instanceof Error && err.name === "AbortError") ||
         (err instanceof Error && /abort/i.test(err.message));
-      addItem({
-        kind: "info",
-        text: isAbort
-          ? "Interrupted."
-          : `Error: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      let text: string;
+      if (isAbort) {
+        text = "Interrupted.";
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        if (err instanceof RetryExhaustedError) {
+          const alternatives = listProviders(config)
+            .filter((p) => p.hasKey && p.name !== provider)
+            .map((p) => p.name);
+          const hint = alternatives.length
+            ? ` Provider "${provider}" isn't responding — try /provider ${alternatives[0]}` +
+              (alternatives.length > 1
+                ? ` (also available: ${alternatives.slice(1).join(", ")})`
+                : "") +
+              ` to switch without losing this conversation.`
+            : ` Provider "${provider}" isn't responding, and no other provider has an API key ` +
+              `configured to fall back to — see the "Providers" section of the README.`;
+          text = `Error: ${message}${hint}`;
+        } else {
+          text = `Error: ${message}`;
+        }
+      }
+      addItem({ kind: "info", text });
     } finally {
       abortRef.current = null;
       setStream("");
@@ -433,6 +496,7 @@ export function useAgent({
     setActivity,
     permission,
     model,
+    provider,
     usageByModel,
     totalUsage,
     totalCost,
@@ -456,6 +520,7 @@ export function useAgent({
     onAcceptEditsConfirm,
     abortRef,
     setModelEverywhere,
+    setProviderEverywhere,
     costReport,
     runAgent,
     runWebSearch,

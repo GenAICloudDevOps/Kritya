@@ -130,6 +130,28 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
   };
 }
 
+export interface ProviderStatus {
+  name: string;
+  hasKey: boolean;
+}
+
+/**
+ * All providers kritya knows about — builtins plus anything named under
+ * `config.providers` — with whether each currently resolves to a usable API
+ * key. This is the fallback chain offered when the active provider's
+ * requests keep failing (see RetryExhaustedError / the /provider command):
+ * only entries with `hasKey: true` are actually switchable right now.
+ */
+export function listProviders(config: CliConfig): ProviderStatus[] {
+  const names = new Set([
+    ...Object.keys(BUILTIN_PROVIDERS),
+    ...Object.keys(config.providers ?? {}),
+  ]);
+  return [...names]
+    .sort()
+    .map((name) => ({ name, hasKey: !!resolveProvider(config, name).apiKey }));
+}
+
 export function loadConfig(): CliConfig {
   try {
     const raw = fs.readFileSync(CONFIG_FILE, "utf8");

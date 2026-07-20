@@ -53,6 +53,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | Command               | What it does                                                            |
 | --------------------- | ----------------------------------------------------------------------- |
 | `/model`              | interactive model picker (`/model <id>` sets any model ID directly)     |
+| `/provider`           | list providers, or `/provider <name>` to switch mid-session (see below) |
 | `/plan`               | toggle plan mode (read-only): explore and propose before making changes |
 | `/diff`               | show the cumulative git diff of this session's changes                  |
 | `/init`               | scan the repo and generate a `KRITYA.md` project-memory file            |
@@ -307,7 +308,10 @@ models will answer questions but can't edit files. `maxSteps` (default 40) caps
 model round-trips per request. `contextWindow` overrides the per-model default.
 
 Sessions are stored as JSONL under `~/.kritya/sessions/` and reloaded with
-`kritya -c`.
+`kritya -c`. Each turn is appended as its own line, and the task checklist
+sidecar is written via tmp-file-then-rename, so a crash or kill mid-write
+loses at most the one in-flight message rather than the whole session —
+`-c`/`-r` resume from everything written before that.
 
 ### Providers
 
@@ -353,6 +357,28 @@ provider to fall back to its own `providers.<name>.model` when selected.
 
 Here `"big-model-A"` is used, not `"big-model-B"` — the top-level field always
 overrides the provider-scoped one.
+
+#### Retries and provider fallback
+
+Every request retries transient failures (HTTP 429, any 5xx, and connection
+errors like ECONNRESET/ETIMEDOUT) up to 4 attempts with exponential backoff
+(1s, 2s, 4s, plus jitter) before giving up — no configuration needed. If all
+attempts fail, kritya reports it as "isn't responding" and, in the interactive
+UI, suggests any other configured provider you can fall back to.
+
+To actually fail over — say NVIDIA is down and you have `OPENAI_API_KEY` set
+too — run `/provider openai` mid-session. It swaps the underlying HTTP client
+only; your conversation, undo history, and task checklist are untouched, so
+the agent picks up exactly where it left off. `/provider` with no argument
+lists every built-in and custom provider and marks which ones currently have
+an API key configured (only those are actually switchable). In headless mode
+(`--prompt`/`kritya -p ...`) there's no session to fail over mid-run, but the
+error message names an alternative to retry with via `--provider <name>`.
+
+A practical fallback chain to configure: keep `nvidia` as your default and set
+`OPENAI_API_KEY` or `OPENROUTER_API_KEY` as a backup — OpenRouter alone
+proxies most major model families, so it's a reasonable single fallback for
+"any one provider is down."
 
 ### Custom slash commands
 

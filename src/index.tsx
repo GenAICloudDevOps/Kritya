@@ -258,7 +258,13 @@ async function main() {
   const modelRef = {
     current: args.model || config.model || providerDefaultModel || DEFAULT_MODEL,
   };
-  const client = new ProviderClient(apiKey, provider.baseUrl, {
+  const providerRef = { current: provider.name };
+  // Mutable so /provider can swap the active client mid-session (fallback
+  // when a provider keeps timing out or rate-limiting — see
+  // RetryExhaustedError) without losing the conversation. runReadOnlyAgent /
+  // runWriteAgent below read this variable at call time, so subagents spawned
+  // after a switch pick up the new provider too.
+  let client = new ProviderClient(apiKey, provider.baseUrl, {
     temperature: provider.temperature,
     topP: provider.topP,
     maxTokens: provider.maxTokens,
@@ -531,6 +537,7 @@ async function main() {
       agent={agent}
       workspace={workspace}
       modelRef={modelRef}
+      providerRef={providerRef}
       config={config}
       resumedCount={initialHistory.length}
       initialTasks={initialTasks}
@@ -539,6 +546,9 @@ async function main() {
       resumeSessions={resumeSessions.length ? resumeSessions : undefined}
       customCommands={loadCustomCommands(workspace, trustWorkspace)}
       mcpToolCount={mcpTools.length}
+      onSwitchClient={(newClient) => {
+        client = newClient;
+      }}
     />
   );
 }

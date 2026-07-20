@@ -36,6 +36,32 @@ function isRetryable(err: unknown): boolean {
   );
 }
 
+/**
+ * Thrown when a transient provider failure (429 / 5xx / network) survives
+ * every retry attempt. Distinguishing this from a hard failure (bad request,
+ * auth error, etc.) lets callers offer a targeted next step — e.g. "try
+ * another provider" — rather than a generic error message.
+ */
+export class RetryExhaustedError extends Error {
+  readonly status?: number;
+  readonly attempts: number;
+  readonly cause: unknown;
+
+  constructor(cause: unknown, attempts: number) {
+    const status = (cause as { status?: number })?.status;
+    const causeMsg = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `Provider request failed after ${attempts} attempt(s)` +
+        (status ? ` (last status ${status})` : "") +
+        `: ${causeMsg}`
+    );
+    this.name = "RetryExhaustedError";
+    this.status = status;
+    this.attempts = attempts;
+    this.cause = cause;
+  }
+}
+
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const t = setTimeout(resolve, ms);
@@ -88,7 +114,8 @@ export class ProviderClient {
       } catch (err) {
         if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
         lastErr = err;
-        if (attempt === MAX_ATTEMPTS - 1 || !isRetryable(err)) throw err;
+        if (!isRetryable(err)) throw err;
+        if (attempt === MAX_ATTEMPTS - 1) throw new RetryExhaustedError(err, MAX_ATTEMPTS);
         const status = (err as { status?: number })?.status;
         callbacks.onRetry?.(attempt + 1, status);
         await sleep(Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 250, signal);

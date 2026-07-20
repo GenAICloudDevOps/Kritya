@@ -83,6 +83,17 @@ export class Agent {
     this.session.rotate();
   }
 
+  /**
+   * Swap the underlying provider client mid-session — e.g. after the active
+   * provider exhausts its retries (see RetryExhaustedError in
+   * provider/client.ts) and the user picks a fallback via /provider. History
+   * lives on `this.history`/`this.session`, not the client, so nothing about
+   * the conversation is lost.
+   */
+  setClient(client: ProviderClient): void {
+    this.client = client;
+  }
+
   /** Record a user-side event (e.g. /undo, /web-search results) in the conversation. */
   addUserNote(text: string): void {
     const msg: ChatMessage = { role: "user", content: text };

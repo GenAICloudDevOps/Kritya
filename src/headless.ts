@@ -1,10 +1,16 @@
 import path from "node:path";
 import { Agent } from "./agent/loop.js";
-import { CONFIG_DIR, loadConfig, loadDotEnv, resolveProvider } from "./config/config.js";
+import {
+  CONFIG_DIR,
+  listProviders,
+  loadConfig,
+  loadDotEnv,
+  resolveProvider,
+} from "./config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
-import { ProviderClient } from "./provider/client.js";
+import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
@@ -192,11 +198,23 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   } catch (err) {
     success = false;
     const isTimeout = controller.signal.aborted;
-    errorMessage = isTimeout
-      ? `Timed out after ${args.timeoutSeconds}s (--timeout to raise it)`
-      : err instanceof Error
-        ? err.message
-        : String(err);
+    if (isTimeout) {
+      errorMessage = `Timed out after ${args.timeoutSeconds}s (--timeout to raise it)`;
+    } else if (err instanceof RetryExhaustedError) {
+      const alternatives = listProviders(config)
+        .filter((p) => p.hasKey && p.name !== provider.name)
+        .map((p) => p.name);
+      const hint = alternatives.length
+        ? ` Retry with --provider ${alternatives[0]}` +
+          (alternatives.length > 1
+            ? ` (also configured: ${alternatives.slice(1).join(", ")})`
+            : "") +
+          `.`
+        : " No other provider has an API key configured to fall back to.";
+      errorMessage = `${err.message}.${hint}`;
+    } else {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
   } finally {
     clearTimeout(timer);
     backgroundManager.killAll();
