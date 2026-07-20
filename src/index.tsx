@@ -10,6 +10,7 @@ import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { backgroundManager } from "./shell/background.js";
+import { sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS, READONLY_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
@@ -253,6 +254,13 @@ async function main() {
   }
 
   const sandboxMode = config.sandboxExec ?? "off";
+  if (sandboxMode !== "off" && !sandboxAvailable()) {
+    console.error(
+      `⚠ sandboxExec is "${sandboxMode}" but ${sandboxUnavailableReason()}. ` +
+        `Shell commands will run WITHOUT sandbox isolation this session — each one will ` +
+        `say so in its output.`
+    );
+  }
 
   const providerDefaultModel = config.providers?.[provider.name]?.model;
   const modelRef = {

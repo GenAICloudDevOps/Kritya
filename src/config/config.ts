@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { hardenWindowsDir } from "./winAcl.js";
 
 /** A named, OpenAI-compatible model provider. */
 export interface ProviderConfig {
@@ -166,6 +167,7 @@ export function saveConfig(patch: Partial<CliConfig>): void {
   const next = { ...current, ...patch };
   // config.json can hold a literal apiKey — keep it readable only by the owner.
   fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  hardenWindowsDir(CONFIG_DIR);
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
   // `mode` on writeFileSync only applies when creating a new file; enforce it
   // even if config.json pre-existed with looser permissions.

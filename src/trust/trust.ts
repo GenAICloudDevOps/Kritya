@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
+import { hardenWindowsDir } from "../config/winAcl.js";
 
 /**
  * Workspace trust. A workspace's `.kritya/settings.json` can define `allow`
@@ -175,5 +176,6 @@ export function saveTrust(workspace: string, hash: string, storeFile = TRUST_FIL
   const store = loadTrustStore(storeFile);
   store[path.resolve(workspace)] = hash;
   fs.mkdirSync(path.dirname(storeFile), { recursive: true, mode: 0o700 });
+  hardenWindowsDir(path.dirname(storeFile));
   fs.writeFileSync(storeFile, JSON.stringify(store, null, 2) + "\n", { mode: 0o600 });
 }

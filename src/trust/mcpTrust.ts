@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import type { McpServerConfig } from "../config/config.js";
+import { hardenWindowsDir } from "../config/winAcl.js";
 
 /**
  * Per-server MCP trust. Workspace trust (see trust.ts) gates whether a
@@ -53,6 +54,7 @@ function loadStore(storeFile: string): McpTrustEntry[] {
 
 function saveStore(storeFile: string, entries: McpTrustEntry[]): void {
   fs.mkdirSync(path.dirname(storeFile), { recursive: true, mode: 0o700 });
+  hardenWindowsDir(path.dirname(storeFile));
   fs.writeFileSync(storeFile, JSON.stringify(entries, null, 2) + "\n", { mode: 0o600 });
 }
 

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
+import { hardenWindowsDir } from "../config/winAcl.js";
 import type { ChatMessage, TaskItem } from "../types.js";
 
 function sessionDir(workspace: string): string {
@@ -66,6 +67,7 @@ export class SessionStore {
     if (this.ephemeral) return;
     try {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      hardenWindowsDir(CONFIG_DIR);
       if (!tasks.length) {
         fs.rmSync(this.tasksFilePath(), { force: true });
         return;
@@ -100,6 +102,7 @@ export class SessionStore {
     // Session transcripts can contain secrets that passed through tool
     // output — keep them readable only by the owner.
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    hardenWindowsDir(CONFIG_DIR);
     if (seed.length) {
       writeFileAtomic(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""), 0o600);
     }
@@ -117,6 +120,7 @@ export class SessionStore {
     if (this.ephemeral) return;
     try {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      hardenWindowsDir(CONFIG_DIR);
       fs.appendFileSync(this.file, JSON.stringify(message) + "\n", { mode: 0o600 });
     } catch {
       // Persistence is best-effort; never crash the session over it.
