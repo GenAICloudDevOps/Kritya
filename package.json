@@ -15,8 +15,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.tsx",
-    "test": "npm run build && node --test dist/test/*.test.js",
-    "test:watch": "tsx --test --watch src/test/*.test.ts",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "test:watch": "tsx --test --watch \"src/test/*.test.ts\"",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

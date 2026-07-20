@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-platform CI verification**: CI now runs the full test suite on
+  Windows and macOS runners (in addition to Ubuntu 18.x/20.x/22.x), not just
+  Linux, so the "works on Windows and macOS" claim is actually checked rather
+  than assumed. This surfaced a real bug: `npm test` relied on the shell to
+  expand `dist/test/*.test.js`, which bash does but `cmd`/`pwsh` do not —
+  on Windows this would silently run zero tests instead of failing loudly.
+  Fixed by quoting the glob so Node's own test-runner glob matching handles
+  it consistently on every shell.
+
 ### Added
 
 - **Mid-session provider failover**: a new `/provider` command lists every
