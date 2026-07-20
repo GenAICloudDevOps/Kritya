@@ -52,6 +52,10 @@ const MENTION_ALL_RE = /(?:^|\s)@([^\s@]+)/g;
 const MAX_MENTION_CHARS = 8000;
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
+// Erase screen + scrollback, then home the cursor (same sequence Ink itself
+// uses for its own "content taller than the terminal" clear path).
+const CLEAR_TERMINAL = "\x1b[2J\x1b[3J\x1b[H";
+
 export function App({
   agent,
   workspace,
@@ -80,17 +84,20 @@ export function App({
   const inputHistory = useRef<string[]>([]);
   const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
 
-  // Ink's <Static> flushes each item once at whatever width was current at the
-  // time; already-flushed history doesn't rewrap when the terminal is
-  // resized mid-turn. Remounting <Static> makes Ink treat all items as newly
-  // added, so it reflows them at the new width through Ink's own safe
-  // static-flush path. Don't write raw ANSI escapes ourselves here — Ink
-  // tracks previously-written line counts internally (via log-update) to
-  // erase and redraw the live input region; writing to stdout outside that
-  // path desyncs the bookkeeping and corrupts the next redraw. Only remount
-  // when the column count actually changed — panel actions that only change
-  // height (e.g. VS Code adding/removing a split terminal, which fires
-  // 'resize' too) shouldn't trigger a reflow, since there's nothing to rewrap.
+  // Terminals that reflow their buffer on resize (e.g. VS Code's xterm.js)
+  // rewrap already-printed full-width lines (banner art, box borders) to the
+  // new column count on their own, before Ink's next redraw arrives. Ink then
+  // erases based on a stale line count from before that reflow, so it clears
+  // the wrong number of rows and leaves stale copies of boxes/banners behind
+  // — compounding on every resize. There's no way to reflow in place safely,
+  // so once the column count actually settles on a new value (ignoring
+  // height-only resizes, e.g. VS Code adding a split terminal), wipe the
+  // screen ourselves and remount <Static> so Ink reprints everything fresh
+  // onto a blank canvas. The manual clear is safe here specifically because
+  // the forced remount immediately triggers Ink's own static-flush path,
+  // which resyncs its internal line-count bookkeeping — it's only unsafe to
+  // write raw ANSI without following it with something that resets that
+  // bookkeeping.
   const lastColumns = useRef(stdout?.columns);
   useEffect(() => {
     if (!stdout) return;
@@ -100,6 +107,7 @@ export function App({
       timer = setTimeout(() => {
         if (stdout.columns === lastColumns.current) return;
         lastColumns.current = stdout.columns;
+        stdout.write(CLEAR_TERMINAL);
         setStaticKey((k) => k + 1);
       }, 150);
     };
