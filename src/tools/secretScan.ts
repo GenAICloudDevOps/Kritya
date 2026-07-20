@@ -53,7 +53,7 @@ const NAMED_PATTERNS: NamedPattern[] = [
 // Generic "KEY = <opaque token>" assignments, gated by an entropy check so
 // ordinary identifiers/URLs/sentences don't trip it.
 const ASSIGNMENT_RE =
-  /\b(api[_-]?key|apikey|secret|token|access[_-]?key|private[_-]?key|passwd|password|pwd|auth)\w*\s*[:=]\s*["'`]?([A-Za-z0-9/+_.\-]{16,})["'`]?/gi;
+  /\b(api[_-]?key|apikey|secret|token|access[_-]?key|private[_-]?key|passwd|password|pwd|auth)\w*\s*[:=]\s*["'`]?([A-Za-z0-9/+_.-]{16,})["'`]?/gi;
 
 function shannonEntropy(s: string): number {
   const counts = new Map<string, number>();
