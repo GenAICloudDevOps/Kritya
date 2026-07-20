@@ -88,6 +88,13 @@ export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
   mistral: { baseUrl: "https://api.mistral.ai/v1", apiKeyEnv: "MISTRAL_API_KEY" },
   together: { baseUrl: "https://api.together.xyz/v1", apiKeyEnv: "TOGETHER_API_KEY" },
   ollama: { baseUrl: "http://localhost:11434/v1", apiKey: "ollama" },
+  // Anthropic and Google both expose OpenAI-compatible endpoints, so they ride
+  // the same ProviderClient path as the rest — no native SDK required.
+  anthropic: { baseUrl: "https://api.anthropic.com/v1/", apiKeyEnv: "ANTHROPIC_API_KEY" },
+  gemini: {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    apiKeyEnv: "GEMINI_API_KEY",
+  },
 };
 
 export interface ResolvedProvider {
