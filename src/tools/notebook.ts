@@ -79,7 +79,10 @@ function summarizeOutputs(outputs: unknown[]): string {
   }
   const text = parts.join("\n").trimEnd();
   if (text.length <= MAX_OUTPUT_CHARS) return text;
-  return text.slice(0, MAX_OUTPUT_CHARS) + `\n... [output truncated, ${text.length - MAX_OUTPUT_CHARS} more characters]`;
+  return (
+    text.slice(0, MAX_OUTPUT_CHARS) +
+    `\n... [output truncated, ${text.length - MAX_OUTPUT_CHARS} more characters]`
+  );
 }
 
 async function loadNotebook(abs: string): Promise<Notebook> {
