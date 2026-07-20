@@ -38,6 +38,11 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
   (`name`, `parameters`, `execute`, optional `preview`/`summarize`). `index.ts`
   lists them; `READONLY_TOOLS` is the subset subagents may use. `fuzzyMatch.ts`
   backs the whitespace-tolerant `edit_file`.
+- **`src/repomap/`** — the `repo_map` tool's engine: `symbols.ts` extracts
+  definition signatures per language (regex/heuristic, no LSP or parser dep),
+  and `repoMap.ts` walks the workspace, ranks source files by importance, and
+  renders a size-bounded structural skeleton so the agent can orient itself in
+  a large codebase cheaply.
 - **`src/permissions/`** — `PermissionManager` (allow/deny + session "always"),
   `rules.ts` (settings-file rule matching, incl. path globs), and `danger.ts`
   (destructive-command classifier).

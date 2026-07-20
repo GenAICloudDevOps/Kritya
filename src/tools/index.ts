@@ -13,6 +13,7 @@ import { spawnAgentTool } from "./subagent.js";
 import { spawnWriteAgentTool } from "./writeAgent.js";
 import { readDocumentTool, writeDocumentTool } from "./document.js";
 import { lspDefinitionTool, lspReferencesTool, lspDiagnosticsTool } from "./lsp.js";
+import { repoMapTool } from "./repoMap.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   readFileTool,
@@ -24,6 +25,7 @@ export const ALL_TOOLS: ToolDef[] = [
   listDirTool,
   globTool,
   grepTool,
+  repoMapTool,
   lspDefinitionTool,
   lspReferencesTool,
   lspDiagnosticsTool,
@@ -41,6 +43,7 @@ export const READONLY_TOOLS: ToolDef[] = [
   listDirTool,
   globTool,
   grepTool,
+  repoMapTool,
   lspDefinitionTool,
   lspReferencesTool,
   lspDiagnosticsTool,

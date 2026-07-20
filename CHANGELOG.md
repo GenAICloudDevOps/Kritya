@@ -34,6 +34,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Repo map** (`repo_map` tool): a cheap, whole-repository structural
+  skeleton — source files ranked by importance, each with its class/function/
+  type signatures but no bodies — so the agent can orient itself in an
+  unfamiliar or large codebase without reading files just to discover where
+  things live. Symbol extraction is regex/heuristic-based (no language server
+  to spawn, no native parser dependency, runs in one pass), covering the
+  mainstream languages (TS/JS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby,
+  PHP, Swift, Scala); files in unsupported languages are simply omitted rather
+  than producing noise. Output is bounded (files scanned, symbols per file, and
+  total length are all capped) so it never blows up on a huge monorepo, and it
+  honors `.krityaignore`. Read-only, so subagents get it too. This is the
+  low-cost half of semantic codebase navigation — no embeddings, no index to
+  keep in sync, no code leaving the machine.
+
 - **Mid-session provider failover**: a new `/provider` command lists every
   configured provider and lets you switch (`/provider openai`) without losing
   the conversation — only the underlying HTTP client is swapped, history and
