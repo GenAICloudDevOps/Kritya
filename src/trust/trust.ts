@@ -7,9 +7,11 @@ import { CONFIG_DIR } from "../config/config.js";
  * Workspace trust. A workspace's `.kritya/settings.json` can define `allow`
  * rules (auto-approve tool calls) and `hooks` (arbitrary shell commands run
  * automatically around tool calls); it can also ship a `.env` file (env vars
- * merged into the process, read by every shell command and MCP server) and
+ * merged into the process, read by every shell command and MCP server),
  * `.kritya/commands/*.md` (custom slash commands — attacker-authored prompts
- * run with the user's standing permissions). All of these take effect the
+ * run with the user's standing permissions), and `.mcp.json` (MCP servers —
+ * arbitrary processes launched, or remote endpoints contacted with the user's
+ * env-expanded credentials). All of these take effect the
  * moment kritya launches in that directory, so a cloned repo could use any of
  * them to silently grant itself broad permissions or run code. Before any of
  * them takes effect, the workspace must be explicitly trusted.
@@ -32,6 +34,8 @@ interface GatedContent {
   env?: string;
   /** Raw content of each .kritya/commands/*.md file, if any, keyed by filename. */
   commands?: Record<string, string>;
+  /** Raw content of the workspace .mcp.json file, if present (hashed, not parsed). */
+  mcp?: string;
 }
 
 function readSettingsGatedContent(workspace: string): { allow?: string[]; hooks?: unknown } {
@@ -81,12 +85,28 @@ function readCommandFiles(workspace: string): Record<string, string> | undefined
   return Object.keys(commands).length ? commands : undefined;
 }
 
+function readMcpFile(workspace: string): string | undefined {
+  try {
+    return fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 function readGatedContent(workspace: string): GatedContent | null {
   const { allow, hooks } = readSettingsGatedContent(workspace);
   const env = readEnvFile(workspace);
   const commands = readCommandFiles(workspace);
-  if ((!allow || allow.length === 0) && !hooks && env === undefined && !commands) return null;
-  return { allow, hooks, env, commands };
+  const mcp = readMcpFile(workspace);
+  if (
+    (!allow || allow.length === 0) &&
+    !hooks &&
+    env === undefined &&
+    !commands &&
+    mcp === undefined
+  )
+    return null;
+  return { allow, hooks, env, commands, mcp };
 }
 
 /**
@@ -115,6 +135,12 @@ export function describeGatedContent(workspace: string): string {
       })
       .join("\n");
     sections.push(`.kritya/commands/ (custom slash commands — prompts run as you):\n${list}`);
+  }
+  const mcp = readMcpFile(workspace);
+  if (mcp !== undefined) {
+    sections.push(
+      `.mcp.json (MCP servers — processes launched / endpoints contacted as you):\n${mcp.trimEnd()}`
+    );
   }
   return sections.join("\n\n") || "(no gated content)";
 }

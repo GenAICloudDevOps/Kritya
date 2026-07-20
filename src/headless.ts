@@ -10,6 +10,7 @@ import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
+import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import type { AgentHandlers, ToolDef } from "./types.js";
@@ -104,7 +105,10 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   // for a single headless prompt. If the model tries to use one, the tool
   // itself reports "not available in this session", same as any context
   // that doesn't wire spawnAgents.
-  const mcpTools: ToolDef[] = await loadMcpTools(config.mcpServers);
+  // .mcp.json is trust-gated for the same reason hooks and .env are: it runs
+  // processes / contacts endpoints on the user's behalf the moment we load it.
+  const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
+  const mcpTools: ToolDef[] = await loadMcpTools(mergeMcpServers(config.mcpServers, projectMcp));
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
   const permissions = new PermissionManager(loadRules(workspace, trustWorkspace));

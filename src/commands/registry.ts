@@ -1,4 +1,5 @@
 import type { Agent } from "../agent/loop.js";
+import { mcpStatus } from "../mcp/client.js";
 import type { CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
@@ -20,6 +21,7 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/redo", description: "reapply the change most recently undone" },
   { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
   { name: "/web-search", description: "search the web: /web-search <query>" },
+  { name: "/mcp", description: "show MCP server status and their tools" },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
   { name: "/commit", description: "have the agent stage and commit the current changes" },
   { name: "/compact", description: "summarize older conversation to free context space" },
@@ -92,6 +94,27 @@ const handlers: Record<string, CommandHandler> = {
   "/model": (ctx) => {
     if (ctx.arg) ctx.setModelEverywhere(ctx.arg);
     else ctx.setPhase("model");
+  },
+  "/mcp": (ctx) => {
+    const statuses = mcpStatus();
+    if (statuses.length === 0) {
+      ctx.addItem({
+        kind: "info",
+        text:
+          "No MCP servers configured.\n\nAdd them under mcpServers in ~/.kritya/config.json, or in a .mcp.json\nat the workspace root:\n" +
+          `  { "mcpServers": { "linear": { "url": "https://mcp.linear.app/mcp" },\n` +
+          `                    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] } } }`,
+      });
+      return;
+    }
+    const lines = statuses.map((s) => {
+      const head = `${s.ok ? "✔" : "✘"} ${s.name} (${s.transport}) — ${s.target}`;
+      const detail = s.ok
+        ? `    ${s.tools.length} tool(s): ${s.tools.join(", ") || "(none)"}`
+        : `    failed: ${s.error}`;
+      return `${head}\n${detail}`;
+    });
+    ctx.addItem({ kind: "info", text: `MCP servers:\n${lines.join("\n")}` });
   },
   "/web-search": (ctx) => {
     if (!ctx.arg) {

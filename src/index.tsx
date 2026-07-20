@@ -18,6 +18,7 @@ import { TrustPrompt } from "./ui/TrustPrompt.js";
 import type { TaskItem, ToolDef } from "./types.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
+import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadCustomCommands } from "./commands/custom.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
 import { runHeadless } from "./headless.js";
@@ -264,7 +265,11 @@ async function main() {
   undoStack.onExternalChange = (relPath) => uiBridge.onExternalEdit?.(relPath);
 
   // MCP servers (if any) contribute extra tools; loading is resilient.
-  const mcpTools: ToolDef[] = await loadMcpTools(config.mcpServers);
+  // Project-level .mcp.json is part of the workspace trust gate: it launches
+  // processes / contacts endpoints with the user's credentials, so it only
+  // takes effect once the workspace is trusted.
+  const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
+  const mcpTools: ToolDef[] = await loadMcpTools(mergeMcpServers(config.mcpServers, projectMcp));
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
   // Subagents never get spawn_agent/spawn_write_agent themselves — otherwise a

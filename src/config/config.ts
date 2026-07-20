@@ -39,15 +39,23 @@ export interface CliConfig {
   maxSteps?: number;
   /** Session token budget (prompt + completion tokens combined, across all turns/models). Default 1,000,000. */
   tokenBudget?: number;
-  /** MCP servers to launch and expose as tools (stdio transport). */
+  /** MCP servers to launch/connect and expose as tools (stdio or Streamable HTTP). */
   mcpServers?: Record<string, McpServerConfig>;
 }
 
-/** A Model Context Protocol server launched over stdio. */
+/**
+ * A Model Context Protocol server: local (stdio) via `command`, or remote
+ * (Streamable HTTP) via `url`. Exactly one of the two. String values may
+ * reference environment variables as ${VAR} (e.g. an Authorization header).
+ */
 export interface McpServerConfig {
-  command: string;
+  command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Endpoint of a remote Streamable-HTTP server, e.g. https://mcp.linear.app/mcp */
+  url?: string;
+  /** Extra HTTP headers sent on every request (e.g. Authorization). */
+  headers?: Record<string, string>;
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");

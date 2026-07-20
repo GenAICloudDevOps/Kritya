@@ -338,7 +338,8 @@ Run your own shell commands around the agent's tool calls via `hooks` in
 ### MCP servers
 
 Expose [Model Context Protocol](https://modelcontextprotocol.io) tools to the
-agent by launching servers over stdio:
+agent — local servers over stdio (`command`), or remote servers over
+Streamable HTTP (`url`):
 
 ```json
 {
@@ -346,13 +347,26 @@ agent by launching servers over stdio:
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "headers": { "Authorization": "Bearer ${LINEAR_API_KEY}" }
     }
   }
 }
 ```
 
-Their tools appear as `mcp_<server>_<tool>` and their output is treated as
-untrusted content. A server that fails to start is skipped with a warning.
+Servers can be defined globally in `~/.kritya/config.json`, or per-project in
+a `.mcp.json` at the workspace root (the same file Claude Code, Cursor, and
+VS Code read); on a name clash your global config wins. `${VAR}` in any string
+is expanded from the environment, so a checked-in `.mcp.json` never needs to
+contain a literal secret. Because `.mcp.json` launches processes and contacts
+endpoints on your behalf, it's part of the workspace trust prompt, and trust
+is re-asked whenever the file changes.
+
+Their tools appear as `mcp_<server>_<tool>`, each call needs your approval,
+and output is treated as untrusted content. A server that fails to start is
+skipped with a warning; `/mcp` shows each server's status and tools.
 
 ## Privacy
 
