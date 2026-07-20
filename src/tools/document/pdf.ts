@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import type { DocBlock } from "./types.js";
+import { PDFDocument, StandardFonts, degrees, type PDFFont } from "pdf-lib";
+import type { DocBlock, PdfEdit } from "./types.js";
 import type { TextItem } from "pdfjs-dist/types/src/display/api.js";
 
 // Points pdfjs at its own bundled standard-font metrics so it doesn't warn
@@ -75,6 +75,91 @@ export async function writePdf(blocks: DocBlock[]): Promise<Buffer> {
   // xref tables keep round-trip reading working.
   const bytes = await doc.save({ useObjectStreams: false });
   return Buffer.from(bytes);
+}
+
+/** Ensure every entry of `pages` (1-based) is a real page in a `count`-page doc. */
+function assertPagesInRange(pages: number[], count: number): void {
+  for (const p of pages) {
+    if (!Number.isInteger(p) || p < 1 || p > count) {
+      throw new Error(`Page ${p} is out of range (document has ${count} page(s))`);
+    }
+  }
+}
+
+/**
+ * Apply one structural page operation to an existing PDF, preserving its
+ * content. PDF text is positioned glyphs with no reflow, so there is no
+ * reliable text find/replace — these operations act on whole pages instead.
+ * Returns the resulting file bytes and a short human-readable summary.
+ */
+export async function editPdf(
+  buf: Buffer,
+  edit: PdfEdit
+): Promise<{ buf: Buffer; summary: string }> {
+  const doc = await PDFDocument.load(new Uint8Array(buf));
+  const count = doc.getPageCount();
+  let summary: string;
+  let result = doc;
+
+  switch (edit.op) {
+    case "delete_pages": {
+      assertPagesInRange(edit.pages, count);
+      // Remove from the end so earlier indexes stay valid as we go.
+      const toRemove = [...new Set(edit.pages)].sort((a, b) => b - a);
+      if (toRemove.length >= count) {
+        throw new Error("Cannot delete every page — a PDF must keep at least one page");
+      }
+      for (const p of toRemove) doc.removePage(p - 1);
+      summary = `${count} page(s) → ${count - toRemove.length} page(s)`;
+      break;
+    }
+    case "rotate_page": {
+      assertPagesInRange([edit.page], count);
+      if (edit.degrees % 90 !== 0) {
+        throw new Error(`Rotation must be a multiple of 90°, got ${edit.degrees}`);
+      }
+      const page = doc.getPage(edit.page - 1);
+      const next = (((page.getRotation().angle + edit.degrees) % 360) + 360) % 360;
+      page.setRotation(degrees(next));
+      summary = `Rotated page ${edit.page} to ${next}°`;
+      break;
+    }
+    case "reorder_pages": {
+      assertPagesInRange(edit.order, count);
+      const unique = new Set(edit.order);
+      if (edit.order.length !== count || unique.size !== count) {
+        throw new Error(
+          `reorder_pages requires each page 1..${count} exactly once, got [${edit.order.join(", ")}]`
+        );
+      }
+      result = await PDFDocument.create();
+      const copied = await result.copyPages(
+        doc,
+        edit.order.map((p) => p - 1)
+      );
+      for (const page of copied) result.addPage(page);
+      summary = `Reordered ${count} pages`;
+      break;
+    }
+    case "extract_pages": {
+      assertPagesInRange(edit.pages, count);
+      if (edit.pages.length === 0) throw new Error("extract_pages requires at least one page");
+      result = await PDFDocument.create();
+      const copied = await result.copyPages(
+        doc,
+        edit.pages.map((p) => p - 1)
+      );
+      for (const page of copied) result.addPage(page);
+      summary = `Extracted ${edit.pages.length} page(s)`;
+      break;
+    }
+    default:
+      throw new Error(`Unknown PDF op "${(edit as { op: string }).op}"`);
+  }
+
+  // Match writePdf: plain xref tables keep the bundled reader able to re-read the file.
+  const bytes = await result.save({ useObjectStreams: false });
+  return { buf: Buffer.from(bytes), summary };
 }
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {

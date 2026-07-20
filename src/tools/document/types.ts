@@ -33,6 +33,13 @@ export interface PptxSlide {
   notes?: string;
 }
 
+/** One structural page operation for edit_pdf. Page numbers are 1-based. */
+export type PdfEdit =
+  | { op: "delete_pages"; pages: number[] }
+  | { op: "rotate_page"; page: number; degrees: number }
+  | { op: "reorder_pages"; order: number[] }
+  | { op: "extract_pages"; pages: number[] };
+
 /** Payload for write_document; only the field matching the target extension is used. */
 export interface DocumentContent {
   blocks?: DocBlock[];

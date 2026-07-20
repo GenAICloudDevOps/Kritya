@@ -5,8 +5,8 @@ import { resolveSafe, truncateResult } from "./common.js";
 import { readDocx, writeDocx } from "./document/docx.js";
 import { readXlsx, writeXlsx, editXlsx } from "./document/xlsx.js";
 import { readPptx, writePptx } from "./document/pptx.js";
-import { readPdf, writePdf } from "./document/pdf.js";
-import type { DocumentContent, CellEdit } from "./document/types.js";
+import { readPdf, writePdf, editPdf } from "./document/pdf.js";
+import type { DocumentContent, CellEdit, PdfEdit } from "./document/types.js";
 
 const READABLE_EXTENSIONS = [".docx", ".xlsx", ".pptx", ".pdf"];
 
@@ -226,6 +226,113 @@ export const editSpreadsheetTool: ToolDef = {
     await fs.writeFile(abs, out);
     const detail = applied.map((a) => `${a.sheet}!${a.cell}=${a.newValue}`).join(", ");
     return `Updated ${applied.length} cell(s) in ${relPath}: ${detail}`;
+  },
+};
+
+/** Build a validated PdfEdit from the tool arguments. */
+function toPdfEdit(args: Record<string, unknown>): PdfEdit {
+  const op = String(args.op);
+  const asPages = (v: unknown, field: string): number[] => {
+    if (!Array.isArray(v) || v.length === 0) {
+      throw new Error(`edit_pdf: "${field}" must be a non-empty array of page numbers`);
+    }
+    return v.map(Number);
+  };
+  switch (op) {
+    case "delete_pages":
+      return { op, pages: asPages(args.pages, "pages") };
+    case "extract_pages":
+      return { op, pages: asPages(args.pages, "pages") };
+    case "reorder_pages":
+      return { op, order: asPages(args.order, "order") };
+    case "rotate_page":
+      if (args.page === undefined || args.degrees === undefined) {
+        throw new Error('edit_pdf: rotate_page requires "page" and "degrees"');
+      }
+      return { op, page: Number(args.page), degrees: Number(args.degrees) };
+    default:
+      throw new Error(`edit_pdf: unknown op "${op}"`);
+  }
+}
+
+export const editPdfTool: ToolDef = {
+  name: "edit_pdf",
+  description:
+    "Modify the pages of an existing PDF (.pdf) in place: delete_pages, rotate_page, " +
+    "reorder_pages, or extract_pages (write chosen pages to a new file). Page numbers are " +
+    "1-based. This does structural page operations only — PDF text cannot be reliably " +
+    "find-and-replaced. To create a PDF from text, use write_document.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path relative to the workspace root" },
+      op: {
+        type: "string",
+        enum: ["delete_pages", "rotate_page", "reorder_pages", "extract_pages"],
+      },
+      pages: {
+        type: "array",
+        items: { type: "number" },
+        description: "1-based page numbers, for delete_pages and extract_pages.",
+      },
+      page: { type: "number", description: "1-based page number, for rotate_page." },
+      degrees: {
+        type: "number",
+        description:
+          "Rotation in multiples of 90 (added to the page's current angle), for rotate_page.",
+      },
+      order: {
+        type: "array",
+        items: { type: "number" },
+        description: "New page order as a permutation of every page 1..N, for reorder_pages.",
+      },
+      out_path: {
+        type: "string",
+        description:
+          "Destination for extract_pages (a new .pdf); the source file is left unchanged.",
+      },
+    },
+    required: ["path", "op"],
+  },
+  requiresPermission: true,
+  summarize: (args) => `Edit ${args.path} (${args.op})`,
+  async preview(args, ctx) {
+    try {
+      const abs = resolveSafe(ctx.workspace, String(args.path));
+      const buf = await fs.readFile(abs);
+      const { summary } = await editPdf(buf, toPdfEdit(args));
+      return summary;
+    } catch (err) {
+      return err instanceof Error ? err.message : null;
+    }
+  },
+  async execute(args, ctx) {
+    const relPath = String(args.path);
+    const abs = resolveSafe(ctx.workspace, relPath);
+    if (path.extname(abs).toLowerCase() !== ".pdf") {
+      throw new Error(`edit_pdf only supports .pdf files, got "${path.extname(abs)}"`);
+    }
+    const edit = toPdfEdit(args);
+    const buf = await fs.readFile(abs);
+    const { buf: out, summary } = await editPdf(buf, edit);
+
+    // extract_pages writes a new file and leaves the source untouched; every other op edits in place.
+    if (edit.op === "extract_pages") {
+      if (args.out_path === undefined) throw new Error("extract_pages requires `out_path`");
+      const outRel = String(args.out_path);
+      const outAbs = resolveSafe(ctx.workspace, outRel);
+      if (path.extname(outAbs).toLowerCase() !== ".pdf") {
+        throw new Error(`out_path must be a .pdf file, got "${path.extname(outAbs)}"`);
+      }
+      await fs.mkdir(path.dirname(outAbs), { recursive: true });
+      ctx.undo?.snapshot(outAbs, outRel);
+      await fs.writeFile(outAbs, out);
+      return `${summary} → ${outRel}`;
+    }
+
+    ctx.undo?.snapshot(abs, relPath);
+    await fs.writeFile(abs, out);
+    return `${summary} in ${relPath}`;
   },
 };
 

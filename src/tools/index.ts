@@ -11,7 +11,12 @@ import { webSearchTool } from "./webSearch.js";
 import { bgOutputTool, bgKillTool } from "./bg.js";
 import { spawnAgentTool } from "./subagent.js";
 import { spawnWriteAgentTool } from "./writeAgent.js";
-import { readDocumentTool, writeDocumentTool, editSpreadsheetTool } from "./document.js";
+import {
+  readDocumentTool,
+  writeDocumentTool,
+  editSpreadsheetTool,
+  editPdfTool,
+} from "./document.js";
 import { readNotebookTool, editNotebookTool } from "./notebook.js";
 import { lspDefinitionTool, lspReferencesTool, lspDiagnosticsTool } from "./lsp.js";
 import { repoMapTool } from "./repoMap.js";
@@ -37,6 +42,7 @@ export const ALL_TOOLS: ToolDef[] = [
   readDocumentTool,
   writeDocumentTool,
   editSpreadsheetTool,
+  editPdfTool,
   readNotebookTool,
   editNotebookTool,
 ];
