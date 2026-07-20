@@ -24,12 +24,20 @@ class BackgroundManager {
   start(command: string, cwd: string): { id: string } {
     const id = `bg_${++this.counter}`;
     const isWindows = os.platform() === "win32";
+    // shell:true lets Node pick the right shell and quoting per OS from a
+    // single command string, same as the exec() used by the regular shell
+    // tool -- manually building a cmd.exe "/c" args array (the previous
+    // approach) mis-parses commands that themselves contain quotes.
     // detached on POSIX puts the command in its own process group, so kill()
-    // can signal the whole tree (sh + whatever it spawned), not just sh.
+    // can signal the whole tree (shell + whatever it spawned), not just it.
     // scrubbedShellEnv: background commands must not inherit provider API keys.
-    const proc = isWindows
-      ? spawn("cmd", ["/c", command], { cwd, env: scrubbedShellEnv(), windowsHide: true })
-      : spawn("sh", ["-c", command], { cwd, env: scrubbedShellEnv(), detached: true });
+    const proc = spawn(command, {
+      cwd,
+      env: scrubbedShellEnv(),
+      windowsHide: true,
+      shell: true,
+      detached: !isWindows,
+    });
     const entry: BgProcess = { proc, command, buffer: "", exitCode: null, running: true };
 
     const append = (chunk: Buffer) => {

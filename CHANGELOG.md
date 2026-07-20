@@ -24,6 +24,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     which Prettier (LF) then sees as unformatted. Fixed by adding
     `.gitattributes` (`* text=auto eol=lf`) so checkout normalizes to LF on
     every OS.
+  - Background processes (`shell` tool with `background: true`) failed to
+    start on Windows: `background.ts` manually built a `cmd /c` argument
+    array, and Node's array-based quoting for `cmd.exe` mis-parses commands
+    that themselves contain quotes (e.g. `node -e "..."`). Fixed by spawning
+    with `shell: true` and the full command as one string — the same
+    pattern the regular `shell` tool already uses via `exec()` — so Node
+    picks correct per-OS shell quoting instead of us reimplementing it.
 
 ### Added
 
