@@ -15,12 +15,15 @@ import { ALL_TOOLS, READONLY_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
 import { TrustPrompt } from "./ui/TrustPrompt.js";
+import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
 import type { TaskItem, ToolDef } from "./types.js";
+import type { McpServerConfig } from "./config/config.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadCustomCommands } from "./commands/custom.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
+import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
 import {
   createWorktree,
@@ -191,6 +194,39 @@ async function resolveWorkspaceTrust(): Promise<boolean> {
   });
 }
 
+/**
+ * Whether each server named in the workspace's .mcp.json may be loaded.
+ * Workspace trust above only gates the file as a whole; this adds a second,
+ * per-server gate so a later edit to .mcp.json (e.g. a new server added by a
+ * `git pull` or a malicious PR branch) doesn't silently inherit trust from
+ * servers the user already reviewed. Already-approved servers (by
+ * fingerprint, across all workspaces) pass straight through.
+ */
+async function resolveMcpServerTrust(
+  projectMcp: Record<string, McpServerConfig> | undefined
+): Promise<Record<string, McpServerConfig> | undefined> {
+  if (!projectMcp) return undefined;
+  const { trusted, pending } = partitionByTrust(projectMcp);
+  if (Object.keys(pending).length === 0) return trusted;
+
+  return new Promise((resolve) => {
+    const instance = render(
+      <McpTrustPrompt
+        servers={pending}
+        onDecision={(trust) => {
+          if (trust) {
+            for (const [name, cfg] of Object.entries(pending)) {
+              trustServer(name, serverFingerprint(cfg));
+            }
+          }
+          instance.unmount();
+          resolve(trust ? { ...trusted, ...pending } : trusted);
+        }}
+      />
+    );
+  });
+}
+
 async function main() {
   const trustWorkspace = await resolveWorkspaceTrust();
   if (trustWorkspace) {
@@ -271,7 +307,10 @@ async function main() {
   // processes / contacts endpoints with the user's credentials, so it only
   // takes effect once the workspace is trusted.
   const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
-  const mcpTools: ToolDef[] = await loadMcpTools(mergeMcpServers(config.mcpServers, projectMcp));
+  const approvedProjectMcp = await resolveMcpServerTrust(projectMcp);
+  const mcpTools: ToolDef[] = await loadMcpTools(
+    mergeMcpServers(config.mcpServers, approvedProjectMcp)
+  );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
   // Subagents never get spawn_agent/spawn_write_agent themselves — otherwise a

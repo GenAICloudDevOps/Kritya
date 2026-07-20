@@ -13,6 +13,7 @@ import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
 import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
+import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import type { AgentHandlers, ToolDef } from "./types.js";
 
 export interface HeadlessArgs {
@@ -108,7 +109,30 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   // .mcp.json is trust-gated for the same reason hooks and .env are: it runs
   // processes / contacts endpoints on the user's behalf the moment we load it.
   const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
-  const mcpTools: ToolDef[] = await loadMcpTools(mergeMcpServers(config.mcpServers, projectMcp));
+  // On top of that, each individual server needs its own prior approval (see
+  // trust/mcpTrust.ts) — there's no terminal here to prompt for new ones, so
+  // headless mode only loads servers already approved in a past interactive
+  // session, unless --trust opts in (same escape hatch as workspace trust).
+  let approvedProjectMcp = projectMcp;
+  if (projectMcp) {
+    const { trusted, pending } = partitionByTrust(projectMcp);
+    if (Object.keys(pending).length > 0) {
+      if (args.trust) {
+        for (const [name, cfg] of Object.entries(pending))
+          trustServer(name, serverFingerprint(cfg));
+        approvedProjectMcp = { ...trusted, ...pending };
+      } else {
+        approvedProjectMcp = trusted;
+        process.stderr.write(
+          `kritya: skipping unapproved MCP server(s) from .mcp.json: ${Object.keys(pending).join(", ")} ` +
+            `(approve them once interactively, or pass --trust)\n`
+        );
+      }
+    }
+  }
+  const mcpTools: ToolDef[] = await loadMcpTools(
+    mergeMcpServers(config.mcpServers, approvedProjectMcp)
+  );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
   const permissions = new PermissionManager(loadRules(workspace, trustWorkspace));

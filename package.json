@@ -20,6 +20,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check:install-scripts": "node scripts/check-install-scripts.mjs",
     "link": "npm run build && npm link",
     "prepublishOnly": "npm run build"
   },
@@ -53,6 +54,7 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "eslint": "^9.9.0",
+    "globals": "^14.0.0",
     "prettier": "^3.3.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",

@@ -22,6 +22,8 @@ jobs:
 
       - run: npm ci
       - run: npm audit --audit-level=high
+      - run: npm audit signatures
+      - run: npm run check:install-scripts
       - run: npm run build
       - run: npm run lint
       - run: npm run format:check
