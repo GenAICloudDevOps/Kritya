@@ -3,10 +3,10 @@ import path from "node:path";
 import type { ToolDef } from "../types.js";
 import { resolveSafe, truncateResult } from "./common.js";
 import { readDocx, writeDocx } from "./document/docx.js";
-import { readXlsx, writeXlsx } from "./document/xlsx.js";
+import { readXlsx, writeXlsx, editXlsx } from "./document/xlsx.js";
 import { readPptx, writePptx } from "./document/pptx.js";
 import { readPdf, writePdf } from "./document/pdf.js";
-import type { DocumentContent } from "./document/types.js";
+import type { DocumentContent, CellEdit } from "./document/types.js";
 
 const READABLE_EXTENSIONS = [".docx", ".xlsx", ".pptx", ".pdf"];
 
@@ -151,6 +151,81 @@ export const writeDocumentTool: ToolDef = {
     ctx.undo?.snapshot(abs, relPath);
     await fs.writeFile(abs, buf);
     return `Wrote ${relPath}`;
+  },
+};
+
+export const editSpreadsheetTool: ToolDef = {
+  name: "edit_spreadsheet",
+  description:
+    "Change specific cells of an existing Excel (.xlsx) file in place, leaving every other cell, " +
+    "formula, and sheet untouched. Pass one or more edits, each with a cell in A1 notation and a " +
+    'new value; a value beginning with "=" is stored as a formula. Use read_document first to ' +
+    "see the sheet. To create a new spreadsheet or replace one wholesale, use write_document instead.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path relative to the workspace root" },
+      edits: {
+        type: "array",
+        description: "Cell changes to apply, in order.",
+        items: {
+          type: "object",
+          properties: {
+            sheet: {
+              type: "string",
+              description: "Sheet name; defaults to the first worksheet if omitted.",
+            },
+            cell: { type: "string", description: 'Cell in A1 notation, e.g. "B7".' },
+            value: {
+              type: ["string", "number", "boolean", "null"],
+              description: 'New value; a string starting with "=" becomes a formula.',
+            },
+          },
+          required: ["cell", "value"],
+        },
+      },
+    },
+    required: ["path", "edits"],
+  },
+  requiresPermission: true,
+  summarize: (args) => {
+    const edits = (args.edits ?? []) as CellEdit[];
+    return `Edit ${args.path} (${edits.length} cell${edits.length === 1 ? "" : "s"})`;
+  },
+  async preview(args, ctx) {
+    const edits = (args.edits ?? []) as CellEdit[];
+    if (edits.length === 0) return null;
+    try {
+      const abs = resolveSafe(ctx.workspace, String(args.path));
+      const buf = await fs.readFile(abs);
+      const { applied } = await editXlsx(buf, edits);
+      return applied
+        .map((a) => `${a.sheet}!${a.cell}:  ${a.oldValue || "(empty)"}  →  ${a.newValue}`)
+        .join("\n");
+    } catch {
+      // Fall back to a value-only preview if the file can't be read yet.
+      return edits
+        .map((e) => `${e.sheet ? e.sheet + "!" : ""}${e.cell} → ${String(e.value)}`)
+        .join("\n");
+    }
+  },
+  async execute(args, ctx) {
+    const relPath = String(args.path);
+    const abs = resolveSafe(ctx.workspace, relPath);
+    const ext = path.extname(abs).toLowerCase();
+    if (ext !== ".xlsx") {
+      throw new Error(`edit_spreadsheet only supports .xlsx files, got "${ext}"`);
+    }
+    const edits = (args.edits ?? []) as CellEdit[];
+    if (edits.length === 0) throw new Error("edit_spreadsheet: `edits` must be non-empty");
+
+    const buf = await fs.readFile(abs);
+    const { buf: out, applied } = await editXlsx(buf, edits);
+
+    ctx.undo?.snapshot(abs, relPath);
+    await fs.writeFile(abs, out);
+    const detail = applied.map((a) => `${a.sheet}!${a.cell}=${a.newValue}`).join(", ");
+    return `Updated ${applied.length} cell(s) in ${relPath}: ${detail}`;
   },
 };
 
