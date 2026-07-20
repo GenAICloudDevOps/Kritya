@@ -11,11 +11,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Cross-platform CI verification**: CI now runs the full test suite on
   Windows and macOS runners (in addition to Ubuntu 18.x/20.x/22.x), not just
   Linux, so the "works on Windows and macOS" claim is actually checked rather
-  than assumed. This surfaced a real bug: `npm test` relied on the shell to
-  expand `dist/test/*.test.js`, which bash does but `cmd`/`pwsh` do not —
-  on Windows this would silently run zero tests instead of failing loudly.
-  Fixed by quoting the glob so Node's own test-runner glob matching handles
-  it consistently on every shell.
+  than assumed. This surfaced two real bugs the expanded matrix caught:
+  - `npm test` passed a glob (`dist/test/*.test.js`) to `node --test`. Node's
+    own CLI glob matching only exists on Node 22+, so on Node 18/20 (used by
+    macOS/Windows in CI and still within `engines.node`) it was treated as a
+    literal, nonexistent path and failed outright. Fixed with
+    `scripts/run-tests.mjs`, which enumerates compiled test files with
+    `fs.readdirSync` and passes them to `node --test` as explicit paths —
+    verified against Node 18, 20, and 22.
+  - `prettier --check .` flagged nearly every file on Windows, because
+    GitHub's Windows runners check out git text files as CRLF by default,
+    which Prettier (LF) then sees as unformatted. Fixed by adding
+    `.gitattributes` (`* text=auto eol=lf`) so checkout normalizes to LF on
+    every OS.
 
 ### Added
 
