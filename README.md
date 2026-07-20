@@ -300,6 +300,33 @@ file. Add your own, or override a built-in:
 }
 ```
 
+#### Which model wins when there are two `model` fields?
+
+A model can be set in two places: the top-level `model`, and
+`providers.<name>.model` (a per-provider default). Precedence, highest first:
+
+```
+--model flag (CLI)  >  top-level "model"  >  providers.<name>.model  >  built-in default
+```
+
+The top-level `model` wins over any per-provider default, regardless of which
+provider is active — so if it's set, switching `provider` alone won't change
+the model. Leave the top-level `model` out of config.json if you want each
+provider to fall back to its own `providers.<name>.model` when selected.
+
+```json
+{
+  "model": "big-model-A",
+  "provider": "groq",
+  "providers": {
+    "groq": { "model": "big-model-B" }
+  }
+}
+```
+
+Here `"big-model-A"` is used, not `"big-model-B"` — the top-level field always
+overrides the provider-scoped one.
+
 ### Custom slash commands
 
 Drop a markdown file in `.kritya/commands/` (workspace) or `~/.kritya/commands/`
