@@ -12,6 +12,7 @@ import { bgOutputTool, bgKillTool } from "./bg.js";
 import { spawnAgentTool } from "./subagent.js";
 import { spawnWriteAgentTool } from "./writeAgent.js";
 import { readDocumentTool, writeDocumentTool } from "./document.js";
+import { readNotebookTool, editNotebookTool } from "./notebook.js";
 import { lspDefinitionTool, lspReferencesTool, lspDiagnosticsTool } from "./lsp.js";
 import { repoMapTool } from "./repoMap.js";
 
@@ -35,6 +36,8 @@ export const ALL_TOOLS: ToolDef[] = [
   spawnWriteAgentTool,
   readDocumentTool,
   writeDocumentTool,
+  readNotebookTool,
+  editNotebookTool,
 ];
 
 /** Read-only tools a subagent is allowed to use (no writes, edits, or shell). */
@@ -48,4 +51,5 @@ export const READONLY_TOOLS: ToolDef[] = [
   lspReferencesTool,
   lspDiagnosticsTool,
   readDocumentTool,
+  readNotebookTool,
 ];
