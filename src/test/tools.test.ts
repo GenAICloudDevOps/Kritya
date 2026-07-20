@@ -110,6 +110,59 @@ test("edit requires unique old_string", async () => {
   assert.ok(out.includes("ccc bbb ccc"));
 });
 
+test("write_file blocks content containing a real-looking secret", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  await assert.rejects(
+    () =>
+      writeFileTool.execute(
+        { path: "config.ts", content: `const key = "AKIAABCDEFGHIJKLMNOP";` },
+        ctx
+      ),
+    /looks like it contains real secret/
+  );
+  await assert.rejects(
+    () =>
+      writeFileTool.execute(
+        {
+          path: "notes.md",
+          content: "-----BEGIN RSA PRIVATE KEY-----\nMIIB...\n-----END RSA PRIVATE KEY-----",
+        },
+        ctx
+      ),
+    /looks like it contains real secret/
+  );
+});
+
+test("write_file allows ordinary content and placeholder-looking secrets", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  await writeFileTool.execute(
+    { path: "README.md", content: "Set ANTHROPIC_API_KEY to your key, e.g. sk-ant-EXAMPLE-KEY." },
+    ctx
+  );
+  await writeFileTool.execute(
+    { path: "settings.txt", content: `API_KEY=your_api_key_here\nTOKEN=xxxxxxxxxxxxxxxxxxxx` },
+    ctx
+  );
+  const out = await readFileTool.execute({ path: "README.md" }, ctx);
+  assert.ok(out.includes("ANTHROPIC_API_KEY"));
+});
+
+test("edit_file blocks introducing a secret via new_string", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  await writeFileTool.execute({ path: "f.txt", content: "placeholder" }, ctx);
+  await assert.rejects(
+    () =>
+      editFileTool.execute(
+        { path: "f.txt", old_string: "placeholder", new_string: "ghp_" + "a".repeat(36) },
+        ctx
+      ),
+    /looks like it contains real secret/
+  );
+});
+
 test("edit fails when old_string is missing", async () => {
   const ws = await makeWorkspace();
   const ctx = { workspace: ws };

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ToolDef } from "../types.js";
 import { resolveSafe } from "./common.js";
 import { diffLines } from "./diff.js";
+import { formatSecretWarning, scanForSecrets } from "./secretScan.js";
 
 export const writeFileTool: ToolDef = {
   name: "write_file",
@@ -32,6 +33,11 @@ export const writeFileTool: ToolDef = {
   },
   async execute(args, ctx) {
     const abs = resolveSafe(ctx.workspace, String(args.path));
+    const content = String(args.content);
+    const secrets = scanForSecrets(content);
+    if (secrets.length > 0) {
+      throw new Error(formatSecretWarning(secrets, String(args.path)));
+    }
     await fs.mkdir(path.dirname(abs), { recursive: true });
     ctx.undo?.snapshot(abs, String(args.path));
     await fs.writeFile(abs, String(args.content), "utf8");

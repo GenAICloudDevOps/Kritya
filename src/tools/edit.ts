@@ -3,6 +3,7 @@ import type { ToolDef } from "../types.js";
 import { resolveSafe } from "./common.js";
 import { diffLines } from "./diff.js";
 import { applyEdit } from "./fuzzyMatch.js";
+import { formatSecretWarning, scanForSecrets } from "./secretScan.js";
 
 export const editFileTool: ToolDef = {
   name: "edit_file",
@@ -34,6 +35,10 @@ export const editFileTool: ToolDef = {
     const newStr = String(args.new_string);
     const replaceAll = Boolean(args.replace_all);
     if (oldStr === newStr) throw new Error("old_string and new_string are identical");
+    const secrets = scanForSecrets(newStr);
+    if (secrets.length > 0) {
+      throw new Error(formatSecretWarning(secrets, String(args.path)));
+    }
     const content = await fs.readFile(abs, "utf8");
 
     const match = applyEdit(content, oldStr, newStr, replaceAll);
