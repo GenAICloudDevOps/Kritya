@@ -41,6 +41,16 @@ export interface CliConfig {
   tokenBudget?: number;
   /** MCP servers to launch/connect and expose as tools (stdio or Streamable HTTP). */
   mcpServers?: Record<string, McpServerConfig>;
+  /**
+   * OS-level sandboxing for shell commands, confining writes to the workspace
+   * (bubblewrap on Linux, sandbox-exec on macOS; no effect on Windows). This
+   * is a backstop for when destructive-command detection is evaded, not a
+   * replacement for it. "auto" (recommended) sandboxes only commands flagged
+   * by classifyDanger; "always" sandboxes every shell command; "off" (default)
+   * disables it. Falls back to unsandboxed execution with a warning if the
+   * required binary isn't on PATH.
+   */
+  sandboxExec?: "auto" | "always" | "off";
 }
 
 /**

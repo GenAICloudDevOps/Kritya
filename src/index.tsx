@@ -216,6 +216,8 @@ async function main() {
     process.exit(1);
   }
 
+  const sandboxMode = config.sandboxExec ?? "off";
+
   const providerDefaultModel = config.providers?.[provider.name]?.model;
   const modelRef = {
     current: args.model || config.model || providerDefaultModel || DEFAULT_MODEL,
@@ -309,7 +311,7 @@ async function main() {
       client,
       () => modelRef.current,
       readOnlySubTools,
-      { workspace },
+      { workspace, sandboxMode },
       new PermissionManager(),
       new SessionStore(workspace, true),
       []
@@ -355,7 +357,7 @@ async function main() {
         client,
         () => modelRef.current,
         writeSubTools,
-        { workspace: wt.dir },
+        { workspace: wt.dir, sandboxMode },
         new PermissionManager({ allow: ["write_file", "edit_file", "shell(*)"], deny: [] }),
         new SessionStore(wt.dir, true),
         []
@@ -465,6 +467,7 @@ async function main() {
     tools,
     {
       workspace,
+      sandboxMode,
       undo: undoStack,
       onTasksUpdate: (t) => {
         uiBridge.onTasksUpdate(t);

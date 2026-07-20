@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import type { SandboxMode } from "./shell/sandbox.js";
 
 export type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -44,6 +45,8 @@ export interface SubagentResult {
 export interface ToolContext {
   /** Absolute path of the workspace root; all file tools are confined to it. */
   workspace: string;
+  /** OS-level sandboxing policy for the `shell` tool (see config's sandboxExec). Default "off". */
+  sandboxMode?: SandboxMode;
   /** Records file states before mutation so /undo can revert them. */
   undo?: { snapshot(absPath: string, relPath: string): void; beginTurn?(): void };
   /** Lets the update_tasks tool push checklist changes to the UI. */

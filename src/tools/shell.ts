@@ -1,7 +1,12 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { scrubbedShellEnv } from "../config/config.js";
 import { gitDiffStat } from "../git/git.js";
 import { backgroundManager } from "../shell/background.js";
+import {
+  buildSandboxedCommand,
+  sandboxUnavailableReason,
+  shouldSandbox,
+} from "../shell/sandbox.js";
 import type { ToolDef } from "../types.js";
 import { truncateTail } from "./common.js";
 
@@ -56,37 +61,67 @@ export const shellTool: ToolDef = {
       Math.max(Number(args.timeout_seconds) || DEFAULT_TIMEOUT_S, 1),
       MAX_TIMEOUT_S
     );
-    // exec (not execFile) on purpose: this tool exists to run arbitrary
-    // shell commands, and every invocation is gated by a user permission prompt.
-    return new Promise((resolve) => {
-      exec(
-        command,
-        {
-          cwd: ctx.workspace,
-          env: scrubbedShellEnv(),
-          timeout: timeoutS * 1000,
-          maxBuffer: 10 * 1024 * 1024,
-          windowsHide: true,
-          signal,
-        },
-        (error, stdout, stderr) => {
-          const parts: string[] = [];
-          if (stdout) parts.push(stdout.trimEnd());
-          if (stderr) parts.push(`[stderr]\n${stderr.trimEnd()}`);
-          if (error) {
-            if (signal?.aborted) {
-              parts.push("[command cancelled by user]");
-            } else if (error.killed) {
-              parts.push(
-                `[command timed out after ${timeoutS}s — for servers/watchers use background:true]`
-              );
-            } else {
-              parts.push(`[exit code: ${error.code ?? "unknown"}]`);
-            }
-          }
-          resolve(truncateTail(parts.join("\n") || "(no output)"));
+    const runOpts = {
+      cwd: ctx.workspace,
+      env: scrubbedShellEnv(),
+      timeout: timeoutS * 1000,
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
+      signal,
+    };
+
+    const finish = (
+      resolve: (v: string) => void,
+      error: { killed?: boolean; code?: number | string | null } | null,
+      stdout: string,
+      stderr: string,
+      note?: string
+    ) => {
+      const parts: string[] = [];
+      if (note) parts.push(note);
+      if (stdout) parts.push(stdout.trimEnd());
+      if (stderr) parts.push(`[stderr]\n${stderr.trimEnd()}`);
+      if (error) {
+        if (signal?.aborted) {
+          parts.push("[command cancelled by user]");
+        } else if (error.killed) {
+          parts.push(
+            `[command timed out after ${timeoutS}s — for servers/watchers use background:true]`
+          );
+        } else {
+          parts.push(`[exit code: ${error.code ?? "unknown"}]`);
         }
-      );
+      }
+      resolve(truncateTail(parts.join("\n") || "(no output)"));
+    };
+
+    return new Promise((resolve) => {
+      if (shouldSandbox(ctx.sandboxMode, command)) {
+        const wrapped = buildSandboxedCommand(command, ctx.workspace);
+        if (wrapped) {
+          execFile(wrapped.cmd, wrapped.args, runOpts, (error, stdout, stderr) => {
+            wrapped.cleanup?.();
+            finish(resolve, error, stdout, stderr);
+          });
+          return;
+        }
+        // Sandboxing was requested but no sandbox binary is available here —
+        // fall back to a plain run rather than silently failing, but say so.
+        exec(command, runOpts, (error, stdout, stderr) =>
+          finish(
+            resolve,
+            error,
+            stdout,
+            stderr,
+            `[sandbox unavailable (${sandboxUnavailableReason()}) — ran without sandbox]`
+          )
+        );
+        return;
+      }
+
+      // exec (not execFile) on purpose: this tool exists to run arbitrary
+      // shell commands, and every invocation is gated by a user permission prompt.
+      exec(command, runOpts, (error, stdout, stderr) => finish(resolve, error, stdout, stderr));
     });
   },
 };

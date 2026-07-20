@@ -249,6 +249,33 @@ Separately, destructive commands (`rm -rf`, `git push --force`,
 red warning prompt and can't be "always allowed" — even if a broad `shell(*)`
 rule would otherwise cover them.
 
+### Sandboxed execution (opt-in)
+
+The danger guard above is regex-based pattern matching on the command text —
+it can be evaded (obfuscated flags, `eval`, base64, etc.). `sandboxExec` in
+`~/.kritya/config.json` adds an OS-enforced backstop: shell commands run
+inside a restricted environment where writes are blocked everywhere except
+the workspace, regardless of what the command text looks like.
+
+```json
+{ "sandboxExec": "auto" }
+```
+
+- `"auto"` (recommended) — only commands the danger guard flags get
+  sandboxed; ordinary commands run exactly as before.
+- `"always"` — every shell command is sandboxed.
+- `"off"` (default) — unchanged behavior.
+
+Backed by `bwrap`/bubblewrap on Linux and `sandbox-exec` on macOS; not yet
+available on Windows. If the required binary isn't on `PATH`, kritya falls
+back to an unsandboxed run and says so in the output rather than failing
+silently. The sandbox confines **writes** to the workspace (plus system temp
+dirs) — reads and network access are left open, since restricting those
+breaks most ordinary tooling (dynamic linking, package manager caches, `git
+push`, etc.). It contains accidental or malicious damage outside your
+project; it isn't a full read-confinement or network isolation sandbox.
+Background processes (`background: true`) aren't sandboxed yet.
+
 ## Configuration
 
 `~/.kritya/config.json`:

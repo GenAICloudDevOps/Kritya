@@ -23,6 +23,13 @@ of:
   flags like `--recursive --force`, or obfuscation via `$(...)`, `eval`, or a
   base64-encoded payload). Don't rely on it as the sole safeguard for a
   blanket `shell(*)` allow rule.
+- **Sandboxed execution** (`sandboxExec` in config, opt-in — see README) adds
+  an OS-enforced backstop for the case above: matched commands (or, in
+  `"always"` mode, every command) run under `bwrap` (Linux) or `sandbox-exec`
+  (macOS) with writes confined to the workspace, so evading the regex no
+  longer means unrestricted write access to the rest of the machine. It does
+  not confine reads or network access, and there's no equivalent on Windows
+  yet — treat it as raising the cost of an evasion, not eliminating one.
 - **File access is confined** to the workspace root, and paths that look like
   secrets (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys)
   are blocked from being read or written by tools, regardless of allowlist
