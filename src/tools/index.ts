@@ -8,6 +8,8 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { updateTasksTool } from "./tasks.js";
 import { webSearchTool } from "./webSearch.js";
+import { fetchUrlTool } from "./fetchUrl.js";
+import { deepResearchTool } from "./deepResearch.js";
 import { bgOutputTool, bgKillTool } from "./bg.js";
 import { spawnAgentTool } from "./subagent.js";
 import { spawnWriteAgentTool } from "./writeAgent.js";
@@ -37,6 +39,8 @@ export const ALL_TOOLS: ToolDef[] = [
   lspDiagnosticsTool,
   updateTasksTool,
   webSearchTool,
+  fetchUrlTool,
+  deepResearchTool,
   spawnAgentTool,
   spawnWriteAgentTool,
   readDocumentTool,

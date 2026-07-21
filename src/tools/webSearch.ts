@@ -1,21 +1,27 @@
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
 
-interface TavilyResult {
+export interface TavilyResult {
   title?: string;
   url?: string;
   content?: string;
 }
 
-interface TavilyResponse {
+export interface TavilyResponse {
   answer?: string;
   results?: TavilyResult[];
 }
 
-export async function tavilySearch(query: string, maxResults = 5): Promise<string> {
+/**
+ * Raw Tavily search call, returning the parsed structured response. Shared by
+ * the web_search tool (which formats it for display) and deep_research (which
+ * needs the result URLs to fetch full pages). Throws on any error so callers
+ * can decide how to surface it.
+ */
+export async function tavilyRaw(query: string, maxResults = 5): Promise<TavilyResponse> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {
-    return "Error: TAVILY_API_KEY is not set. Add it to your .env file to enable web search.";
+    throw new Error("TAVILY_API_KEY is not set. Add it to your .env file to enable web search.");
   }
   const res = await fetch("https://api.tavily.com/search", {
     method: "POST",
@@ -31,9 +37,18 @@ export async function tavilySearch(query: string, maxResults = 5): Promise<strin
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return `Error: Tavily search failed (HTTP ${res.status}) ${body.slice(0, 300)}`;
+    throw new Error(`Tavily search failed (HTTP ${res.status}) ${body.slice(0, 300)}`);
   }
-  const data = (await res.json()) as TavilyResponse;
+  return (await res.json()) as TavilyResponse;
+}
+
+export async function tavilySearch(query: string, maxResults = 5): Promise<string> {
+  let data: TavilyResponse;
+  try {
+    data = await tavilyRaw(query, maxResults);
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
   const parts: string[] = [];
   if (data.answer) parts.push(`Answer: ${data.answer}`);
   for (const [i, r] of (data.results ?? []).entries()) {
