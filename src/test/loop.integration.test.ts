@@ -103,10 +103,10 @@ function makeHandlers(permissionDecision: PermissionDecision = "yes"): HandlerLo
       onAssistantText(text) {
         log.texts.push(text);
       },
-      onToolStart(name) {
+      onToolStart(_id, name) {
         log.toolStarts.push(name);
       },
-      onToolEnd(name, _summary, _preview, isError) {
+      onToolEnd(_id, name, _summary, _preview, isError) {
         log.toolEnds.push({ name, isError });
       },
       async requestPermission() {
@@ -162,6 +162,100 @@ test("runTurn drives a multi-round tool-call sequence to a final answer", async 
   const firstTool = agent.history[2] as { tool_call_id: string; content: string };
   assert.equal(firstTool.tool_call_id, "call_1");
   assert.equal(firstTool.content, "file contents here");
+});
+
+test("runTurn runs independent read-only tool calls concurrently", { timeout: 5000 }, async () => {
+  // Two read-only tools that each block until BOTH have started running. A
+  // serial loop would fully await the first before starting the second, so the
+  // first would wait on a barrier the second can never reach — a deadlock this
+  // test's timeout would catch. Completing at all proves they ran in parallel.
+  let startedA = false;
+  let startedB = false;
+  let releaseBoth!: () => void;
+  const bothStarted = new Promise<void>((r) => (releaseBoth = r));
+  const gate = () => {
+    if (startedA && startedB) releaseBoth();
+    return bothStarted;
+  };
+
+  const toolA = fakeTool("read_a", { output: "a" });
+  toolA.execute = async () => {
+    startedA = true;
+    await gate();
+    return "a";
+  };
+  const toolB = fakeTool("read_b", { output: "b" });
+  toolB.execute = async () => {
+    startedB = true;
+    await gate();
+    return "b";
+  };
+
+  const { client } = scriptedClient([
+    toolRound([
+      { id: "call_1", name: "read_a", argsJson: "{}" },
+      { id: "call_2", name: "read_b", argsJson: "{}" },
+    ]),
+    textRound("done."),
+  ]);
+
+  const agent = makeAgent(client, [toolA, toolB]);
+  await agent.runTurn("read both", makeHandlers("yes").handlers);
+
+  // History keeps the model's original call order, regardless of which
+  // finished first.
+  const toolMsgs = agent.history.filter((m) => m.role === "tool") as {
+    tool_call_id: string;
+    content: string;
+  }[];
+  assert.deepEqual(
+    toolMsgs.map((m) => m.tool_call_id),
+    ["call_1", "call_2"]
+  );
+  assert.deepEqual(
+    toolMsgs.map((m) => m.content),
+    ["a", "b"]
+  );
+});
+
+test("runTurn keeps mutating tool calls serialized and in order within a batch", async () => {
+  // A read-only call followed by two permission-gated writes in a single
+  // round. The writes must prompt one at a time, in order, and never overlap.
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const order: string[] = [];
+  const mkWrite = (name: string) => {
+    const t = fakeTool(name, { requiresPermission: true });
+    t.execute = async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      order.push(name);
+      await Promise.resolve();
+      inFlight--;
+      return `${name}-ok`;
+    };
+    return t;
+  };
+  const readTool = fakeTool("read_file", { output: "contents" });
+  const writeA = mkWrite("write_a");
+  const writeB = mkWrite("write_b");
+
+  const { client } = scriptedClient([
+    toolRound([
+      { id: "call_1", name: "read_file", argsJson: "{}" },
+      { id: "call_2", name: "write_a", argsJson: "{}" },
+      { id: "call_3", name: "write_b", argsJson: "{}" },
+    ]),
+    textRound("done."),
+  ]);
+
+  const agent = makeAgent(client, [readTool, writeA, writeB]);
+  await agent.runTurn("read then write twice", makeHandlers("yes").handlers);
+
+  assert.equal(maxInFlight, 1, "mutating tools never ran concurrently");
+  assert.deepEqual(order, ["write_a", "write_b"], "mutating tools ran in call order");
+  const roles = agent.history.map((m) => m.role);
+  assert.deepEqual(roles, ["user", "assistant", "tool", "tool", "tool", "assistant"]);
 });
 
 test("runTurn blocks a mutating tool in plan mode without executing it, then continues the loop", async () => {

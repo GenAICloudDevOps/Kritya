@@ -92,8 +92,10 @@ export interface AgentHandlers {
   onReasoningDelta(delta: string): void;
   /** A complete assistant text message was produced. */
   onAssistantText(text: string): void;
-  onToolStart(name: string, summary: string): void;
-  onToolEnd(name: string, summary: string, resultPreview: string, isError: boolean): void;
+  /** `id` is the tool call's unique id, so the UI can track each concurrent
+   *  call independently (a turn's read-only calls run in parallel). */
+  onToolStart(id: string, name: string, summary: string): void;
+  onToolEnd(id: string, name: string, summary: string, resultPreview: string, isError: boolean): void;
   requestPermission(
     name: string,
     summary: string,

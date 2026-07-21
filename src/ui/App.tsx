@@ -148,6 +148,7 @@ export function App({
     activity,
     setActivity,
     permission,
+    inFlight,
     model,
     provider,
     totalUsage,
@@ -470,13 +471,26 @@ export function App({
         <Box flexDirection="column">
           <Spinner
             label={
-              activity
-                ? activity
-                : thinking
-                  ? "thinking… (Esc to cancel)"
-                  : "working… (Esc to cancel)"
+              inFlight.length > 1
+                ? `${inFlight.length} tools running (Esc to cancel)`
+                : inFlight.length === 1
+                  ? `${inFlight[0].summary} (Esc to cancel)`
+                  : activity
+                    ? activity
+                    : thinking
+                      ? "thinking… (Esc to cancel)"
+                      : "working… (Esc to cancel)"
             }
           />
+          {inFlight.length > 1 && (
+            <Box flexDirection="column" marginLeft={2}>
+              {inFlight.map((t) => (
+                <Text key={t.id} dimColor>
+                  · {t.summary}
+                </Text>
+              ))}
+            </Box>
+          )}
           <Box borderStyle="round" borderColor="yellow" paddingX={1}>
             <Text color="yellow">↳ </Text>
             <TextInput

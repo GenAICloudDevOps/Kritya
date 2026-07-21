@@ -174,7 +174,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
       finalText = text;
     },
     onToolStart: () => {},
-    onToolEnd: (name, summary, _preview, isError) => {
+    onToolEnd: (_id, name, summary, _preview, isError) => {
       toolCalls.push({ name, summary, error: isError });
     },
     // No terminal to ask. A destructive command (classifyDanger sets

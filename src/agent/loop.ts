@@ -1,4 +1,4 @@
-import type { ProviderClient } from "../provider/client.js";
+import type { ParsedToolCall, ProviderClient } from "../provider/client.js";
 import type { PermissionManager } from "../permissions/permissions.js";
 import type { SessionStore } from "../session/store.js";
 import type { AgentHandlers, ChatMessage, ToolContext, ToolDef } from "../types.js";
@@ -355,12 +355,12 @@ export class Agent {
 
       if (!result.toolCalls.length) return;
 
-      for (const call of result.toolCalls) {
-        const output = await this.executeToolCall(call.name, call.argsJson, handlers, signal);
+      const outputs = await this.executeToolCalls(result.toolCalls, handlers, signal);
+      for (let k = 0; k < result.toolCalls.length; k++) {
         const toolMsg: ChatMessage = {
           role: "tool",
-          tool_call_id: call.id,
-          content: output,
+          tool_call_id: result.toolCalls[k].id,
+          content: outputs[k],
         };
         this.history.push(toolMsg);
         this.session.append(toolMsg);
@@ -368,7 +368,7 @@ export class Agent {
 
       if (this.contextUsage() > COMPACT_THRESHOLD && this.history.length > 12) {
         const note = await this.compact(signal);
-        handlers.onToolEnd("compact", "Auto-compacted context", note, false);
+        handlers.onToolEnd("compact", "compact", "Auto-compacted context", note, false);
       }
     }
 
@@ -378,7 +378,58 @@ export class Agent {
     );
   }
 
+  /**
+   * Execute a turn's tool calls, returning each output in the model's original
+   * order so history stays a valid, in-order request regardless of which call
+   * finished first.
+   *
+   * Read-only tools (requiresPermission === false) never prompt, never mutate
+   * state, and don't depend on each other's ordering, so a contiguous run of
+   * them is dispatched concurrently — the common "read these 5 files / grep
+   * these 3 patterns" turn that otherwise pays each call's latency in series.
+   * A call that needs permission (write_file, edit_file, shell, …) breaks the
+   * batch and runs on its own, in order: that keeps permission prompts
+   * appearing one at a time in a predictable sequence, and keeps mutations
+   * (and the undo/audit ordering that assumes them) deterministic.
+   */
+  private async executeToolCalls(
+    calls: ParsedToolCall[],
+    handlers: AgentHandlers,
+    signal?: AbortSignal
+  ): Promise<string[]> {
+    const parallelizable = (call: ParsedToolCall): boolean => {
+      const tool = this.tools.find((t) => t.name === call.name);
+      return tool ? !tool.requiresPermission : false;
+    };
+
+    const outputs = new Array<string>(calls.length);
+    let i = 0;
+    while (i < calls.length) {
+      if (parallelizable(calls[i])) {
+        // Run the contiguous run of read-only calls at once.
+        const start = i;
+        while (i < calls.length && parallelizable(calls[i])) i++;
+        const batch = calls.slice(start, i);
+        const results = await Promise.all(
+          batch.map((c) => this.executeToolCall(c.id, c.name, c.argsJson, handlers, signal))
+        );
+        for (let k = 0; k < results.length; k++) outputs[start + k] = results[k];
+      } else {
+        outputs[i] = await this.executeToolCall(
+          calls[i].id,
+          calls[i].name,
+          calls[i].argsJson,
+          handlers,
+          signal
+        );
+        i++;
+      }
+    }
+    return outputs;
+  }
+
   private async executeToolCall(
+    id: string,
     name: string,
     argsJson: string,
     handlers: AgentHandlers,
@@ -422,7 +473,7 @@ export class Agent {
         durationMs: Date.now() - startedAt,
       });
       finishSpan("ERROR", "blocked: plan mode");
-      handlers.onToolEnd(name, summary, "blocked: plan mode (read-only)", true);
+      handlers.onToolEnd(id, name, summary, "blocked: plan mode (read-only)", true);
       return (
         "Plan mode is ON (read-only). This mutating action was blocked. " +
         "Keep exploring with read-only tools and present a concrete plan to the user. " +
@@ -440,7 +491,7 @@ export class Agent {
         durationMs: Date.now() - startedAt,
       });
       finishSpan("ERROR", "blocked by deny rule");
-      handlers.onToolEnd(name, summary, "blocked by a deny rule", true);
+      handlers.onToolEnd(id, name, summary, "blocked by a deny rule", true);
       return "This action is blocked by a deny rule in the user's settings. Do not retry it; take a different approach.";
     }
 
@@ -489,7 +540,7 @@ export class Agent {
           durationMs: Date.now() - startedAt,
         });
         finishSpan("ERROR", "denied by user");
-        handlers.onToolEnd(name, summary, "denied by user", true);
+        handlers.onToolEnd(id, name, summary, "denied by user", true);
         return "The user denied permission for this tool call. Do not retry it; ask the user how to proceed or take a different approach.";
       }
       source = "interactive";
@@ -524,12 +575,12 @@ export class Agent {
           durationMs: Date.now() - startedAt,
         });
         finishSpan("ERROR", "blocked by preToolUse hook");
-        handlers.onToolEnd(name, summary, "blocked by a preToolUse hook", true);
+        handlers.onToolEnd(id, name, summary, "blocked by a preToolUse hook", true);
         return pre.output;
       }
     }
 
-    handlers.onToolStart(name, summary);
+    handlers.onToolStart(id, name, summary);
     try {
       let output = await tool.execute(args, this.ctx, signal);
       if (tool.external) {
@@ -546,7 +597,7 @@ export class Agent {
         durationMs: Date.now() - startedAt,
       });
       finishSpan("OK");
-      handlers.onToolEnd(name, summary, output.slice(0, PREVIEW_CHARS), false);
+      handlers.onToolEnd(id, name, summary, output.slice(0, PREVIEW_CHARS), false);
       return output;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -557,7 +608,7 @@ export class Agent {
         durationMs: Date.now() - startedAt,
       });
       finishSpan("ERROR", msg);
-      handlers.onToolEnd(name, summary, msg.slice(0, PREVIEW_CHARS), true);
+      handlers.onToolEnd(id, name, summary, msg.slice(0, PREVIEW_CHARS), true);
       return `Error: ${msg}`;
     }
   }

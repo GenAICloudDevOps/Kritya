@@ -104,6 +104,9 @@ export function useAgent({
   const [autoApprovedCount, setAutoApprovedCount] = useState(0);
   const hasConfirmedAcceptEdits = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  /** Tool calls currently running, keyed by call id — more than one when a
+   *  turn's read-only calls are dispatched in parallel. Rendered as live rows. */
+  const [inFlight, setInFlight] = useState<{ id: string; name: string; summary: string }[]>([]);
 
   const addItem = useCallback((item: ItemBody) => {
     setItems((prev) => [...prev, { ...item, id: nextId.current++ }]);
@@ -309,6 +312,7 @@ export function useAgent({
     setPhase("working");
     const ac = new AbortController();
     abortRef.current = ac;
+    setInFlight([]);
 
     try {
       await agent.runTurn(
@@ -324,12 +328,12 @@ export function useAgent({
             setThinking(false);
             addItem({ kind: "assistant", text: full });
           },
-          onToolStart: (_name, summary) => {
+          onToolStart: (id, name, summary) => {
             setStream("");
-            setActivity(summary);
+            setInFlight((prev) => [...prev, { id, name, summary }]);
           },
-          onToolEnd: (name, summary, preview, isError) => {
-            setActivity(null);
+          onToolEnd: (id, name, summary, preview, isError) => {
+            setInFlight((prev) => prev.filter((t) => t.id !== id));
             if (name !== "update_tasks")
               addItem({ kind: "tool", name, summary, error: isError, output: preview });
           },
@@ -428,6 +432,7 @@ export function useAgent({
       addItem({ kind: "info", text });
     } finally {
       abortRef.current = null;
+      setInFlight([]);
       setStream("");
       setThinking(false);
       setActivity(null);
@@ -495,6 +500,7 @@ export function useAgent({
     activity,
     setActivity,
     permission,
+    inFlight,
     model,
     provider,
     usageByModel,
