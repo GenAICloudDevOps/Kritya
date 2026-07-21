@@ -95,7 +95,13 @@ export interface AgentHandlers {
   /** `id` is the tool call's unique id, so the UI can track each concurrent
    *  call independently (a turn's read-only calls run in parallel). */
   onToolStart(id: string, name: string, summary: string): void;
-  onToolEnd(id: string, name: string, summary: string, resultPreview: string, isError: boolean): void;
+  onToolEnd(
+    id: string,
+    name: string,
+    summary: string,
+    resultPreview: string,
+    isError: boolean
+  ): void;
   requestPermission(
     name: string,
     summary: string,
