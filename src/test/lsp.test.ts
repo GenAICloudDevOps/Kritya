@@ -111,6 +111,17 @@ function onMessage(msg) {
         { uri: msg.params.textDocument.uri, range: { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } } },
       ]});
       break;
+    case "textDocument/hover":
+      send({ id: msg.id, result: { contents: { kind: "markdown", value: "const x: 1" } } });
+      break;
+    case "textDocument/rename":
+      // WorkspaceEdit renaming the identifier at chars 6-7 to msg.params.newName.
+      send({ id: msg.id, result: { changes: {
+        [msg.params.textDocument.uri]: [
+          { range: { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } }, newText: msg.params.newName },
+        ],
+      }}});
+      break;
     case "shutdown":
       send({ id: msg.id, result: null });
       break;
@@ -154,6 +165,29 @@ test("LspClient talks to a stdio server: definition, references, diagnostics", a
     const diags = await client.diagnosticsFor(file);
     assert.equal(diags.length, 1);
     assert.equal(diags[0].message, "fake error");
+  } finally {
+    client.dispose();
+  }
+});
+
+test("LspClient hover returns the server's rendered contents", async () => {
+  const { file, client } = await startFakeClient();
+  try {
+    assert.equal(await client.hover(file, { line: 0, character: 6 }), "const x: 1");
+  } finally {
+    client.dispose();
+  }
+});
+
+test("LspClient rename normalizes a WorkspaceEdit to per-file edits", async () => {
+  const { file, client } = await startFakeClient();
+  try {
+    const edits = await client.rename(file, { line: 0, character: 6 }, "y");
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0].uri, pathToFileURL(file).href);
+    assert.equal(edits[0].edits.length, 1);
+    assert.equal(edits[0].edits[0].newText, "y");
+    assert.equal(edits[0].edits[0].range.start.character, 6);
   } finally {
     client.dispose();
   }

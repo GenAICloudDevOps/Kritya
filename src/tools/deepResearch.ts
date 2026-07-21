@@ -93,7 +93,10 @@ export const deepResearchTool: ToolDef = {
   },
   async execute(args) {
     const raw = Array.isArray(args.queries) ? args.queries : [];
-    const queries = raw.map((q) => String(q).trim()).filter(Boolean).slice(0, MAX_QUERIES);
+    const queries = raw
+      .map((q) => String(q).trim())
+      .filter(Boolean)
+      .slice(0, MAX_QUERIES);
     if (queries.length === 0) {
       throw new Error("deep_research needs at least one non-empty query");
     }

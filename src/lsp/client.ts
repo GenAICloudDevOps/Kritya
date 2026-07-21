@@ -33,6 +33,26 @@ export interface LspDiagnostic {
   code?: string | number;
 }
 
+export interface LspTextEdit {
+  range: LspRange;
+  newText: string;
+}
+
+/** All edits for one file, produced by a rename. */
+export interface LspFileEdits {
+  uri: string;
+  edits: LspTextEdit[];
+}
+
+/** WorkspaceEdit shapes: the older `changes` map and the newer `documentChanges` array. */
+interface LspWorkspaceEdit {
+  changes?: Record<string, LspTextEdit[]>;
+  documentChanges?: Array<{
+    textDocument: { uri: string; version: number | null };
+    edits: LspTextEdit[];
+  }>;
+}
+
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(err: Error): void;
@@ -120,6 +140,8 @@ export class LspClient {
             synchronization: { didSave: false },
             definition: { linkSupport: true },
             references: {},
+            hover: { contentFormat: ["markdown", "plaintext"] },
+            rename: { prepareSupport: false },
             publishDiagnostics: {},
           },
           workspace: { configuration: true, workspaceFolders: true },
@@ -356,6 +378,38 @@ export class LspClient {
   }
 
   /**
+   * Resolved type/signature/doc for the symbol at a position, as rendered by
+   * the server (markdown or plain text). Returns null when the server has
+   * nothing to show there.
+   */
+  async hover(absPath: string, position: LspPosition): Promise<string | null> {
+    const { uri, changed } = await this.syncDocument(absPath);
+    await this.waitForIndexing(changed);
+    const result = await this.request("textDocument/hover", {
+      textDocument: { uri },
+      position,
+    });
+    return extractHover(result);
+  }
+
+  /**
+   * Ask the server for a project-wide rename of the symbol at a position.
+   * Returns the edits grouped per file — the server does NOT touch disk, the
+   * caller applies them. An empty array means the symbol can't be renamed
+   * there (keyword, literal, or a server that refused).
+   */
+  async rename(absPath: string, position: LspPosition, newName: string): Promise<LspFileEdits[]> {
+    const { uri, changed } = await this.syncDocument(absPath);
+    await this.waitForIndexing(changed);
+    const result = await this.request("textDocument/rename", {
+      textDocument: { uri },
+      position,
+      newName,
+    });
+    return normalizeWorkspaceEdit(result);
+  }
+
+  /**
    * Sync the file and return its diagnostics. Diagnostics are pushed by the
    * server asynchronously, so after a (re)sync we wait for the next push for
    * this URI, up to `timeoutMs` — servers analyzing a large project for the
@@ -392,6 +446,38 @@ export class LspClient {
     this.diagWaiters.clear();
     for (const w of waiters) w();
   }
+}
+
+/** Flatten a WorkspaceEdit (either `changes` map or `documentChanges` array) to per-file edits. */
+function normalizeWorkspaceEdit(result: unknown): LspFileEdits[] {
+  if (!result || typeof result !== "object") return [];
+  const edit = result as LspWorkspaceEdit;
+  if (edit.documentChanges) {
+    // documentChanges may also carry create/rename/delete ops (no textDocument); skip those.
+    return edit.documentChanges
+      .filter((c) => c.textDocument && Array.isArray(c.edits))
+      .map((c) => ({ uri: c.textDocument.uri, edits: c.edits }));
+  }
+  if (edit.changes) {
+    return Object.entries(edit.changes).map(([uri, edits]) => ({ uri, edits }));
+  }
+  return [];
+}
+
+/** Hover contents can be MarkupContent, a MarkedString, or an array of them; flatten to text. */
+function extractHover(result: unknown): string | null {
+  const contents = (result as { contents?: unknown } | null)?.contents;
+  if (contents === undefined || contents === null) return null;
+  const parts: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === "string") parts.push(v);
+    else if (v && typeof v === "object" && "value" in v)
+      parts.push(String((v as { value: unknown }).value));
+  };
+  if (Array.isArray(contents)) contents.forEach(push);
+  else push(contents);
+  const text = parts.join("\n\n").trim();
+  return text.length > 0 ? text : null;
 }
 
 /** Servers return Location | Location[] | LocationLink[] | null; flatten to Location[]. */

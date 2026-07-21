@@ -20,7 +20,13 @@ import {
   editPdfTool,
 } from "./document.js";
 import { readNotebookTool, editNotebookTool } from "./notebook.js";
-import { lspDefinitionTool, lspReferencesTool, lspDiagnosticsTool } from "./lsp.js";
+import {
+  lspDefinitionTool,
+  lspReferencesTool,
+  lspDiagnosticsTool,
+  lspHoverTool,
+  lspRenameTool,
+} from "./lsp.js";
 import { repoMapTool } from "./repoMap.js";
 
 export const ALL_TOOLS: ToolDef[] = [
@@ -37,6 +43,8 @@ export const ALL_TOOLS: ToolDef[] = [
   lspDefinitionTool,
   lspReferencesTool,
   lspDiagnosticsTool,
+  lspHoverTool,
+  lspRenameTool,
   updateTasksTool,
   webSearchTool,
   fetchUrlTool,
@@ -61,6 +69,7 @@ export const READONLY_TOOLS: ToolDef[] = [
   lspDefinitionTool,
   lspReferencesTool,
   lspDiagnosticsTool,
+  lspHoverTool,
   readDocumentTool,
   readNotebookTool,
 ];

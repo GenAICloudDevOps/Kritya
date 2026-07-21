@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { lspManager } from "../lsp/manager.js";
-import type { LspDiagnostic, LspLocation } from "../lsp/client.js";
+import type { LspDiagnostic, LspFileEdits, LspLocation, LspPosition } from "../lsp/client.js";
 import type { ToolDef } from "../types.js";
 import { resolveSafe, truncateResult } from "./common.js";
 
@@ -137,5 +137,120 @@ export const lspDiagnosticsTool: ToolDef = {
     const client = await lspManager.clientFor(ctx.workspace, abs);
     const rel = path.relative(ctx.workspace, abs);
     return formatDiagnostics(rel, await client.diagnosticsFor(abs));
+  },
+};
+
+export const lspHoverTool: ToolDef = {
+  name: "lsp_hover",
+  description:
+    "Show what a symbol resolves to — its type, signature, and doc comment — as computed by a " +
+    "real language server, without opening the file it's defined in. Answers 'what is this?' at " +
+    "a position: the inferred type of a variable, a function's full signature, an imported " +
+    "symbol's origin. Returns the server's markdown/plaintext, or a note if there's nothing there.",
+  parameters: positionParams,
+  requiresPermission: false,
+  summarize: (args) => `Hover ${args.path}:${args.line}:${args.column}`,
+  async execute(args, ctx) {
+    const abs = resolveSafe(ctx.workspace, String(args.path));
+    const client = await lspManager.clientFor(ctx.workspace, abs);
+    const text = await client.hover(abs, parsePosition(args));
+    return text ? truncateResult(text) : "(no hover information at this position)";
+  },
+};
+
+/**
+ * Apply a set of LSP TextEdits to a document's text. LSP positions are UTF-16
+ * code-unit offsets, which is exactly how JS indexes strings, so line/character
+ * map onto slice offsets directly. Edits are applied end-first so that earlier
+ * edits don't shift the offsets of later ones.
+ */
+function applyTextEdits(text: string, edits: LspFileEdits["edits"]): string {
+  const lineStarts = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") lineStarts.push(i + 1);
+  }
+  const toOffset = (pos: LspPosition): number => {
+    const lineStart = lineStarts[pos.line] ?? text.length;
+    return Math.min(lineStart + pos.character, text.length);
+  };
+  const sorted = [...edits].sort((a, b) => toOffset(b.range.start) - toOffset(a.range.start));
+  let result = text;
+  for (const edit of sorted) {
+    const start = toOffset(edit.range.start);
+    const end = toOffset(edit.range.end);
+    result = result.slice(0, start) + edit.newText + result.slice(end);
+  }
+  return result;
+}
+
+const renameParams = {
+  type: "object",
+  properties: {
+    path: { type: "string", description: "File path relative to the workspace root" },
+    line: { type: "number", description: "1-based line number of the symbol" },
+    column: {
+      type: "number",
+      description: "1-based column of a character inside the symbol name",
+    },
+    new_name: { type: "string", description: "The new name for the symbol" },
+  },
+  required: ["path", "line", "column", "new_name"],
+};
+
+export const lspRenameTool: ToolDef = {
+  name: "lsp_rename",
+  description:
+    "Rename a symbol everywhere it is used, across the whole project, using a real language " +
+    "server. Unlike find-and-replace this is semantic: it renames only the actual occurrences " +
+    "of THIS symbol — never a same-named but unrelated variable, and never text in comments or " +
+    "strings — and updates every file that references it. Point it at any one occurrence " +
+    "(definition or use). Writes the edited files to disk and reports what changed.",
+  parameters: renameParams,
+  requiresPermission: true,
+  summarize: (args) => `Rename ${args.path}:${args.line}:${args.column} → ${args.new_name}`,
+  async execute(args, ctx) {
+    const abs = resolveSafe(ctx.workspace, String(args.path));
+    const newName = String(args.new_name);
+    if (newName.trim().length === 0) throw new Error("new_name must not be empty");
+
+    const client = await lspManager.clientFor(ctx.workspace, abs);
+    const fileEdits = await client.rename(abs, parsePosition(args), newName);
+    if (fileEdits.length === 0) {
+      return "No rename performed — the symbol at that position can't be renamed (it may be a keyword, literal, or outside a project the server has loaded).";
+    }
+
+    // Validate every target up front so a rename is all-or-nothing: resolveSafe
+    // rejects anything outside the workspace or matching a secret pattern.
+    const targets: { abs: string; rel: string; edits: LspFileEdits["edits"] }[] = [];
+    for (const fe of fileEdits) {
+      let target: string;
+      try {
+        target = fileURLToPath(fe.uri);
+      } catch {
+        throw new Error(`Rename produced an edit for a non-file URI (${fe.uri}); aborted.`);
+      }
+      const rel = path.relative(ctx.workspace, target);
+      // resolveSafe throws for out-of-workspace / sensitive paths — abort the whole rename.
+      const safeAbs = resolveSafe(ctx.workspace, rel);
+      targets.push({ abs: safeAbs, rel, edits: fe.edits });
+    }
+
+    let totalEdits = 0;
+    for (const t of targets) {
+      const content = await fs.readFile(t.abs, "utf8");
+      const updated = applyTextEdits(content, t.edits);
+      if (updated === content) continue;
+      ctx.undo?.snapshot(t.abs, t.rel);
+      await fs.writeFile(t.abs, updated, "utf8");
+      totalEdits += t.edits.length;
+    }
+
+    const fileList = targets
+      .map((t) => `  ${t.rel} (${t.edits.length} edit${t.edits.length === 1 ? "" : "s"})`)
+      .join("\n");
+    return truncateResult(
+      `Renamed to "${newName}" — ${totalEdits} edit${totalEdits === 1 ? "" : "s"} across ` +
+        `${targets.length} file${targets.length === 1 ? "" : "s"}:\n${fileList}`
+    );
   },
 };
