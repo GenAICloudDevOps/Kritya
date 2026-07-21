@@ -54,7 +54,10 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | --------------------- | ------------------------------------------------------------------------ |
 | `/model`              | interactive model picker (`/model <id>` sets any model ID directly)      |
 | `/provider`           | list providers, or `/provider <name>` to switch mid-session (see below)  |
-| `/plan`               | toggle plan mode (read-only): explore and propose before making changes  |
+| `/brainstorm <idea>`  | start the staged new-project workflow (brainstorm → plan → spec → build) |
+| `/plan`               | toggle plan mode (read-only); on an active project, run the plan phase   |
+| `/spec`               | project workflow: write the spec from the approved plan                  |
+| `/build`              | project workflow: implement the project from the spec                    |
 | `/diff`               | show the cumulative git diff of this session's changes                   |
 | `/init`               | scan the repo and generate a `KRITYA.md` project-memory file             |
 | `/commit`             | have the agent review, stage, and commit the current git changes         |
@@ -77,6 +80,18 @@ full tool output. `Ctrl+C` exits.
 
 ### More features
 
+- **Staged new-project workflow** — ask kritya to build something new (a
+  FastAPI backend, a Next.js frontend, a CLI) and it doesn't dive straight into
+  code. It runs four phases — **brainstorm → plan → spec → build** — writing a
+  durable artifact for each under `docs/<name>/` (`brainstorm.md`, `plan.md`,
+  `spec.md`, then the code) and stopping for your approval between phases. The
+  current phase lives in `.kritya/project.json`, so the flow resumes where you
+  left off across sessions. The agent walks the phases on its own, or you can
+  drive them by hand: `/brainstorm <idea>` starts one, `/plan` runs the
+  (read-only) plan phase, `/spec` writes the spec, `/build` implements it. In
+  the plan phase, plan mode's read-only guard is relaxed just enough to let the
+  agent write Markdown planning docs under `docs/` — application code and shell
+  stay blocked until you `/build`.
 - **Trust levels** — `Shift+Tab` cycles **normal** (every write/edit asks
   first) → **accept-edits** (file writes/edits auto-approve, no prompt) →
   **plan** (read-only, nothing executes) → back to normal. The statusline

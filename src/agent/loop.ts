@@ -7,6 +7,7 @@ import { buildSystemPrompt } from "./systemPrompt.js";
 import { classifyDanger } from "../permissions/danger.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
+import { isPlanningDocWrite } from "./workflow.js";
 
 const DEFAULT_MAX_STEPS = 40;
 
@@ -379,12 +380,13 @@ export class Agent {
       summary = name;
     }
 
-    if (this.planMode && tool.requiresPermission) {
+    if (this.planMode && tool.requiresPermission && !isPlanningDocWrite(name, args)) {
       handlers.onToolEnd(name, summary, "blocked: plan mode (read-only)", true);
       return (
         "Plan mode is ON (read-only). This mutating action was blocked. " +
         "Keep exploring with read-only tools and present a concrete plan to the user. " +
-        "Do not attempt writes, edits, or shell commands until the user turns plan mode off."
+        "Writing Markdown planning docs under docs/ is allowed; application code and shell " +
+        "are not. Do not attempt other writes or shell commands until plan mode is turned off."
       );
     }
 

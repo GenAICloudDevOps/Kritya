@@ -4,6 +4,7 @@ import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
+import { loadProjectState, phasePrompt, saveProjectState, slugify } from "../agent/workflow.js";
 
 export interface CommandDef {
   name: string;
@@ -18,9 +19,15 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
     description: "list providers, or /provider <name> to switch mid-session (keeps history)",
   },
   {
-    name: "/plan",
-    description: "toggle plan mode (read-only): explore and propose before editing",
+    name: "/brainstorm",
+    description: "start a new-project workflow: /brainstorm <idea> (brainstorm→plan→spec→build)",
   },
+  {
+    name: "/plan",
+    description: "toggle plan mode (read-only); in a project workflow, run the plan phase",
+  },
+  { name: "/spec", description: "project workflow: write the spec from the approved plan" },
+  { name: "/build", description: "project workflow: implement the project from the spec" },
   { name: "/diff", description: "show the cumulative git diff of this session's changes" },
   { name: "/redo", description: "reapply the change most recently undone" },
   { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
@@ -284,6 +291,26 @@ const handlers: Record<string, CommandHandler> = {
         "the change. Do not push. Show the final commit hash and message."
     );
   },
+  "/brainstorm": (ctx) => {
+    const idea = ctx.arg.trim();
+    const existing = loadProjectState(ctx.workspace);
+    if (!existing && !idea) {
+      ctx.addItem({
+        kind: "info",
+        text: "Usage: /brainstorm <your project idea>. Starts the brainstorm → plan → spec → build workflow.",
+      });
+      return;
+    }
+    const name = existing?.name ?? slugify(idea);
+    saveProjectState(ctx.workspace, name, "brainstorm");
+    // Brainstorming writes docs freely, so make sure plan mode isn't left on.
+    if (ctx.planMode) {
+      ctx.agent.planMode = false;
+      ctx.setPlanMode(false);
+    }
+    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+    return ctx.runAgent(phasePrompt(name, "brainstorm", idea));
+  },
   "/plan": (ctx) => {
     const next = !ctx.planMode;
     ctx.setPlanMode(next);
@@ -294,12 +321,59 @@ const handlers: Record<string, CommandHandler> = {
       ctx.agent.acceptEdits = false;
       ctx.setAcceptEdits(false);
     }
+    // In an active project workflow, turning plan mode ON runs the plan phase:
+    // read-only architecture design that still writes docs/<name>/plan.md.
+    const project = loadProjectState(ctx.workspace);
+    if (next && project) {
+      saveProjectState(ctx.workspace, project.name, "plan");
+      ctx.addItem({
+        kind: "info",
+        text: `Plan mode ON — plan phase for "${project.name}". The agent will design the architecture and write docs/${project.name}/plan.md, then stop for your approval. Run /spec to continue.`,
+      });
+      ctx.addItem({ kind: "user", text: "/plan" });
+      return ctx.runAgent(phasePrompt(project.name, "plan", ctx.arg));
+    }
     ctx.addItem({
       kind: "info",
       text: next
         ? "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked. Run /plan again to execute."
         : "Plan mode OFF — the agent can make changes again.",
     });
+    return;
+  },
+  "/spec": (ctx) => {
+    const project = loadProjectState(ctx.workspace);
+    if (!project) {
+      ctx.addItem({
+        kind: "info",
+        text: "No active project workflow. Start one with /brainstorm <idea>.",
+      });
+      return;
+    }
+    if (ctx.planMode) {
+      ctx.agent.planMode = false;
+      ctx.setPlanMode(false);
+    }
+    saveProjectState(ctx.workspace, project.name, "spec");
+    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+    return ctx.runAgent(phasePrompt(project.name, "spec", ctx.arg));
+  },
+  "/build": (ctx) => {
+    const project = loadProjectState(ctx.workspace);
+    if (!project) {
+      ctx.addItem({
+        kind: "info",
+        text: "No active project workflow. Start one with /brainstorm <idea>.",
+      });
+      return;
+    }
+    if (ctx.planMode) {
+      ctx.agent.planMode = false;
+      ctx.setPlanMode(false);
+    }
+    saveProjectState(ctx.workspace, project.name, "build");
+    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+    return ctx.runAgent(phasePrompt(project.name, "build", ctx.arg));
   },
   "/diff": (ctx) => {
     const d = ctx.gitDiffStat(ctx.workspace);

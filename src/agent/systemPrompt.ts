@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gitStatusShort } from "../git/git.js";
+import { loadProjectState } from "./workflow.js";
 
 const MEMORY_FILES = ["KRITYA.md"];
 const MEMORY_MAX_CHARS = 4000;
@@ -28,6 +29,15 @@ export function buildSystemPrompt(workspace: string, planMode = false): string {
   const gitSection = () => {
     const status = gitStatusShort(workspace);
     return status === null ? "" : `\n# Git status (porcelain, branch first)\n${status}\n`;
+  };
+  const workflowSection = () => {
+    const state = loadProjectState(workspace);
+    if (!state) return "";
+    return (
+      `\n# Active project workflow\n` +
+      `Project "${state.name}" is in the ${state.phase} phase. Continue that phase, then stop for ` +
+      `the user's approval before advancing. Artifacts live under docs/${state.name}/.\n`
+    );
   };
   let listing = "(unavailable)";
   try {
@@ -75,6 +85,14 @@ You help with software engineering tasks: writing code, fixing bugs, explaining 
 - Be concise. Answer directly, no filler.
 - When you finish a task, summarize what changed in a few sentences.
 - Use markdown code blocks for code.
+
+# Project workflow (new projects)
+When the user asks to create a NEW project or app (a FastAPI backend, a Next.js frontend, a CLI, etc.), do not jump straight to code. Run a four-phase workflow, writing a durable artifact for each phase and STOPPING for the user's approval before advancing:
+  1. brainstorm -> docs/<name>/brainstorm.md  (problem, users, features, recommended stack)
+  2. plan       -> docs/<name>/plan.md         (architecture, milestones; runs in read-only plan mode)
+  3. spec       -> docs/<name>/spec.md          (goals, non-goals, contracts, acceptance criteria)
+  4. build      -> the application code         (implement against the spec)
+Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. After writing a phase's artifact, summarize it and ask the user to approve — never advance past a phase on your own. The user may also drive phases manually with /brainstorm, /plan, /spec, and /build; when they do, that command sets the phase for you.
 ${memory}
 # Environment
 - OS: ${os.platform()} (${os.release()})
@@ -83,5 +101,5 @@ ${memory}
 
 # Workspace top-level contents
 ${listing || "(empty)"}
-${gitSection()}${planSection}`;
+${gitSection()}${workflowSection()}${planSection}`;
 }

@@ -3,4 +3,5 @@ dist/
 .env
 *.jpg
 .claude/
+.kritya/project.json
 ROADMAP.md

@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Staged new-project workflow** — creating a new project now runs through
+  four phases, each producing a durable artifact under `docs/<name>/` and
+  hard-stopping for your approval before the next: **brainstorm**
+  (`docs/<name>/brainstorm.md`), **plan** (`docs/<name>/plan.md`), **spec**
+  (`docs/<name>/spec.md`), then **build** (the code). The agent drives this
+  automatically when you ask it to build something new — it tracks the current
+  phase in `.kritya/project.json` and resumes there across sessions — but you
+  can also step through it by hand with the new `/brainstorm <idea>`, `/spec`,
+  and `/build` commands. The plan phase reuses plan mode: `/plan` on an active
+  project designs the architecture read-only, with a narrow exception that lets
+  it write Markdown planning docs under `docs/` while application code and shell
+  stay blocked.
 - **Checkpoint / rewind** — `/checkpoint <name>` saves a named point in the
   session (run `/checkpoint` with no name to list saved ones), and
   `/rewind <name>` rolls both the conversation and the files back to that
