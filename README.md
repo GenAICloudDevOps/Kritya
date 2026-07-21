@@ -299,6 +299,41 @@ push`, etc.). It contains accidental or malicious damage outside your
 project; it isn't a full read-confinement or network isolation sandbox.
 Background processes (`background: true`) aren't sandboxed yet.
 
+### Audit log & telemetry
+
+The session transcript records the conversation; the **audit log** records what
+was allowed to run and by whose authority — the trail an enterprise reaches for
+during a review. Every permission decision and tool execution is appended to
+`~/.kritya/audit/<session>.audit.jsonl`, one JSON record per line:
+
+```json
+{"event":"permission","tool":"shell","summary":"run: rm build/","verdict":"allowed","source":"interactive","seq":4,"ts":"..."}
+{"event":"tool","tool":"shell","summary":"run: rm build/","outcome":"ok","durationMs":38,"seq":5,"ts":"..."}
+```
+
+`source` is one of `deny-rule`, `allow-rule`, `always-allow`, `accept-edits`,
+`interactive`, `plan-mode`, or `read-only`. The file is **append-only** (unlike
+the transcript, `/rewind` and `/compact` never touch it) and **tamper-evident**:
+each record is hash-chained to the previous one, so editing or deleting any line
+breaks the chain and is detectable. Auditing is on by default — set
+`KRITYA_AUDIT=off` to turn it off.
+
+For tracing, the tool loop can emit **OpenTelemetry-shaped spans** (one per
+turn, with a nested span per tool call) for local inspection:
+
+```bash
+KRITYA_OTEL=file      # -> ~/.kritya/telemetry/<session>.otel.jsonl (default)
+KRITYA_OTEL=console   # spans to stderr, prefixed [otel]
+KRITYA_OTEL=both
+KRITYA_OTEL_FILE=/path/to/spans.jsonl   # override the file path
+```
+
+Spans carry OTel field names (`traceId`, `spanId`, `parentSpanId`,
+`startTimeUnixNano`, `status`, …). Both features are **entirely local** — no
+external service, collector, or network is involved; the OTel field names just
+mean a real OTLP exporter can be wired in later without changing anything in the
+loop. Telemetry is off unless `KRITYA_OTEL` is set.
+
 ## Configuration
 
 `~/.kritya/config.json`:

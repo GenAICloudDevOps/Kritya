@@ -5,6 +5,8 @@ import type { AgentHandlers, ChatMessage, ToolContext, ToolDef } from "../types.
 import { splitForCompaction, renderTranscript } from "./compactor.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { classifyDanger } from "../permissions/danger.js";
+import type { AuditLog, PermissionSource } from "../audit/audit.js";
+import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
 import { isPlanningDocWrite } from "./workflow.js";
@@ -76,6 +78,15 @@ export class Agent {
   autoMemory = false;
   /** Optional user-configured shell hooks around tool calls and turn end. */
   hooks?: HookRunner;
+  /**
+   * Append-only audit trail of permission decisions and tool executions. Left
+   * unset on subagents; only the main session records an audit log.
+   */
+  audit?: AuditLog;
+  /** OpenTelemetry-shaped tracer for the tool loop. No-op unless enabled. */
+  tracer: Tracer = NOOP_TRACER;
+  /** The span for the in-flight turn, so tool spans can nest under it. */
+  private currentTurnSpan?: Span;
   private steerQueue: string[] = [];
   /** Named points in the conversation for /rewind (in-memory, this session only). */
   private checkpoints = new Map<string, Checkpoint>();
@@ -292,9 +303,19 @@ export class Agent {
       content: buildSystemPrompt(this.ctx.workspace, this.planMode),
     };
 
+    const turnSpan = this.tracer.startSpan("agent.turn", {
+      attributes: { "kritya.model": this.getModel(), "kritya.session_id": this.session.id },
+    });
+    this.currentTurnSpan = turnSpan;
     try {
       await this.runLoop(systemMsg, handlers, signal);
+      turnSpan.setStatus("OK");
+    } catch (err) {
+      turnSpan.setStatus("ERROR", err instanceof Error ? err.message : String(err));
+      throw err;
     } finally {
+      this.currentTurnSpan = undefined;
+      turnSpan.end();
       await this.hooks?.runStop();
     }
   }
@@ -380,7 +401,27 @@ export class Agent {
       summary = name;
     }
 
+    // One span per tool call, nested under the current turn. Permission
+    // outcomes and the execution result are recorded on it and mirrored to the
+    // audit log. `finishSpan` ends it exactly once from whichever path returns.
+    const span = this.tracer.startSpan(`tool.${name}`, {
+      parent: this.currentTurnSpan,
+      attributes: { "kritya.tool": name, "kritya.summary": summary },
+    });
+    const startedAt = Date.now();
+    const finishSpan = (code: "OK" | "ERROR", message?: string): void => {
+      span.setStatus(code, message).end();
+    };
+
     if (this.planMode && tool.requiresPermission && !isPlanningDocWrite(name, args)) {
+      this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "plan-mode" });
+      this.audit?.logTool({
+        tool: name,
+        summary,
+        outcome: "blocked",
+        durationMs: Date.now() - startedAt,
+      });
+      finishSpan("ERROR", "blocked: plan mode");
       handlers.onToolEnd(name, summary, "blocked: plan mode (read-only)", true);
       return (
         "Plan mode is ON (read-only). This mutating action was blocked. " +
@@ -391,6 +432,14 @@ export class Agent {
     }
 
     if (this.permissions.isDenied(tool, args)) {
+      this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "deny-rule" });
+      this.audit?.logTool({
+        tool: name,
+        summary,
+        outcome: "blocked",
+        durationMs: Date.now() - startedAt,
+      });
+      finishSpan("ERROR", "blocked by deny rule");
       handlers.onToolEnd(name, summary, "blocked by a deny rule", true);
       return "This action is blocked by a deny rule in the user's settings. Do not retry it; take a different approach.";
     }
@@ -404,8 +453,10 @@ export class Agent {
       tool.requiresPermission &&
       ACCEPT_EDITS_TOOL_NAMES.has(tool.name);
 
+    let source: PermissionSource;
     if (autoApproveEdit) {
       this.onAutoApprove?.();
+      source = "accept-edits";
     } else if (danger !== null || this.permissions.needsPrompt(tool, args)) {
       let diff: string | undefined;
       if (tool.preview) {
@@ -424,16 +475,55 @@ export class Agent {
       // A forced (danger) prompt does not grant a lasting allowance.
       if (danger === null) this.permissions.record(tool.name, decision, args);
       if (decision === "no") {
+        this.audit?.logPermission({
+          tool: name,
+          summary,
+          verdict: "denied",
+          source: "interactive",
+          danger: danger ?? undefined,
+        });
+        this.audit?.logTool({
+          tool: name,
+          summary,
+          outcome: "denied",
+          durationMs: Date.now() - startedAt,
+        });
+        finishSpan("ERROR", "denied by user");
         handlers.onToolEnd(name, summary, "denied by user", true);
         return "The user denied permission for this tool call. Do not retry it; ask the user how to proceed or take a different approach.";
       }
+      source = "interactive";
+    } else if (!tool.requiresPermission) {
+      source = "read-only";
+    } else {
+      source = this.permissions.isAlwaysAllowed(tool.name, args) ? "always-allow" : "allow-rule";
     }
 
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    this.audit?.logPermission({
+      tool: name,
+      summary,
+      verdict: "allowed",
+      source,
+      danger: danger ?? undefined,
+    });
+    span.setAttribute("kritya.permission_source", source);
+    if (danger) span.setAttribute("kritya.danger", danger);
+
+    if (signal?.aborted) {
+      finishSpan("ERROR", "aborted");
+      throw new DOMException("Aborted", "AbortError");
+    }
 
     if (this.hooks?.has("preToolUse")) {
       const pre = await this.hooks.runToolHooks("preToolUse", name, args);
       if (pre.blocked) {
+        this.audit?.logTool({
+          tool: name,
+          summary,
+          outcome: "blocked",
+          durationMs: Date.now() - startedAt,
+        });
+        finishSpan("ERROR", "blocked by preToolUse hook");
         handlers.onToolEnd(name, summary, "blocked by a preToolUse hook", true);
         return pre.output;
       }
@@ -449,10 +539,24 @@ export class Agent {
         const post = await this.hooks.runToolHooks("postToolUse", name, args);
         if (post.output.trim()) output += `\n[postToolUse hook]: ${post.output.trim()}`;
       }
+      this.audit?.logTool({
+        tool: name,
+        summary,
+        outcome: "ok",
+        durationMs: Date.now() - startedAt,
+      });
+      finishSpan("OK");
       handlers.onToolEnd(name, summary, output.slice(0, PREVIEW_CHARS), false);
       return output;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      this.audit?.logTool({
+        tool: name,
+        summary,
+        outcome: "error",
+        durationMs: Date.now() - startedAt,
+      });
+      finishSpan("ERROR", msg);
       handlers.onToolEnd(name, summary, msg.slice(0, PREVIEW_CHARS), true);
       return `Error: ${msg}`;
     }

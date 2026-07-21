@@ -9,6 +9,8 @@ import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
+import { AuditLog } from "./audit/audit.js";
+import { createTracer } from "./telemetry/tracer.js";
 import { backgroundManager } from "./shell/background.js";
 import { sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
 import { lspManager } from "./lsp/manager.js";
@@ -535,6 +537,8 @@ async function main() {
   agent.contextWindow = contextWindowFor(modelRef.current, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
+  agent.audit = AuditLog.forSession(session.id);
+  agent.tracer = createTracer(session.id);
   // Only the main interactive agent distills durable facts into KRITYA.md on
   // compaction — subagents (read-only or write) never do, even though they
   // run the same Agent class and can also trigger auto-compaction.

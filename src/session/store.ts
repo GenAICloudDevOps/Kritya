@@ -49,6 +49,15 @@ export class SessionStore {
     return path.join(this.dir, `${stamp}.jsonl`);
   }
 
+  /**
+   * Stable identifier for this session (the transcript file's basename), used
+   * to correlate the audit log and telemetry spans with the session. Updates
+   * when the session rotates via reset(), so all three stay in lockstep.
+   */
+  get id(): string {
+    return path.basename(this.file, ".jsonl");
+  }
+
   /** Path of the sidecar file that holds this session's task checklist. */
   private tasksFilePath(): string {
     return SessionStore.tasksFilePathFor(this.file);

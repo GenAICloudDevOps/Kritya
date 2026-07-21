@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Audit log + OpenTelemetry tracing (local-only)** — every permission
+  decision and tool execution is now recorded to an append-only, tamper-evident
+  audit trail under `~/.kritya/audit/<session>.audit.jsonl`, separate from the
+  session transcript: each entry captures the tool, a one-line summary, the
+  verdict (allowed/denied), its source (deny-rule, allow-rule, always-allow,
+  accept-edits, interactive, plan-mode, or read-only), and the execution
+  outcome and duration. Entries are hash-chained, so editing or deleting any
+  line is detectable (`AuditLog.verify`). Auditing is on by default; set
+  `KRITYA_AUDIT=off` to disable it. Additionally, the tool loop can emit
+  OpenTelemetry-shaped spans (one per turn, one per tool call, nested) for local
+  inspection — set `KRITYA_OTEL=file` (default path
+  `~/.kritya/telemetry/<session>.otel.jsonl`), `console`, or `both`; override
+  the path with `KRITYA_OTEL_FILE`. Both are fully local — no external service,
+  collector, or network is involved. Spans use OTel field names so a real OTLP
+  exporter can be added later without changing the loop.
 - **Staged new-project workflow** — creating a new project now runs through
   four phases, each producing a durable artifact under `docs/<name>/` and
   hard-stopping for your approval before the next: **brainstorm**

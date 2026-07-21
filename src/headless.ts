@@ -12,6 +12,8 @@ import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
+import { AuditLog } from "./audit/audit.js";
+import { createTracer } from "./telemetry/tracer.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
@@ -154,6 +156,8 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   agent.contextWindow = contextWindowFor(model, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
+  agent.audit = AuditLog.forSession(session.id);
+  agent.tracer = createTracer(session.id);
 
   const toolCalls: ToolCallRecord[] = [];
   let usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };

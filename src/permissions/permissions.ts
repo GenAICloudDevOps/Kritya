@@ -51,4 +51,13 @@ export class PermissionManager {
   record(toolName: string, decision: PermissionDecision, args: Record<string, unknown> = {}): void {
     if (decision === "always") this.alwaysAllowed.add(alwaysAllowKey(toolName, args));
   }
+
+  /**
+   * True if this call is pre-approved by an earlier "always allow" choice this
+   * session (as opposed to a settings allow rule). Lets the audit log record
+   * the precise source of an allowed decision.
+   */
+  isAlwaysAllowed(toolName: string, args: Record<string, unknown> = {}): boolean {
+    return this.alwaysAllowed.has(alwaysAllowKey(toolName, args));
+  }
 }
