@@ -247,6 +247,34 @@ test("redo reapplies the most recently undone turn", async () => {
   assert.equal(undo.redo() !== null, true);
 });
 
+test("rewindTo reverts every file change made after a checkpoint turn", async () => {
+  const ws = await makeWorkspace();
+  const undo = new UndoStack();
+  const abs = path.join(ws, "c.txt");
+  await fs.writeFile(abs, "v0");
+
+  // Turn 1: the point we'll checkpoint at.
+  undo.beginTurn();
+  undo.snapshot(abs, "c.txt");
+  await fs.writeFile(abs, "v1");
+  const mark = undo.currentTurn();
+
+  // Two more turns of changes after the checkpoint.
+  undo.beginTurn();
+  undo.snapshot(abs, "c.txt");
+  await fs.writeFile(abs, "v2");
+  undo.beginTurn();
+  undo.snapshot(abs, "c.txt");
+  await fs.writeFile(abs, "v3");
+
+  const result = undo.rewindTo(mark);
+  assert.match(result ?? "", /Restored/);
+  // Rolled back to the checkpoint's state, not all the way to v0.
+  assert.equal(await fs.readFile(abs, "utf8"), "v1");
+  // Nothing newer than the checkpoint remains to revert.
+  assert.equal(undo.rewindTo(mark), null);
+});
+
 test("undo reverts all files changed in the same turn together", async () => {
   const ws = await makeWorkspace();
   const undo = new UndoStack();

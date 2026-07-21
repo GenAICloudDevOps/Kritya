@@ -132,6 +132,23 @@ export class SessionStore {
     this.file = this.newFilePath();
   }
 
+  /**
+   * Rewrite the session file to hold exactly `messages`, atomically. The log
+   * is otherwise append-only; this is the one place it's rewound — used by
+   * /rewind to drop the messages after a checkpoint. writeFileAtomic means a
+   * reader (e.g. a concurrent --continue) never sees a half-written file.
+   */
+  overwrite(messages: ChatMessage[]): void {
+    if (this.ephemeral) return;
+    try {
+      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      hardenWindowsDir(CONFIG_DIR);
+      writeFileAtomic(this.file, messages.map((m) => JSON.stringify(m) + "\n").join(""), 0o600);
+    } catch {
+      // Persistence is best-effort; never crash the session over it.
+    }
+  }
+
   static loadFile(filePath: string): ChatMessage[] {
     const messages: ChatMessage[] = [];
     let raw: string;

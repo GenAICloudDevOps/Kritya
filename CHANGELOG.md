@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Checkpoint / rewind** — `/checkpoint <name>` saves a named point in the
+  session (run `/checkpoint` with no name to list saved ones), and
+  `/rewind <name>` rolls both the conversation and the files back to that
+  point together. Where `/undo` steps back file changes one turn at a time,
+  `/rewind` restores the transcript and the working tree to a chosen moment in
+  one step. Checkpoints are in-memory for the current session; rewinding files
+  reuses the existing undo stack, so each reverted turn stays individually
+  redoable.
+
 ### Fixed
 
 - **Cross-platform CI verification**: CI now runs the full test suite on

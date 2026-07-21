@@ -47,6 +47,42 @@ test("loadHistory repairs dangling tool_calls from a cancelled turn", () => {
   assert.ok(stubIdx < userIdx, "stub inserted before the following user message");
 });
 
+test("saveCheckpoint + truncateHistory rewind the conversation to the saved point", () => {
+  const agent = makeAgent([
+    { role: "user", content: "first request" },
+    { role: "assistant", content: "done" },
+  ]);
+  agent.saveCheckpoint("before-refactor", 1);
+
+  // Conversation continues past the checkpoint.
+  agent.history.push({ role: "user", content: "second request" });
+  agent.history.push({ role: "assistant", content: "also done" });
+
+  const cp = agent.getCheckpoint("before-refactor");
+  assert.ok(cp);
+  assert.equal(cp!.undoTurn, 1);
+  assert.equal(cp!.historyLength, 2);
+
+  agent.truncateHistory(cp!.historyLength);
+  assert.equal(agent.history.length, 2);
+  assert.equal(agent.history[agent.history.length - 1].content, "done");
+});
+
+test("truncateHistory never grows history when the checkpoint predates a compaction", () => {
+  const agent = makeAgent([{ role: "user", content: "only message" }]);
+  // A checkpoint length larger than the current (post-compaction) history.
+  agent.truncateHistory(5);
+  assert.equal(agent.history.length, 1);
+});
+
+test("reset clears saved checkpoints", () => {
+  const agent = makeAgent([{ role: "user", content: "hi" }]);
+  agent.saveCheckpoint("x", 0);
+  agent.reset();
+  assert.equal(agent.getCheckpoint("x"), undefined);
+  assert.equal(agent.listCheckpoints().length, 0);
+});
+
 test("loadHistory leaves a fully-answered history unchanged", () => {
   const history: ChatMessage[] = [
     { role: "user", content: "hi" },

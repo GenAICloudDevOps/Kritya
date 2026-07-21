@@ -50,23 +50,25 @@ kritya [directory] [options]
 
 In-session commands (type `/` to see them with autocomplete; letters filter the list):
 
-| Command               | What it does                                                            |
-| --------------------- | ----------------------------------------------------------------------- |
-| `/model`              | interactive model picker (`/model <id>` sets any model ID directly)     |
-| `/provider`           | list providers, or `/provider <name>` to switch mid-session (see below) |
-| `/plan`               | toggle plan mode (read-only): explore and propose before making changes |
-| `/diff`               | show the cumulative git diff of this session's changes                  |
-| `/init`               | scan the repo and generate a `KRITYA.md` project-memory file            |
-| `/commit`             | have the agent review, stage, and commit the current git changes        |
-| `/web-search <query>` | search the web via Tavily; results are shown and added to context       |
-| `/undo`               | revert all file changes from the agent's last turn                      |
-| `/redo`               | reapply the change most recently undone                                 |
-| `/compact`            | summarize older conversation to free context space                      |
-| `/clear`              | start a fresh conversation                                              |
-| `/cost`               | token usage and estimated $ (see Pricing below)                         |
-| `/budget`             | show session token budget; `/budget reset` or `/budget <number>`        |
-| `/help`               | command list                                                            |
-| `/exit`               | quit                                                                    |
+| Command               | What it does                                                             |
+| --------------------- | ------------------------------------------------------------------------ |
+| `/model`              | interactive model picker (`/model <id>` sets any model ID directly)      |
+| `/provider`           | list providers, or `/provider <name>` to switch mid-session (see below)  |
+| `/plan`               | toggle plan mode (read-only): explore and propose before making changes  |
+| `/diff`               | show the cumulative git diff of this session's changes                   |
+| `/init`               | scan the repo and generate a `KRITYA.md` project-memory file             |
+| `/commit`             | have the agent review, stage, and commit the current git changes         |
+| `/web-search <query>` | search the web via Tavily; results are shown and added to context        |
+| `/undo`               | revert all file changes from the agent's last turn                       |
+| `/redo`               | reapply the change most recently undone                                  |
+| `/checkpoint <name>`  | save a named point in the session (`/checkpoint` alone lists saved ones) |
+| `/rewind <name>`      | rewind both the conversation and the files to a checkpoint               |
+| `/compact`            | summarize older conversation to free context space                       |
+| `/clear`              | start a fresh conversation                                               |
+| `/cost`               | token usage and estimated $ (see Pricing below)                          |
+| `/budget`             | show session token budget; `/budget reset` or `/budget <number>`         |
+| `/help`               | command list                                                             |
+| `/exit`               | quit                                                                     |
 
 Custom `/commands` you define (see below) also appear here.
 
@@ -103,6 +105,11 @@ full tool output. `Ctrl+C` exits.
   you make yourself (in your own editor) to any file kritya has touched this
   session, as their own step in the right order — so hand-editing a file
   between turns and later running `/undo` never silently discards that edit.
+- **Checkpoint / rewind** — `/checkpoint <name>` saves a named point in the
+  session; `/rewind <name>` rolls _both_ the conversation and the files back to
+  it at once (e.g. "go back to before the auth refactor"), where `/undo` only
+  steps back file changes one turn at a time. Checkpoints are in-memory for the
+  current session.
 - **Steer mid-run** — type while the agent is working and press Enter; your
   message is queued and absorbed before its next step (no need to interrupt).
 - **Auto-compaction → self-improving project memory** — when the conversation

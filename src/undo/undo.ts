@@ -165,6 +165,27 @@ export class UndoStack {
     return this.entries.length;
   }
 
+  /** The current turn counter — used to mark a checkpoint's position in time. */
+  currentTurn(): number {
+    return this.turn;
+  }
+
+  /**
+   * Revert every file change made after `targetTurn` — used by /rewind to roll
+   * the files back to a checkpoint. Reverts one turn at a time via undo(), so
+   * each reverted turn is still individually redoable afterwards. Returns a
+   * summary, or null if nothing newer than the checkpoint needed reverting.
+   */
+  rewindTo(targetTurn: number): string | null {
+    const results: string[] = [];
+    while (this.entries.length && this.entries[this.entries.length - 1].turn > targetTurn) {
+      const result = this.undo();
+      if (result === null) break;
+      results.push(result);
+    }
+    return results.length ? results.join("\n") : null;
+  }
+
   /** Revert every change from the most recent changing turn. Returns a description, or null if empty. */
   undo(): string | null {
     const last = this.entries[this.entries.length - 1];

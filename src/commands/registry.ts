@@ -27,6 +27,14 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/web-search", description: "search the web: /web-search <query>" },
   { name: "/mcp", description: "show MCP server status and their tools" },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
+  {
+    name: "/checkpoint",
+    description: "save a named point: /checkpoint <name> (no name lists saved ones)",
+  },
+  {
+    name: "/rewind",
+    description: "rewind the conversation and files to a checkpoint: /rewind <name>",
+  },
   { name: "/commit", description: "have the agent stage and commit the current changes" },
   { name: "/compact", description: "summarize older conversation to free context space" },
   { name: "/clear", description: "start a fresh conversation" },
@@ -156,6 +164,54 @@ const handlers: Record<string, CommandHandler> = {
       ctx.agent.addUserNote(`[I reverted your last file change via /undo: ${result}]`);
       ctx.refreshFileList();
     }
+  },
+  "/checkpoint": (ctx) => {
+    const name = ctx.arg.trim();
+    if (!name) {
+      const list = ctx.agent.listCheckpoints();
+      if (!list.length) {
+        ctx.addItem({
+          kind: "info",
+          text: "No checkpoints yet. Save one with /checkpoint <name>.",
+        });
+        return;
+      }
+      const lines = list.map((c) => `  ${c.name}  (${new Date(c.createdAt).toLocaleTimeString()})`);
+      ctx.addItem({
+        kind: "info",
+        text: `Checkpoints:\n${lines.join("\n")}\n\nRewind to one with /rewind <name>.`,
+      });
+      return;
+    }
+    ctx.agent.saveCheckpoint(name, ctx.undoStack.currentTurn());
+    ctx.addItem({
+      kind: "info",
+      text: `Saved checkpoint "${name}". Rewind here later with /rewind ${name}.`,
+    });
+  },
+  "/rewind": (ctx) => {
+    const name = ctx.arg.trim();
+    if (!name) {
+      ctx.addItem({
+        kind: "info",
+        text: "Usage: /rewind <name>. List saved points with /checkpoint.",
+      });
+      return;
+    }
+    const cp = ctx.agent.getCheckpoint(name);
+    if (!cp) {
+      ctx.addItem({
+        kind: "info",
+        text: `No checkpoint named "${name}". See /checkpoint for the list.`,
+      });
+      return;
+    }
+    // Roll files back first, then trim the conversation to the same point.
+    const fileResult = ctx.undoStack.rewindTo(cp.undoTurn);
+    ctx.agent.truncateHistory(cp.historyLength);
+    const filePart = fileResult ? `\n${fileResult}` : "\nNo file changes to roll back.";
+    ctx.addItem({ kind: "info", text: `Rewound to "${name}".${filePart}` });
+    ctx.refreshFileList();
   },
   "/clear": (ctx) => {
     ctx.agent.reset();

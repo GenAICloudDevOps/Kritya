@@ -98,6 +98,30 @@ test("loadFile recovers all complete messages when the last line was truncated m
   assert.equal(messages[0].content, "first message");
 });
 
+test("overwrite rewrites the session to exactly the given messages (used by /rewind)", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-rewind`);
+  const workspace = "/tmp/some-workspace-rewind";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "one" });
+  store.append({ role: "assistant", content: "two" });
+  store.append({ role: "user", content: "three" });
+
+  // Rewind: keep only the first message.
+  store.overwrite([{ role: "user", content: "one" }]);
+
+  const [session] = SessionStore.listSessions(workspace);
+  const messages = SessionStore.loadFile(session.file);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].content, "one");
+
+  // No leftover .tmp-* file — overwrite renames atomically like the rest.
+  const dirFiles = await fs.readdir(path.dirname(session.file));
+  assert.ok(!dirFiles.some((f) => f.includes(".tmp-")));
+});
+
 test("saveTasks/loadTasksForSession round-trip and never leave a partial file (rename is atomic)", async () => {
   await freshHome();
   const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-6`);

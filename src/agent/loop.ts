@@ -39,6 +39,17 @@ const COMPACT_THRESHOLD = 0.8;
  */
 const ACCEPT_EDITS_TOOL_NAMES = new Set(["write_file", "edit_file", "write_document"]);
 
+/** A named point in the conversation, paired with the undo turn at that moment,
+ *  so /rewind can roll the transcript and the files back together. */
+export interface Checkpoint {
+  name: string;
+  /** Number of messages in history when the checkpoint was taken. */
+  historyLength: number;
+  /** UndoStack turn counter then; file changes newer than this are rolled back. */
+  undoTurn: number;
+  createdAt: number;
+}
+
 export class Agent {
   history: ChatMessage[];
   /** Prompt size of the most recent model call, from the API's usage report. */
@@ -65,6 +76,8 @@ export class Agent {
   /** Optional user-configured shell hooks around tool calls and turn end. */
   hooks?: HookRunner;
   private steerQueue: string[] = [];
+  /** Named points in the conversation for /rewind (in-memory, this session only). */
+  private checkpoints = new Map<string, Checkpoint>();
 
   constructor(
     private client: ProviderClient,
@@ -80,7 +93,43 @@ export class Agent {
 
   reset(): void {
     this.history = [];
+    this.checkpoints.clear();
     this.session.rotate();
+  }
+
+  /** Save (or overwrite) a named checkpoint at the current point in the
+   *  conversation, paired with the undo turn so /rewind can restore both
+   *  the transcript and the files together. */
+  saveCheckpoint(name: string, undoTurn: number): void {
+    this.checkpoints.set(name, {
+      name,
+      historyLength: this.history.length,
+      undoTurn,
+      createdAt: Date.now(),
+    });
+  }
+
+  getCheckpoint(name: string): Checkpoint | undefined {
+    return this.checkpoints.get(name);
+  }
+
+  /** Saved checkpoints, oldest first. */
+  listCheckpoints(): Checkpoint[] {
+    return [...this.checkpoints.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /**
+   * Drop every message after the first `length` and rewrite the session file
+   * to match. repairDanglingToolCalls patches any tool call the cut left
+   * without its result, so the trimmed history is still a valid request.
+   * Clamped to the current length: a checkpoint taken before a /compact can
+   * only ever be a no-op here, never grow history back.
+   */
+  truncateHistory(length: number): void {
+    if (length >= this.history.length) return;
+    this.history = this.history.slice(0, length);
+    this.repairDanglingToolCalls(false);
+    this.session.overwrite(this.history);
   }
 
   /**
