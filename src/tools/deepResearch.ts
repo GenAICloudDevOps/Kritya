@@ -16,15 +16,22 @@ const PER_PAGE_CHARS = 6_000;
  * web_search + fetch_url in a loop — use it only for questions that genuinely
  * need multiple sources, since it makes many external calls.
  */
-async function runDeepResearch(queries: string[], pagesPerQuery: number): Promise<string> {
+async function runDeepResearch(
+  queries: string[],
+  pagesPerQuery: number,
+  recencyDays?: number
+): Promise<string> {
   const seenUrls = new Set<string>();
   const sections: string[] = [];
+  // When a recency window is requested, search the news topic so Tavily both
+  // filters to the last N days and returns publish dates the model can check.
+  const searchOpts = recencyDays ? { topic: "news" as const, days: recencyDays } : {};
 
   for (const query of queries) {
     const block: string[] = [`## Sub-query: ${query}`];
     let search;
     try {
-      search = await tavilyRaw(query, 5);
+      search = await tavilyRaw(query, 5, searchOpts);
     } catch (err) {
       block.push(`(search failed: ${err instanceof Error ? err.message : String(err)})`);
       sections.push(block.join("\n"));
@@ -39,7 +46,8 @@ async function runDeepResearch(queries: string[], pagesPerQuery: number): Promis
     for (const r of results) {
       if (fetched >= pagesPerQuery) break;
       seenUrls.add(r.url!);
-      block.push(`\n### Source: ${r.title ?? "(untitled)"}\n${r.url}`);
+      const date = r.published_date ? `published ${r.published_date}` : "publish date unknown";
+      block.push(`\n### Source: ${r.title ?? "(untitled)"} (${date})\n${r.url}`);
       try {
         const page = await fetchUrlText(r.url!, PER_PAGE_CHARS);
         block.push(page);
@@ -56,9 +64,19 @@ async function runDeepResearch(queries: string[], pagesPerQuery: number): Promis
     sections.push(block.join("\n"));
   }
 
+  const today = new Date().toISOString().slice(0, 10);
+  const window = recencyDays
+    ? `The user asked for information from the last ${recencyDays} day(s) (today is ${today}). ` +
+      `Each source is labeled with its publish date. Check those dates: exclude or explicitly ` +
+      `flag any source that falls outside this window or whose date is unknown — do NOT present ` +
+      `older material as current. `
+    : `Today is ${today}; do not assume a source is recent unless its content indicates so. `;
   const preamble =
     `Deep research bundle: ${queries.length} sub-quer${queries.length === 1 ? "y" : "ies"}, ` +
-    `${seenUrls.size} source page(s). Synthesize an answer from these and cite the URLs used.\n`;
+    `${seenUrls.size} source page(s). ${window}` +
+    `Synthesize an answer strictly from these sources and cite the URLs used. ` +
+    `Attribute rumors or secondary reports rather than stating them as established fact, ` +
+    `and note where sources disagree.\n`;
   return truncateResult(preamble + "\n" + sections.join("\n\n---\n\n"));
 }
 
@@ -69,7 +87,9 @@ export const deepResearchTool: ToolDef = {
     "that break the question apart; the tool runs a web search for each and reads the full text " +
     "of the top result pages, returning one consolidated, cited bundle to synthesize from. " +
     "Reserve this for broad, multi-source questions (comparisons, surveys, 'how do people do X') " +
-    "— for a single known URL use fetch_url, and for a quick fact use web_search.",
+    "— for a single known URL use fetch_url, and for a quick fact use web_search. " +
+    "For recent or time-sensitive topics ('latest', 'this week', news), set recency_days so " +
+    "sources are restricted to that window and labeled with publish dates.",
   parameters: {
     type: "object",
     properties: {
@@ -81,6 +101,12 @@ export const deepResearchTool: ToolDef = {
       pages_per_query: {
         type: "number",
         description: `Full pages to read per sub-query, 1-${MAX_PAGES_PER_QUERY} (default ${DEFAULT_PAGES_PER_QUERY})`,
+      },
+      recency_days: {
+        type: "number",
+        description:
+          "Restrict sources to the last N days and return publish dates. Set this whenever the " +
+          "question is about recent/current events (e.g. 7 for 'past week'); omit for timeless topics.",
       },
     },
     required: ["queries"],
@@ -104,6 +130,10 @@ export const deepResearchTool: ToolDef = {
       args.pages_per_query === undefined || args.pages_per_query === null
         ? DEFAULT_PAGES_PER_QUERY
         : Math.min(Math.max(Number(args.pages_per_query), 1), MAX_PAGES_PER_QUERY);
-    return runDeepResearch(queries, pagesPerQuery);
+    const recencyDays =
+      args.recency_days === undefined || args.recency_days === null
+        ? undefined
+        : Math.max(1, Math.floor(Number(args.recency_days)));
+    return runDeepResearch(queries, pagesPerQuery, recencyDays);
   },
 };
