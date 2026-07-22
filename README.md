@@ -1,6 +1,6 @@
 # kritya
 
-A lean, Claude Code-style coding agent for your terminal. Provider-agnostic —
+A lean,interctive coding agent for your terminal. Provider-agnostic —
 it works with any OpenAI-compatible endpoint: [build.nvidia.com](https://build.nvidia.com)
 (Qwen3 Coder, Kimi K2, DeepSeek, GLM, Nemotron, ...) by default, plus OpenAI,
 OpenRouter, Groq, DeepSeek, Mistral, Together, and local models via Ollama.

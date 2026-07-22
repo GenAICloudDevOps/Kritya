@@ -1,11 +1,11 @@
-# code-cli — design
+# kritya — design
 
 Date: 2026-07-16 · Status: implemented (v0.1.0)
 
 ## Goal
 
-A Claude Code-style interactive coding agent for the terminal, invoked as
-`code-cli .`, running on Linux and Windows, using NVIDIA build.nvidia.com's
+An interactive coding agent for the terminal, invoked as
+`kritya .`, running on Linux and Windows, using NVIDIA build.nvidia.com's
 OpenAI-compatible endpoint (`https://integrate.api.nvidia.com/v1`) with models
 such as Qwen3 Coder, Kimi K2, DeepSeek, GLM, and Nemotron.
 
@@ -14,7 +14,7 @@ such as Qwen3 Coder, Kimi K2, DeepSeek, GLM, and Nemotron.
 - **Scope**: full agent — agentic tool loop, session persistence/resume, slash
   commands, permission prompts, token usage tracking.
 - **Stack**: TypeScript/Node (ESM), Ink 5 (React terminal UI), `openai` SDK
-  pointed at the NVIDIA base URL, `fast-glob`. Distributed via npm (`bin: code-cli`).
+  pointed at the NVIDIA base URL, `fast-glob`. Distributed via npm (`bin: kritya`).
 - **Models**: curated list of known tool-calling models with `/model` picker;
   any model ID settable via `/model <id>`, `--model`, or config `customModels`.
 - **Approach chosen**: hand-rolled agent loop + direct SDK client (no LangChain
@@ -26,13 +26,13 @@ such as Qwen3 Coder, Kimi K2, DeepSeek, GLM, and Nemotron.
 src/
 ├── index.tsx        entry: arg parsing, key check, dependency wiring, Ink mount
 ├── types.ts         ToolDef, ChatMessage, AgentHandlers contracts
-├── config/          ~/.code-cli/config.json + curated model registry
+├── config/          ~/.kritya/config.json + curated model registry
 ├── provider/        NvidiaClient: streaming chat, tool-call delta accumulation,
 │                    reasoning_content passthrough, usage capture
 ├── agent/           Agent.runTurn loop (max 40 iterations) + system prompt
 ├── tools/           read_file, write_file, edit_file, shell, list_dir, glob, grep
 ├── permissions/     PermissionManager: reads free; mutations prompt yes/always/no
-├── session/         JSONL transcripts under ~/.code-cli/sessions/<sha1(ws)>;
+├── session/         JSONL transcripts under ~/.kritya/sessions/<sha1(ws)>;
 │                    --continue reloads the latest
 └── ui/              App (phases: input/working/permission/model), Markdown,
                      Spinner, SelectList, PermissionPrompt, ModelPicker
