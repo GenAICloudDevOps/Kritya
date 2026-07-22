@@ -1,4 +1,6 @@
+import path from "node:path";
 import type { Agent } from "../agent/loop.js";
+import { AuditLog } from "../audit/audit.js";
 import { mcpStatus } from "../mcp/client.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
@@ -46,6 +48,10 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/compact", description: "summarize older conversation to free context space" },
   { name: "/clear", description: "start a fresh conversation" },
   { name: "/cost", description: "show token usage and estimated cost" },
+  {
+    name: "/audit",
+    description: "show this session's permission decisions and verify the audit log's chain",
+  },
   {
     name: "/budget",
     description: "show session token budget, /budget reset, or /budget <number> to set it",
@@ -227,6 +233,50 @@ const handlers: Record<string, CommandHandler> = {
   },
   "/cost": (ctx) => {
     ctx.addItem({ kind: "info", text: ctx.costReport() });
+  },
+  "/audit": (ctx) => {
+    const audit = ctx.agent.audit;
+    if (!audit) {
+      ctx.addItem({
+        kind: "info",
+        text: "Auditing is off for this session (KRITYA_AUDIT=off).",
+      });
+      return;
+    }
+    const records = AuditLog.readRecords(audit.path);
+    if (!records.length) {
+      ctx.addItem({ kind: "info", text: `No audit records yet.\nLog: ${audit.path}` });
+      return;
+    }
+
+    const bySource = new Map<string, number>();
+    const byOutcome = new Map<string, number>();
+    for (const r of records) {
+      if (r.event === "permission") bySource.set(r.source, (bySource.get(r.source) ?? 0) + 1);
+      else byOutcome.set(r.outcome, (byOutcome.get(r.outcome) ?? 0) + 1);
+    }
+    const fmt = (m: Map<string, number>) =>
+      [...m.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ") || "(none)";
+
+    const verify = AuditLog.verify(audit.path);
+    const chainLine = verify.ok
+      ? `chain verified — ${verify.records} record(s)`
+      : verify.reason === "unreadable"
+        ? "chain check FAILED — log file could not be read"
+        : `chain check FAILED — broken at record ${verify.line}`;
+
+    ctx.addItem({
+      kind: "info",
+      text:
+        `Audit log: ${audit.path}\n` +
+        `${chainLine}\n\n` +
+        `Permission decisions by source: ${fmt(bySource)}\n` +
+        `Tool outcomes: ${fmt(byOutcome)}\n\n` +
+        `Full history: kritya audit --show ${path.basename(audit.path)}`,
+    });
   },
   "/budget": (ctx) => {
     const arg = ctx.arg.trim().toLowerCase();

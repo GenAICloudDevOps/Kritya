@@ -10,6 +10,7 @@ import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
+import { runAuditCli } from "./audit/cli.js";
 import { createTracer } from "./telemetry/tracer.js";
 import { backgroundManager } from "./shell/background.js";
 import { sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
@@ -64,6 +65,9 @@ Headless / CI mode (no terminal UI, exits with 0 on success / 1 on failure):
   --timeout <seconds> hard wall-clock cap for the whole run (default 1800)
   --non-interactive   accepted for compatibility; implied by --prompt
 
+Inspect the local audit log:
+  kritya audit --list | --verify [file] | --show [file]
+
 Setup:
   1. Get an API key at https://build.nvidia.com (free credits available)
   2. export NVIDIA_API_KEY=nvapi-...        (Linux/macOS)
@@ -115,6 +119,13 @@ function parseArgs(argv: string[]) {
     }
   }
   return args;
+}
+
+// `kritya audit ...` is a standalone inspection subcommand, not a session — it
+// never touches a workspace directory, so it's dispatched before the normal
+// directory-based argv parsing below even looks at it.
+if (process.argv[2] === "audit") {
+  process.exit(runAuditCli(process.argv.slice(3)));
 }
 
 const args = parseArgs(process.argv.slice(2));

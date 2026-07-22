@@ -303,23 +303,44 @@ Background processes (`background: true`) aren't sandboxed yet.
 
 The session transcript records the conversation; the **audit log** records what
 was allowed to run and by whose authority — the trail an enterprise reaches for
-during a review. Every permission decision and tool execution is appended to
+during a review. It is a **local, user-owned record**, not telemetry: nothing
+in it is ever transmitted anywhere, and it's on by default for the same reason
+your shell history is — it's your own record of what ran, kept on your own
+disk. Every permission decision and tool execution is appended to
 `~/.kritya/audit/<session>.audit.jsonl`, one JSON record per line:
 
 ```json
 {"event":"permission","tool":"shell","summary":"run: rm build/","verdict":"allowed","source":"interactive","seq":4,"ts":"..."}
-{"event":"tool","tool":"shell","summary":"run: rm build/","outcome":"ok","durationMs":38,"seq":5,"ts":"..."}
+{"event":"tool","tool":"shell","summary":"run: rm build/","outcome":"ok","durationMs":38,"waitMs":2103,"seq":5,"ts":"..."}
 ```
 
 `source` is one of `deny-rule`, `allow-rule`, `always-allow`, `accept-edits`,
-`interactive`, `plan-mode`, or `read-only`. The file is **append-only** (unlike
-the transcript, `/rewind` and `/compact` never touch it) and **tamper-evident**:
-each record is hash-chained to the previous one, so editing or deleting any line
-breaks the chain and is detectable. Auditing is on by default — set
-`KRITYA_AUDIT=off` to turn it off.
+`interactive`, `plan-mode`, or `read-only`. `durationMs` is how long the tool
+itself ran; `waitMs` is how long it sat waiting for a permission answer before
+that — kept separate so tool timings measure the machine, not how fast you
+read a prompt. The file is **append-only** (unlike the transcript, `/rewind`
+and `/compact` never touch it) and **tamper-evident**: each record is
+hash-chained to the previous one, so editing or deleting any line — or
+deleting the whole file — breaks or removes the chain and is detectable.
+Auditing is on by default — set `KRITYA_AUDIT=off` to turn it off.
 
-For tracing, the tool loop can emit **OpenTelemetry-shaped spans** (one per
-turn, with a nested span per tool call) for local inspection:
+Subagents (`spawn_agent` / `spawn_write_agent`) share the same audit log as the
+session that spawned them, so a helper agent that edits and commits code is
+never off the record.
+
+Inspect the log from inside a session with `/audit` (a summary: permission
+decisions by source, tool outcomes, and whether the chain still verifies), or
+from the command line:
+
+```bash
+kritya audit --list              # every audit log, newest first, with chain status
+kritya audit --verify [file]     # verify one log's hash chain (defaults to the newest)
+kritya audit --show [file]       # print a log's records, one JSON line each
+```
+
+For tracing, the tool loop can emit **OpenTelemetry-shaped spans** — one per
+turn, with a nested span per model call (`llm.chat`, including retries as
+events) and per tool call — for local inspection:
 
 ```bash
 KRITYA_OTEL=file      # -> ~/.kritya/telemetry/<session>.otel.jsonl (default)
@@ -329,10 +350,15 @@ KRITYA_OTEL_FILE=/path/to/spans.jsonl   # override the file path
 ```
 
 Spans carry OTel field names (`traceId`, `spanId`, `parentSpanId`,
-`startTimeUnixNano`, `status`, …). Both features are **entirely local** — no
-external service, collector, or network is involved; the OTel field names just
-mean a real OTLP exporter can be wired in later without changing anything in the
-loop. Telemetry is off unless `KRITYA_OTEL` is set.
+`startTimeUnixNano`, `status`, …). A subagent's spans nest under the turn that
+spawned it, so one trace covers the whole tree. Both features are **entirely
+local** — no external service, collector, or network is involved; the OTel
+field names just mean a real OTLP exporter can be wired in later without
+changing anything in the loop. Telemetry is off unless `KRITYA_OTEL` is set.
+
+Headless JSON output (`--prompt ... --output json`) includes `sessionId`,
+`traceId`, `auditFile`, and `telemetryFile`, so a CI run's result can be
+matched back to the detailed records that explain it.
 
 ## Configuration
 

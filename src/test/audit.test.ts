@@ -72,7 +72,9 @@ test("hash chain verifies for an untampered log and detects edits", () => {
   log.logTool({ tool: "shell", summary: "run: ls", outcome: "ok" });
   log.logTool({ tool: "shell", summary: "run: ls", outcome: "ok" });
 
-  assert.equal(AuditLog.verify(file), -1, "intact chain verifies");
+  const clean = AuditLog.verify(file);
+  assert.equal(clean.ok, true, "intact chain verifies");
+  assert.equal(clean.ok && clean.records, 3);
 
   // Tamper with the middle line's payload; the chain must break at that index.
   const lines = fs
@@ -84,7 +86,9 @@ test("hash chain verifies for an untampered log and detects edits", () => {
   lines[1] = JSON.stringify(rec);
   fs.writeFileSync(file, lines.join("\n") + "\n");
 
-  assert.equal(AuditLog.verify(file), 1, "tampered line is detected");
+  const tampered = AuditLog.verify(file);
+  assert.equal(tampered.ok, false, "tampered line is detected");
+  assert.ok(!tampered.ok && tampered.reason === "tampered" && tampered.line === 1);
 });
 
 test("deleting a line breaks the chain (truncation is detectable)", () => {
@@ -101,7 +105,32 @@ test("deleting a line breaks the chain (truncation is detectable)", () => {
   lines.splice(1, 1); // remove the middle record
   fs.writeFileSync(file, lines.join("\n") + "\n");
 
-  assert.equal(AuditLog.verify(file), 1, "gap in the chain is detected");
+  const result = AuditLog.verify(file);
+  assert.equal(result.ok, false, "gap in the chain is detected");
+  assert.ok(!result.ok && result.reason === "tampered" && result.line === 1);
+});
+
+test("verify reports 'unreadable' rather than 'clean' for a missing file", () => {
+  // A deleted or never-written audit log must not look identical to an
+  // untampered one — that would be the easiest way to defeat the tamper
+  // check: don't edit the log, remove it.
+  const file = tmpFile(); // never written
+  const result = AuditLog.verify(file);
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.reason, "unreadable");
+});
+
+test("readRecords returns every record in order, skipping corrupt lines", () => {
+  const file = tmpFile();
+  const log = new AuditLog("sess-5", file);
+  log.logTool({ tool: "a", summary: "a", outcome: "ok" });
+  log.logTool({ tool: "b", summary: "b", outcome: "error" });
+  fs.appendFileSync(file, "not json at all\n");
+
+  const records = AuditLog.readRecords(file);
+  assert.equal(records.length, 2);
+  assert.equal(records[0].tool, "a");
+  assert.equal(records[1].tool, "b");
 });
 
 test("forSession honors KRITYA_AUDIT=off", () => {

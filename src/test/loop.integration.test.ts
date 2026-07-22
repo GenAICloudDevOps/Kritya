@@ -378,7 +378,7 @@ test("runTurn emits audit records for permission decisions and tool executions",
   assert.ok(typeof writeExec.durationMs === "number");
 
   // The whole trail is a valid, untampered hash chain.
-  assert.equal(AuditLog.verify(file), -1);
+  assert.equal(AuditLog.verify(file).ok, true);
 });
 
 test("a denied tool is recorded as denied and not executed", async () => {
@@ -448,5 +448,5 @@ test("a subagent sharing the parent's audit log writes to the same chain", async
   // Two agents writing through the same hash-chained log doesn't break the
   // chain — this is the property that would silently fail if the shared
   // instance weren't serializing writes correctly.
-  assert.equal(AuditLog.verify(file), -1);
+  assert.equal(AuditLog.verify(file).ok, true);
 });

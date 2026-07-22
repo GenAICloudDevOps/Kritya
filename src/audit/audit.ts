@@ -63,11 +63,12 @@ export interface ToolRecord extends BaseRecord {
   waitMs?: number;
 }
 
-type AuditRecord = (PermissionRecord | ToolRecord) & { prevHash: string; hash: string };
+export type AuditRecord = (PermissionRecord | ToolRecord) & { prevHash: string; hash: string };
 
 const GENESIS = "0".repeat(64);
 
-function auditDir(): string {
+/** Where all audit logs live, across every workspace (not scoped per-project). */
+export function auditDir(): string {
   return path.join(CONFIG_DIR, "audit");
 }
 
@@ -153,16 +154,45 @@ export class AuditLog {
   }
 
   /**
-   * Re-walk a written audit file and confirm the hash chain is intact. Returns
-   * the index of the first tampered/broken line, or -1 if the whole chain
-   * verifies. Used by tests and by an eventual `kritya audit --verify`.
+   * Every valid record in a written audit file, in order. Corrupt lines are
+   * skipped (mirrors SessionStore's tolerance for a truncated last line), so
+   * this is for display purposes — use verify() to confirm the file wasn't
+   * silently altered.
    */
-  static verify(file: string): number {
+  static readRecords(file: string): AuditRecord[] {
     let raw: string;
     try {
       raw = fs.readFileSync(file, "utf8");
     } catch {
-      return -1;
+      return [];
+    }
+    const records: AuditRecord[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        records.push(JSON.parse(line) as AuditRecord);
+      } catch {
+        // skip corrupt lines
+      }
+    }
+    return records;
+  }
+
+  /**
+   * Re-walk a written audit file and confirm the hash chain is intact.
+   *
+   * Deliberately distinguishes "the file doesn't exist / can't be read" from
+   * "the chain verifies clean" — collapsing those two cases (as an earlier
+   * version of this method did, both returning -1) means deleting the whole
+   * audit log would report the same as an untampered one, which is the
+   * easiest way to defeat a tamper-evident log: don't edit it, remove it.
+   */
+  static verify(file: string): VerifyResult {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, "utf8");
+    } catch {
+      return { ok: false, reason: "unreadable" };
     }
     const lines = raw.split("\n").filter((l) => l.trim());
     let prevHash = GENESIS;
@@ -171,17 +201,22 @@ export class AuditLog {
       try {
         rec = JSON.parse(lines[i]) as AuditRecord;
       } catch {
-        return i;
+        return { ok: false, reason: "tampered", line: i };
       }
       const { hash, prevHash: recPrev, ...base } = rec;
-      if (recPrev !== prevHash) return i;
+      if (recPrev !== prevHash) return { ok: false, reason: "tampered", line: i };
       const expected = crypto
         .createHash("sha256")
         .update(prevHash + JSON.stringify(base))
         .digest("hex");
-      if (expected !== hash) return i;
+      if (expected !== hash) return { ok: false, reason: "tampered", line: i };
       prevHash = hash;
     }
-    return -1;
+    return { ok: true, records: lines.length };
   }
 }
+
+export type VerifyResult =
+  | { ok: true; records: number }
+  | { ok: false; reason: "unreadable" }
+  | { ok: false; reason: "tampered"; line: number };
