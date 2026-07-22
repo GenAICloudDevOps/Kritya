@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
+import { debugLog } from "../config/debug.js";
 
 /**
  * Workspace trust. A workspace's `.kritya/settings.json` can define `allow`
@@ -161,7 +162,10 @@ function loadTrustStore(storeFile: string): Record<string, string> {
   try {
     const parsed = JSON.parse(fs.readFileSync(storeFile, "utf8"));
     return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
-  } catch {
+  } catch (err) {
+    // A missing file means "nothing trusted yet" (normal); a malformed one
+    // means every workspace re-prompts for trust, worth being able to see.
+    debugLog(`loadTrustStore(${storeFile})`, err);
     return {};
   }
 }

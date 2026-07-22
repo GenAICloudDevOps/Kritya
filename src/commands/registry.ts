@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { Agent } from "../agent/loop.js";
-import { AuditLog } from "../audit/audit.js";
+import { AuditLog, summarizeAudit } from "../audit/audit.js";
 import { mcpStatus } from "../mcp/client.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
@@ -249,15 +249,9 @@ const handlers: Record<string, CommandHandler> = {
       return;
     }
 
-    const bySource = new Map<string, number>();
-    const byOutcome = new Map<string, number>();
-    for (const r of records) {
-      if (r.event === "permission") bySource.set(r.source, (bySource.get(r.source) ?? 0) + 1);
-      else byOutcome.set(r.outcome, (byOutcome.get(r.outcome) ?? 0) + 1);
-    }
-    const fmt = (m: Map<string, number>) =>
-      [...m.entries()]
-        .sort((a, b) => b[1] - a[1])
+    const fmt = (m: Partial<Record<string, number>>) =>
+      Object.entries(m)
+        .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
         .map(([k, v]) => `${k}: ${v}`)
         .join(", ") || "(none)";
 
@@ -268,14 +262,22 @@ const handlers: Record<string, CommandHandler> = {
         ? "chain check FAILED — log file could not be read"
         : `chain check FAILED — broken at record ${verify.line}`;
 
+    const s = summarizeAudit(records);
+    const latencyLine =
+      s.durationMsP50 || s.waitMsP50
+        ? `Tool latency: p50 ${s.durationMsP50}ms / p95 ${s.durationMsP95}ms — ` +
+          `permission wait: p50 ${s.waitMsP50}ms / p95 ${s.waitMsP95}ms\n`
+        : "";
+
     ctx.addItem({
       kind: "info",
       text:
         `Audit log: ${audit.path}\n` +
         `${chainLine}\n\n` +
-        `Permission decisions by source: ${fmt(bySource)}\n` +
-        `Tool outcomes: ${fmt(byOutcome)}\n\n` +
-        `Full history: kritya audit --show ${path.basename(audit.path)}`,
+        `Permission decisions by source: ${fmt(s.permissionsBySource)}\n` +
+        `Tool outcomes: ${fmt(s.toolCallsByOutcome)}\n` +
+        latencyLine +
+        `\nFull history: kritya audit --show ${path.basename(audit.path)}`,
     });
   },
   "/budget": (ctx) => {

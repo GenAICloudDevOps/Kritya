@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createTracer, NOOP_TRACER, type SpanExport } from "../telemetry/tracer.js";
+import {
+  createTracer,
+  cleanupOldTelemetry,
+  NOOP_TRACER,
+  type SpanExport,
+} from "../telemetry/tracer.js";
 
 function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
   const prev: Record<string, string | undefined> = {};
@@ -87,4 +92,42 @@ test("end() is idempotent — a span is emitted at most once", () => {
     span.end();
   });
   assert.equal(readSpans(file).length, 1);
+});
+
+test("createTracer falls back to config.json's otel default when the env var is unset", () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "kritya-otel-")), "cfg.otel.jsonl");
+  withEnv({ KRITYA_OTEL: undefined, KRITYA_OTEL_FILE: file }, () => {
+    assert.equal(createTracer("s"), NOOP_TRACER, "still off with no config default either");
+    const tracer = createTracer("s", "file");
+    tracer.startSpan("tool.x").end();
+  });
+  assert.equal(readSpans(file).length, 1);
+});
+
+test("createTracer: the env var wins over a config default when both are set", () => {
+  withEnv({ KRITYA_OTEL: "off" }, () => {
+    assert.equal(
+      createTracer("s", "file"),
+      NOOP_TRACER,
+      "env var off overrides config default file"
+    );
+  });
+});
+
+test("cleanupOldTelemetry deletes span files past retentionDays and keeps recent ones, and 0 disables it", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kritya-telemetry-cleanup-"));
+  const oldFile = path.join(dir, "old.otel.jsonl");
+  const newFile = path.join(dir, "new.otel.jsonl");
+  fs.writeFileSync(oldFile, "{}\n");
+  fs.writeFileSync(newFile, "{}\n");
+  const oldTime = Date.now() - 20 * 24 * 60 * 60 * 1000;
+  fs.utimesSync(oldFile, oldTime / 1000, oldTime / 1000);
+
+  withEnv({ KRITYA_TELEMETRY_DIR: dir }, () => {
+    cleanupOldTelemetry(0);
+    assert.ok(fs.existsSync(oldFile), "retention 0 keeps everything");
+    cleanupOldTelemetry(15);
+  });
+  assert.ok(!fs.existsSync(oldFile), "old file pruned");
+  assert.ok(fs.existsSync(newFile), "recent file kept");
 });

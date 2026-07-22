@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { AuditLog } from "../audit/audit.js";
+import { AuditLog, summarizeAudit } from "../audit/audit.js";
 
 function tmpFile(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "kritya-audit-")), "session.audit.jsonl");
@@ -143,5 +143,93 @@ test("forSession honors KRITYA_AUDIT=off", () => {
   } finally {
     if (prev === undefined) delete process.env.KRITYA_AUDIT;
     else process.env.KRITYA_AUDIT = prev;
+  }
+});
+
+test("forSession honors config.json's audit default, but the env var wins over it", () => {
+  const prev = process.env.KRITYA_AUDIT;
+  try {
+    delete process.env.KRITYA_AUDIT;
+    assert.equal(AuditLog.forSession("x", "off"), undefined, "config default off disables it");
+    assert.ok(AuditLog.forSession("x", "on") instanceof AuditLog);
+    assert.ok(AuditLog.forSession("x") instanceof AuditLog, "on by default with no config either");
+
+    process.env.KRITYA_AUDIT = "off";
+    assert.equal(
+      AuditLog.forSession("x", "on"),
+      undefined,
+      "env var off overrides a config default of on"
+    );
+  } finally {
+    if (prev === undefined) delete process.env.KRITYA_AUDIT;
+    else process.env.KRITYA_AUDIT = prev;
+  }
+});
+
+test("summarizeAudit counts outcomes/sources and computes latency percentiles", () => {
+  const file = tmpFile();
+  const log = new AuditLog("sess-6", file);
+  log.logPermission({ tool: "read_file", summary: "r", verdict: "allowed", source: "read-only" });
+  log.logPermission({
+    tool: "write_file",
+    summary: "w",
+    verdict: "allowed",
+    source: "interactive",
+  });
+  log.logPermission({ tool: "shell", summary: "s", verdict: "denied", source: "deny-rule" });
+  const durations = [10, 20, 30, 40, 100];
+  for (const d of durations) {
+    log.logTool({ tool: "x", summary: "x", outcome: "ok", durationMs: d, waitMs: d * 2 });
+  }
+  log.logTool({ tool: "y", summary: "y", outcome: "error" });
+
+  const summary = summarizeAudit(AuditLog.readRecords(file));
+  assert.equal(summary.totalRecords, 9);
+  assert.equal(summary.toolCallsByOutcome.ok, 5);
+  assert.equal(summary.toolCallsByOutcome.error, 1);
+  assert.equal(summary.permissionsBySource["read-only"], 1);
+  assert.equal(summary.permissionsBySource["deny-rule"], 1);
+  // p50 of [10,20,30,40,100] (nearest-rank) is the 3rd value.
+  assert.equal(summary.durationMsP50, 30);
+  assert.equal(summary.durationMsP95, 100);
+  assert.equal(summary.waitMsP50, 60);
+});
+
+test("cleanupOld deletes audit logs past retentionDays and leaves recent ones", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kritya-audit-cleanup-"));
+  const oldFile = path.join(dir, "old.audit.jsonl");
+  const newFile = path.join(dir, "new.audit.jsonl");
+  fs.writeFileSync(oldFile, "{}\n");
+  fs.writeFileSync(newFile, "{}\n");
+  const oldTime = Date.now() - 20 * 24 * 60 * 60 * 1000; // 20 days ago
+  fs.utimesSync(oldFile, oldTime / 1000, oldTime / 1000);
+
+  const prev = process.env.KRITYA_AUDIT_DIR;
+  try {
+    process.env.KRITYA_AUDIT_DIR = dir;
+    AuditLog.cleanupOld(15);
+    assert.ok(!fs.existsSync(oldFile), "old file was pruned");
+    assert.ok(fs.existsSync(newFile), "recent file was kept");
+  } finally {
+    if (prev === undefined) delete process.env.KRITYA_AUDIT_DIR;
+    else process.env.KRITYA_AUDIT_DIR = prev;
+  }
+});
+
+test("cleanupOld(0) keeps everything — 0 or negative means keep forever", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kritya-audit-cleanup-"));
+  const oldFile = path.join(dir, "old.audit.jsonl");
+  fs.writeFileSync(oldFile, "{}\n");
+  const oldTime = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  fs.utimesSync(oldFile, oldTime / 1000, oldTime / 1000);
+
+  const prev = process.env.KRITYA_AUDIT_DIR;
+  try {
+    process.env.KRITYA_AUDIT_DIR = dir;
+    AuditLog.cleanupOld(0);
+    assert.ok(fs.existsSync(oldFile), "nothing is deleted when retention is disabled");
+  } finally {
+    if (prev === undefined) delete process.env.KRITYA_AUDIT_DIR;
+    else process.env.KRITYA_AUDIT_DIR = prev;
   }
 });

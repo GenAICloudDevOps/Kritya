@@ -473,3 +473,34 @@ test("compact() writes an audit record, since it permanently discards messages",
   assert.ok(compactRecord, "compaction should be recorded in the audit log");
   assert.equal(compactRecord!.outcome, "ok");
 });
+
+test("a provider that omits usage still reports an estimate, flagged as estimated", async () => {
+  const { client } = scriptedClient([
+    {
+      message: { role: "assistant", content: "here you go." },
+      text: "here you go.",
+      toolCalls: [],
+      // usage deliberately omitted — some providers don't report it on streamed responses.
+    },
+  ]);
+  const agent = makeAgent(client, []);
+  const usages: unknown[] = [];
+  await agent.runTurn("go", {
+    onTextDelta() {},
+    onReasoningDelta() {},
+    onAssistantText() {},
+    onToolStart() {},
+    onToolEnd() {},
+    async requestPermission() {
+      return "yes";
+    },
+    onUsage(u) {
+      usages.push(u);
+    },
+  });
+
+  assert.equal(usages.length, 1, "an estimate is still reported, not silently skipped");
+  const u = usages[0] as { promptTokens: number; completionTokens: number; estimated?: boolean };
+  assert.equal(u.estimated, true);
+  assert.ok(u.promptTokens > 0);
+});

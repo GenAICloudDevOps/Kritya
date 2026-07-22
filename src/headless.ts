@@ -13,7 +13,8 @@ import { loadRules } from "./permissions/rules.js";
 import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
-import { createTracer, telemetryFileFor } from "./telemetry/tracer.js";
+import { createTracer, telemetryFileFor, cleanupOldTelemetry } from "./telemetry/tracer.js";
+import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
@@ -47,7 +48,13 @@ interface HeadlessResult {
   result: string;
   error?: string;
   toolCalls: ToolCallRecord[];
-  usage: { promptTokens: number; completionTokens: number; cachedPromptTokens: number };
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedPromptTokens: number;
+    /** True if any turn's usage was an estimate (the provider didn't report real counts). */
+    estimated: boolean;
+  };
   durationMs: number;
   model?: string;
   /**
@@ -101,7 +108,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
       result: "",
       error: `No API key found for provider "${provider.name}". Set it via env var, a .env file, or ~/.kritya/config.json.`,
       toolCalls: [],
-      usage: { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 },
+      usage: { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, estimated: false },
       durationMs: 0,
     });
   }
@@ -117,8 +124,16 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const session = new SessionStore(workspace);
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   session.start(initialHistory);
-  const sessionAudit = AuditLog.forSession(session.id);
-  const sessionTracer = createTracer(session.id);
+  const sessionAudit = AuditLog.forSession(session.id, config.audit);
+  const sessionTracer = createTracer(session.id, config.otel);
+
+  // Same best-effort retention as the interactive path — headless/CI runs are
+  // often the only way kritya ever runs for a given user, so this can't skip
+  // pruning old transcripts/audit logs/telemetry just because there's no TTY.
+  const retentionDays = retentionDaysFor(config);
+  SessionStore.cleanupOldSessions(retentionDays);
+  AuditLog.cleanupOld(retentionDays);
+  cleanupOldTelemetry(retentionDays);
 
   // Subagents (spawn_agent/spawn_write_agent) aren't wired up here — they
   // need per-call worktree/concurrency plumbing that isn't worth duplicating
@@ -173,7 +188,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   agent.hooks.tracer = sessionTracer;
 
   const toolCalls: ToolCallRecord[] = [];
-  let usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
+  let usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, estimated: false };
   let finalText = "";
 
   const controller = new AbortController();
@@ -204,6 +219,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
         promptTokens: usage.promptTokens + u.promptTokens,
         completionTokens: usage.completionTokens + u.completionTokens,
         cachedPromptTokens: usage.cachedPromptTokens + (u.cachedPromptTokens ?? 0),
+        estimated: usage.estimated || Boolean(u.estimated),
       };
     },
   };

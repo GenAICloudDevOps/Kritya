@@ -84,6 +84,12 @@ export interface Usage {
   completionTokens: number;
   /** Prompt tokens served from the provider's prompt cache (subset of promptTokens). */
   cachedPromptTokens?: number;
+  /**
+   * True when the provider didn't report real token counts and this is a
+   * rough estimate from text length instead. Cost/budget figures built from
+   * an estimated Usage should be shown as approximate, not exact.
+   */
+  estimated?: boolean;
 }
 
 /** Callbacks through which the agent loop reports progress to the UI. */

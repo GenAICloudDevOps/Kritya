@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
+import { debugLog } from "../config/debug.js";
 import type { ChatMessage, TaskItem } from "../types.js";
 
 function sessionDir(workspace: string): string {
@@ -82,8 +83,8 @@ export class SessionStore {
         return;
       }
       writeFileAtomic(this.tasksFilePath(), JSON.stringify(tasks), 0o600);
-    } catch {
-      // best-effort
+    } catch (err) {
+      debugLog(`SessionStore.saveTasks(${this.tasksFilePath()})`, err);
     }
   }
 
@@ -131,8 +132,9 @@ export class SessionStore {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       hardenWindowsDir(CONFIG_DIR);
       fs.appendFileSync(this.file, JSON.stringify(message) + "\n", { mode: 0o600 });
-    } catch {
+    } catch (err) {
       // Persistence is best-effort; never crash the session over it.
+      debugLog(`SessionStore.append(${this.file})`, err);
     }
   }
 
@@ -153,8 +155,9 @@ export class SessionStore {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       hardenWindowsDir(CONFIG_DIR);
       writeFileAtomic(this.file, messages.map((m) => JSON.stringify(m) + "\n").join(""), 0o600);
-    } catch {
+    } catch (err) {
       // Persistence is best-effort; never crash the session over it.
+      debugLog(`SessionStore.overwrite(${this.file})`, err);
     }
   }
 
@@ -206,8 +209,13 @@ export class SessionStore {
     return false;
   }
 
-  /** Delete session files older than `retentionDays` across all workspaces. Best-effort. */
-  static cleanupOldSessions(retentionDays = 30): void {
+  /**
+   * Delete session files older than `retentionDays` across all workspaces.
+   * Best-effort. 0 or negative means "keep forever" — auto-delete is
+   * disabled rather than treated as an immediate-expiry retention window.
+   */
+  static cleanupOldSessions(retentionDays: number): void {
+    if (retentionDays <= 0) return;
     const root = path.join(CONFIG_DIR, "sessions");
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     let dirs: string[];
@@ -232,8 +240,8 @@ export class SessionStore {
             fs.unlinkSync(file);
             fs.rmSync(SessionStore.tasksFilePathFor(file), { force: true });
           }
-        } catch {
-          // best-effort
+        } catch (err) {
+          debugLog(`SessionStore.cleanupOldSessions(${file})`, err);
         }
       }
     }

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
+import { debugLog } from "../config/debug.js";
 
 /**
  * User-defined slash commands. Each markdown file under .kritya/commands/
@@ -30,8 +31,9 @@ function readCommandsFrom(dir: string): CustomCommand[] {
       const name = "/" + path.basename(file, ".md");
       const { description, body } = parseCommand(raw);
       commands.push({ name, description, body });
-    } catch {
+    } catch (err) {
       // Skip unreadable command files.
+      debugLog(`readCommandsFrom(${path.join(dir, file)})`, err);
     }
   }
   return commands;

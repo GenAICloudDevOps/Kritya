@@ -650,6 +650,7 @@ export function App({
             ""
           )}
           {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
+          {totalUsage.estimated ? "~" : ""}
           {totalUsage.promptTokens.toLocaleString()} in
           {(totalUsage.cachedPromptTokens ?? 0) > 0
             ? ` (${Math.round(((totalUsage.cachedPromptTokens ?? 0) / totalUsage.promptTokens) * 100)}% cached)`

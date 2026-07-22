@@ -402,9 +402,17 @@ export class Agent {
         this.lastPromptTokens = result.usage.promptTokens;
         handlers.onUsage(result.usage);
       } else {
-        // Some providers omit usage on streamed responses; estimate so the
-        // context meter and auto-compaction don't stall at 0.
+        // Some providers omit usage on streamed responses. Estimate from text
+        // length so the context meter and auto-compaction don't stall at 0,
+        // and still report it (marked `estimated`) so cost/budget tracking
+        // isn't silently blind for the whole session — but the caller can
+        // tell an estimate from a real number and show it as approximate.
         this.lastPromptTokens = Math.round(JSON.stringify([systemMsg, ...this.history]).length / 4);
+        handlers.onUsage({
+          promptTokens: this.lastPromptTokens,
+          completionTokens: Math.round(result.text.length / 4),
+          estimated: true,
+        });
       }
       this.history.push(result.message);
       this.session.append(result.message);

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { debugLog } from "../config/debug.js";
 
 export interface Worktree {
   /** Absolute path of the isolated checkout a write subagent operates in. */
@@ -58,7 +59,8 @@ export function createWorktree(workspace: string): Worktree | null {
 
   try {
     fs.mkdirSync(root, { recursive: true });
-  } catch {
+  } catch (err) {
+    debugLog(`createWorktree mkdir(${root})`, err);
     return null;
   }
 

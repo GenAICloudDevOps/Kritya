@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { hardenWindowsDir } from "./winAcl.js";
+import { debugLog } from "./debug.js";
 
 /** A named, OpenAI-compatible model provider. */
 export interface ProviderConfig {
@@ -52,6 +53,26 @@ export interface CliConfig {
    * required binary isn't on PATH.
    */
   sandboxExec?: "auto" | "always" | "off";
+  /**
+   * Days to keep session transcripts, audit logs, and telemetry files before
+   * they're auto-deleted on startup. Default 15. Set to 0 (or any
+   * non-positive number) to keep everything forever (auto-delete disabled).
+   * KRITYA_RETENTION_DAYS overrides this if set.
+   */
+  retentionDays?: number;
+  /**
+   * Persisted default for the audit log, so it can be turned off without
+   * setting KRITYA_AUDIT every launch. "on" (default) records every
+   * permission decision and tool execution locally; "off" disables it
+   * entirely. KRITYA_AUDIT overrides this if set.
+   */
+  audit?: "on" | "off";
+  /**
+   * Persisted default for OpenTelemetry-shaped tracing (see KRITYA_OTEL in
+   * the README). "off" (default) — tracing is opt-in. KRITYA_OTEL overrides
+   * this if set.
+   */
+  otel?: "off" | "file" | "console" | "both";
 }
 
 /**
@@ -164,7 +185,10 @@ export function loadConfig(): CliConfig {
   try {
     const raw = fs.readFileSync(CONFIG_FILE, "utf8");
     return JSON.parse(raw) as CliConfig;
-  } catch {
+  } catch (err) {
+    // A missing file is normal on first run; a malformed one is worth being
+    // able to see when someone reports "my config isn't taking effect".
+    debugLog(`loadConfig(${CONFIG_FILE})`, err);
     return {};
   }
 }
@@ -180,8 +204,8 @@ export function saveConfig(patch: Partial<CliConfig>): void {
   // even if config.json pre-existed with looser permissions.
   try {
     fs.chmodSync(CONFIG_FILE, 0o600);
-  } catch {
-    // best-effort
+  } catch (err) {
+    debugLog(`saveConfig chmod(${CONFIG_FILE})`, err);
   }
 }
 

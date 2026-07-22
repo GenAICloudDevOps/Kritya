@@ -223,8 +223,9 @@ export function useAgent({
       promptTokens: acc.promptTokens + u.promptTokens,
       completionTokens: acc.completionTokens + u.completionTokens,
       cachedPromptTokens: (acc.cachedPromptTokens ?? 0) + (u.cachedPromptTokens ?? 0),
+      estimated: acc.estimated || Boolean(u.estimated),
     }),
-    { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 }
+    { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, estimated: false }
   );
 
   const totalCost = Object.entries(usageByModel).reduce((sum, [id, u]) => {
@@ -241,7 +242,11 @@ export function useAgent({
         cached > 0 && u.promptTokens > 0
           ? ` (${cached.toLocaleString()} cached, ${Math.round((cached / u.promptTokens) * 100)}% hit rate)`
           : "";
-      return `  ${id}: ${u.promptTokens.toLocaleString()} in${hitRate} / ${u.completionTokens.toLocaleString()} out${dollars}`;
+      // Some providers omit real token counts; those turns fall back to a
+      // text-length estimate (see agent/loop.ts). Flag it here rather than
+      // let an approximate number pass as an exact one.
+      const estNote = u.estimated ? " (some figures estimated — provider didn't report usage)" : "";
+      return `  ${id}: ${u.promptTokens.toLocaleString()} in${hitRate} / ${u.completionTokens.toLocaleString()} out${dollars}${estNote}`;
     });
     if (!lines.length) return "No usage yet this session.";
     const totalSavings = Object.entries(usageByModel).reduce((sum, [id, u]) => {
@@ -370,6 +375,10 @@ export function useAgent({
                 completionTokens: (prev[id]?.completionTokens ?? 0) + u.completionTokens,
                 cachedPromptTokens:
                   (prev[id]?.cachedPromptTokens ?? 0) + (u.cachedPromptTokens ?? 0),
+                // Once any turn's usage for this model was estimated rather
+                // than provider-reported, the running total is no longer
+                // exact — keep it flagged for the rest of the session.
+                estimated: Boolean(prev[id]?.estimated) || Boolean(u.estimated),
               },
             }));
 

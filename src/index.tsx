@@ -11,7 +11,8 @@ import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
-import { createTracer } from "./telemetry/tracer.js";
+import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
+import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
 import { lspManager } from "./lsp/manager.js";
@@ -295,8 +296,8 @@ async function main() {
   // subagent's commits and a read-only subagent's tool calls land in the same
   // audit trail and trace tree as the turn that spawned them — an agent that
   // edits the repo should never do so off the record.
-  const sessionAudit = AuditLog.forSession(session.id);
-  const sessionTracer = createTracer(session.id);
+  const sessionAudit = AuditLog.forSession(session.id, config.audit);
+  const sessionTracer = createTracer(session.id, config.otel);
 
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   const initialTasks = args.continue ? SessionStore.loadLatestTasks(workspace) : [];
@@ -324,9 +325,14 @@ async function main() {
     });
   }
 
-  // Best-effort retention: session transcripts can contain secrets that passed
-  // through tool output; don't let them accumulate forever.
-  SessionStore.cleanupOldSessions();
+  // Best-effort retention: session transcripts, audit logs, and telemetry can
+  // all carry secrets that passed through tool output, so none of them
+  // accumulate forever by default. retentionDaysFor honors config.json's
+  // retentionDays / KRITYA_RETENTION_DAYS; 0 or negative disables this.
+  const retentionDays = retentionDaysFor(config);
+  SessionStore.cleanupOldSessions(retentionDays);
+  AuditLog.cleanupOld(retentionDays);
+  cleanupOldTelemetry(retentionDays);
 
   const undoStack = new UndoStack();
   const uiBridge: UiBridge = {

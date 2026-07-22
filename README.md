@@ -336,6 +336,8 @@ from the command line:
 kritya audit --list              # every audit log, newest first, with chain status
 kritya audit --verify [file]     # verify one log's hash chain (defaults to the newest)
 kritya audit --show [file]       # print a log's records, one JSON line each
+kritya audit --summary [file]    # counts by outcome/source, latency p50/p95
+kritya audit --prune [days]      # delete logs older than [days] (default: your retention setting)
 ```
 
 For tracing, the tool loop can emit **OpenTelemetry-shaped spans** — one per
@@ -367,6 +369,40 @@ permanently discards messages; the session **token budget** crossing its warn
 threshold or hard-stopping a turn; each **hook** run, tagged with which
 specific hook command ran or blocked a call; and **MCP server** connect
 attempts, so a server that fails to start leaves more than one stderr line.
+
+When a provider doesn't report real token counts (some omit usage on streamed
+responses), kritya estimates them from text length instead of leaving `/cost`
+blind for the session — but that estimate is marked `estimated: true` in the
+`Usage` object and shown as `~` in the statusline and `(some figures
+estimated…)` in `/cost`, so an approximation never passes as an exact number.
+
+Best-effort writes (session/audit/telemetry persistence, config and hook
+loading, …) deliberately swallow their own errors so a failed disk write never
+crashes a turn. Set `KRITYA_DEBUG=1` to print those errors to stderr instead of
+dropping them silently — useful when something isn't being saved and you don't
+know why. Off by default, no cost when unused.
+
+**Retention.** Session transcripts, audit logs, and telemetry files are
+auto-deleted after 15 days by default — they can carry secrets that passed
+through tool output, so nothing accumulates forever unless you ask it to.
+Configurable in `~/.kritya/config.json`, or with `KRITYA_RETENTION_DAYS`
+(env var wins over the config value):
+
+```json
+{
+  "retentionDays": 30,
+  "audit": "on",
+  "otel": "off"
+}
+```
+
+- `retentionDays`: any positive number of days; `0` (or negative) disables
+  auto-delete entirely — keep everything forever.
+- `audit`: `"on"` (default) or `"off"` — a persisted way to disable the audit
+  log for good, without exporting `KRITYA_AUDIT=off` every launch. The env
+  var still overrides this if set.
+- `otel`: persisted default for tracing (`"off"` / `"file"` / `"console"` /
+  `"both"`), same relationship to `KRITYA_OTEL`.
 
 ## Configuration
 

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
+import { debugLog } from "../config/debug.js";
 
 /**
  * A minimal, dependency-free tracer for the agent's tool loop, shaped after
@@ -152,8 +153,19 @@ class RealTracer implements Tracer {
   }
 }
 
+/**
+ * KRITYA_TELEMETRY_DIR overrides it — used by tests so cleanupOldTelemetry's
+ * directory scan never touches the real ~/.kritya/telemetry on a dev machine.
+ */
 function telemetryDir(): string {
-  return path.join(CONFIG_DIR, "telemetry");
+  return process.env.KRITYA_TELEMETRY_DIR || path.join(CONFIG_DIR, "telemetry");
+}
+
+type OtelMode = "off" | "file" | "console" | "both";
+
+/** KRITYA_OTEL if set, else config.json's persisted `otel` default, else "off". */
+function resolveOtelMode(configDefault?: OtelMode): string {
+  return (process.env.KRITYA_OTEL ?? configDefault ?? "off").toLowerCase();
 }
 
 /**
@@ -161,12 +173,36 @@ function telemetryDir(): string {
  * active. Exported so callers that report results (headless JSON) can point
  * the reader at the trace without duplicating the path logic.
  */
-export function telemetryFileFor(sessionId: string): string | undefined {
-  const mode = (process.env.KRITYA_OTEL ?? "off").toLowerCase();
+export function telemetryFileFor(sessionId: string, configDefault?: OtelMode): string | undefined {
+  const mode = resolveOtelMode(configDefault);
   if (mode === "off" || mode === "" || mode === "false") return undefined;
   // "console" is the only enabled mode with no file behind it.
   if (mode === "console") return undefined;
   return process.env.KRITYA_OTEL_FILE ?? path.join(telemetryDir(), `${sessionId}.otel.jsonl`);
+}
+
+/**
+ * Delete telemetry span files older than `retentionDays`. Best-effort, same
+ * pattern as SessionStore.cleanupOldSessions and AuditLog.cleanupOld. 0 or
+ * negative means "keep forever" — auto-delete disabled.
+ */
+export function cleanupOldTelemetry(retentionDays: number): void {
+  if (retentionDays <= 0) return;
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  let files: string[];
+  try {
+    files = fs.readdirSync(telemetryDir()).filter((f) => f.endsWith(".otel.jsonl"));
+  } catch {
+    return;
+  }
+  for (const f of files) {
+    const file = path.join(telemetryDir(), f);
+    try {
+      if (fs.statSync(file).mtimeMs < cutoff) fs.unlinkSync(file);
+    } catch (err) {
+      debugLog(`cleanupOldTelemetry(${file})`, err);
+    }
+  }
 }
 
 function fileSink(file: string): Sink {
@@ -179,8 +215,9 @@ function fileSink(file: string): Sink {
         ready = true;
       }
       fs.appendFileSync(file, JSON.stringify(span) + "\n", { mode: 0o600 });
-    } catch {
+    } catch (err) {
       // best-effort: telemetry must never crash a turn
+      debugLog(`tracer.fileSink(${file})`, err);
     }
   };
 }
@@ -200,13 +237,13 @@ function consoleSink(): Sink {
  * shared no-op tracer when telemetry is off, so callers can always hold a
  * Tracer and call startSpan unconditionally.
  */
-export function createTracer(sessionId: string): Tracer {
-  const mode = (process.env.KRITYA_OTEL ?? "off").toLowerCase();
+export function createTracer(sessionId: string, configDefault?: OtelMode): Tracer {
+  const mode = resolveOtelMode(configDefault);
   if (mode === "off" || mode === "" || mode === "false") return NOOP_TRACER;
 
   const sinks: Sink[] = [];
   if (mode === "file" || mode === "both") {
-    sinks.push(fileSink(telemetryFileFor(sessionId)!));
+    sinks.push(fileSink(telemetryFileFor(sessionId, configDefault)!));
   }
   if (mode === "console" || mode === "both") {
     sinks.push(consoleSink());

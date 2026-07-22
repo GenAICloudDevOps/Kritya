@@ -4,6 +4,7 @@ import path from "node:path";
 import { CONFIG_DIR, scrubbedShellEnv } from "../config/config.js";
 import { safeCompileRegex } from "../tools/common.js";
 import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
+import { debugLog } from "../config/debug.js";
 
 /**
  * User-configured shell hooks, from the `hooks` key of settings.json (workspace
@@ -59,8 +60,10 @@ export function loadHooks(workspace: string, trustWorkspace = true): HooksConfig
         const defs = parsed.hooks[event];
         if (Array.isArray(defs)) merged[event] = [...(merged[event] ?? []), ...defs];
       }
-    } catch {
-      // No hooks from a missing/malformed file.
+    } catch (err) {
+      // A missing settings.json is normal; a malformed one silently means
+      // "no hooks run", worth being able to see.
+      debugLog(`loadHooks(${file})`, err);
     }
   }
   return merged;
