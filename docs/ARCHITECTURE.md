@@ -16,6 +16,7 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
             ├─ hooks/hooks.ts       user shell hooks around tool calls
             ├─ trust/trust.ts       workspace trust gate for allow rules + hooks
             ├─ mcp/client.ts        MCP servers exposed as tools
+            ├─ agent/killSwitch.ts  session-wide emergency stop
             ├─ agent/compactor.ts   context summarization
             └─ session/store.ts     JSONL transcript persistence
 ```
@@ -29,6 +30,10 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
 - **`src/agent/loop.ts`** — `Agent`. Owns conversation history, runs the
   model→tools→model loop up to `maxSteps`, enforces plan mode, permissions,
   deny rules, the danger classifier, and hooks, and triggers auto-compaction.
+- **`src/agent/killSwitch.ts`** — `KillSwitch`, the session's emergency stop
+  (`Ctrl+K` / `/kill`). A single shared instance is held by the main agent and
+  by every subagent it spawns, so one stop halts the whole tree; the loop gates
+  turns, tool calls, and compaction on it ahead of every other check.
 - **`src/provider/client.ts`** — `ProviderClient`, a thin wrapper over the
   `openai` SDK for any OpenAI-compatible endpoint. Streams text, reasoning, and
   tool calls; retries transient errors with backoff.

@@ -12,6 +12,7 @@ import {
   crossedBudgetWarnThreshold,
   tokenBudgetFor,
 } from "../agent/budget.js";
+import { KillSwitchError } from "../agent/killSwitch.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge, Usage } from "../types.js";
@@ -100,6 +101,8 @@ export function useAgent({
   const [budgetStopped, setBudgetStopped] = useState(false);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
+  const [killed, setKilled] = useState(agent.kill.active);
+  const [killReason, setKillReason] = useState<string | undefined>(agent.kill.reason);
   const [acceptEdits, setAcceptEdits] = useState(false);
   const [autoApprovedCount, setAutoApprovedCount] = useState(0);
   const hasConfirmedAcceptEdits = useRef(false);
@@ -169,6 +172,66 @@ export function useAgent({
   const onAcceptEditsConfirm = (confirmed: boolean) => {
     setPhase("input");
     if (confirmed) enterAcceptEdits();
+  };
+
+  /** The line shown for anything the user tries while the switch is engaged. */
+  const killActiveNotice = (reason?: string): string =>
+    `⛔ Kill switch ACTIVE${reason ? ` — ${reason}` : ""}. Nothing will run. ` +
+    `Release it with /kill off.`;
+
+  /**
+   * Engage the kill switch: abort the in-flight turn, answer any open
+   * permission prompt with "no" (otherwise the tool call would hang forever
+   * waiting on a promise nobody will resolve), and drop back to the input
+   * line. The agent-side gates in agent/loop.ts are what actually enforce it;
+   * this is the UI half.
+   */
+  const engageKill = (reason?: string) => {
+    if (!agent.kill.engage(reason)) return; // already engaged
+    setKilled(true);
+    setKillReason(agent.kill.reason);
+    abortRef.current?.abort();
+    permission?.resolve("no");
+    setPermission(null);
+    setInFlight([]);
+    setActivity(null);
+    setStream("");
+    setThinking(false);
+    setPhase("input");
+    agent.audit?.logTool({
+      tool: "kill-switch",
+      summary: `kill switch engaged${agent.kill.reason ? `: ${agent.kill.reason}` : ""}`,
+      outcome: "blocked",
+    });
+    agent.turnSpan?.addEvent("kill_switch.engaged", {
+      "kritya.kill_reason": agent.kill.reason ?? "",
+    });
+    process.stdout.write("\x07"); // bell: something just stopped hard
+    addItem({
+      kind: "info",
+      text:
+        `⛔ KILL SWITCH ENGAGED${agent.kill.reason ? ` — ${agent.kill.reason}` : ""}.\n` +
+        `Everything in flight was aborted; no model calls, tools, or subagents will run.\n` +
+        `Release it with /kill off when you're ready to continue.`,
+    });
+  };
+
+  const releaseKill = () => {
+    if (!agent.kill.release()) {
+      addItem({ kind: "info", text: "The kill switch isn't engaged." });
+      return;
+    }
+    setKilled(false);
+    setKillReason(undefined);
+    agent.audit?.logTool({
+      tool: "kill-switch",
+      summary: "kill switch released",
+      outcome: "ok",
+    });
+    addItem({
+      kind: "info",
+      text: "Kill switch released — the agent can run again. The interrupted turn is not resumed; send a new message.",
+    });
   };
 
   const setModelEverywhere = (id: string) => {
@@ -286,6 +349,10 @@ export function useAgent({
   };
 
   const runWebSearch = async (query: string) => {
+    if (agent.kill.active) {
+      addItem({ kind: "info", text: killActiveNotice(agent.kill.reason) });
+      return;
+    }
     setPhase("working");
     setActivity(`Web search: ${query}`);
     try {
@@ -304,6 +371,12 @@ export function useAgent({
   };
 
   const runAgent = async (text: string, images: string[] = []) => {
+    // The kill switch is checked first, ahead of every other stop condition:
+    // once it's on, the only thing the user can get back is this line.
+    if (agent.kill.active) {
+      addItem({ kind: "info", text: killActiveNotice(agent.kill.reason) });
+      return;
+    }
     if (budgetStopped) {
       addItem({
         kind: "info",
@@ -429,7 +502,11 @@ export function useAgent({
         (err instanceof Error && err.name === "AbortError") ||
         (err instanceof Error && /abort/i.test(err.message));
       let text: string;
-      if (isAbort) {
+      if (err instanceof KillSwitchError || agent.kill.active) {
+        // engageKill already printed the banner; don't follow it with a
+        // stack-trace-flavored "Error:" line for the abort it caused.
+        text = "Turn stopped by the kill switch.";
+      } else if (isAbort) {
         text = "Interrupted.";
       } else {
         const message = err instanceof Error ? err.message : String(err);
@@ -540,6 +617,10 @@ export function useAgent({
     branch,
     planMode,
     setPlanMode,
+    killed,
+    killReason,
+    engageKill,
+    releaseKill,
     acceptEdits,
     setAcceptEdits,
     autoApprovedCount,

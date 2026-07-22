@@ -31,6 +31,7 @@ export type PermissionSource =
   | "accept-edits" // auto-approved by accept-edits mode
   | "interactive" // the user answered a live prompt
   | "plan-mode" // blocked because plan mode is on (read-only)
+  | "kill-switch" // blocked because the session's kill switch is engaged
   | "read-only"; // the tool never needed permission
 
 export type ToolOutcome = "ok" | "error" | "denied" | "blocked";

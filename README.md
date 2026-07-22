@@ -70,13 +70,14 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | `/clear`              | start a fresh conversation                                               |
 | `/cost`               | token usage and estimated $ (see Pricing below)                          |
 | `/budget`             | show session token budget; `/budget reset` or `/budget <number>`         |
+| `/kill`               | emergency stop: `/kill [reason]` halts everything; `/kill off` releases  |
 | `/help`               | command list                                                             |
 | `/exit`               | quit                                                                     |
 
 Custom `/commands` you define (see below) also appear here.
 
 `Esc` cancels a running request. `↑/↓` recalls input history. `Ctrl+O` toggles
-full tool output. `Ctrl+C` exits.
+full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 ### More features
 
@@ -102,6 +103,16 @@ full tool output. `Ctrl+C` exits.
   switch into accept-edits mode each session, kritya asks you to confirm first
   so it's a deliberate choice, not an accidental keypress. `/plan` still works
   as its own command and is equivalent to cycling into plan mode.
+- **Kill switch** — `Ctrl+K` (or `/kill [reason]`) is a hard stop for the whole
+  session. It aborts the in-flight model stream, any running tool, and every
+  subagent at once, then refuses everything afterwards: new messages, tool
+  calls, compaction, and any slash command that would drive the agent all come
+  back with `⛔ Kill switch ACTIVE` until you run `/kill off`. Unlike `Esc`
+  (which cancels one turn) it outranks every other mode — plan mode,
+  accept-edits, and allow rules cannot get a tool past it — and it works from
+  anywhere, including while a permission prompt is on screen. The statusline
+  shows `⛔ KILLED`, and both the stop and the release are written to the audit
+  log. It's session-only: restarting kritya comes up in the normal state.
 - **Subagents** — the agent can dispatch one or more focused investigations to
   fresh contexts at once (`spawn_agent`), each returning only its findings —
   keeps the main conversation lean on big searches. It can also dispatch

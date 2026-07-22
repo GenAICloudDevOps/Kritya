@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Kill switch** — `Ctrl+K` (or `/kill [reason]`) is a session-wide emergency
+  stop. It aborts the in-flight model stream, any running tool, and every
+  subagent, then refuses all further work — new turns, tool calls, compaction,
+  and agent-driving slash commands — until `/kill off` releases it. Enforcement
+  lives in the agent loop rather than the UI, gated ahead of plan mode, deny
+  rules, allow rules, and accept-edits, so no mode or rule can let a tool
+  through while it's engaged; a single shared switch covers subagents, which
+  run as separate agents. Engaging and releasing it are recorded in the audit
+  log, and blocked tool calls appear there with the new `kill-switch`
+  permission source. Session-only: a restart comes up in the normal state.
+
 - **Audit log + OpenTelemetry tracing (local-only)** — every permission
   decision and tool execution is now recorded to an append-only, tamper-evident
   audit trail under `~/.kritya/audit/<session>.audit.jsonl`, separate from the

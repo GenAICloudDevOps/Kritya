@@ -10,6 +10,7 @@ import { NOOP_TRACER, type AttrValue, type Span, type Tracer } from "../telemetr
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
 import { isPlanningDocWrite } from "./workflow.js";
+import { KillSwitch, KillSwitchError, linkAbort } from "./killSwitch.js";
 
 const DEFAULT_MAX_STEPS = 40;
 
@@ -78,6 +79,12 @@ export class Agent {
   autoMemory = false;
   /** Optional user-configured shell hooks around tool calls and turn end. */
   hooks?: HookRunner;
+  /**
+   * The session's emergency stop. Every agent gets its own by default so a
+   * standalone one is never unguarded; whoever spawns subagents assigns the
+   * parent's instance to them, so one switch halts the whole tree.
+   */
+  kill = new KillSwitch();
   /**
    * Append-only audit trail of permission decisions and tool executions. Left
    * unset on subagents; only the main session records an audit log.
@@ -245,6 +252,9 @@ export class Agent {
    * distinct from the `llm.chat` span for the summarization call itself.
    */
   async compact(signal?: AbortSignal): Promise<string> {
+    // Compaction calls the model directly rather than going through runTurn,
+    // so it needs its own gate.
+    this.kill.assertLive();
     const compactSpan = this.tracer.startSpan("agent.compact", { parent: this.currentTurnSpan });
     const tokensBefore = this.lastPromptTokens;
     try {
@@ -331,6 +341,9 @@ export class Agent {
     signal?: AbortSignal,
     images: string[] = []
   ): Promise<void> {
+    // Refuse before touching history: a killed session shouldn't accumulate
+    // turns it never ran.
+    this.kill.assertLive();
     this.ctx.undo?.beginTurn?.();
     // A previous turn may have been cancelled mid-tool-call; repair before the
     // next API request or the provider will reject the whole history. Stubs
@@ -363,13 +376,23 @@ export class Agent {
     });
     this.currentTurnSpan = turnSpan;
     this.lastTraceId = turnSpan.traceId || undefined;
+    // Everything below runs against a signal that fires on the caller's cancel
+    // *or* the kill switch, so engaging it tears down the in-flight model
+    // stream and any running tool immediately, not at the next checkpoint.
+    const link = linkAbort(this.kill, signal);
     try {
-      await this.runLoop(systemMsg, handlers, signal);
+      await this.runLoop(systemMsg, handlers, link.signal);
       turnSpan.setStatus("OK");
     } catch (err) {
       turnSpan.setStatus("ERROR", err instanceof Error ? err.message : String(err));
+      // An abort raised by the kill switch reports itself as one, so callers
+      // don't file it under "user pressed Esc".
+      if (this.kill.active && !(err instanceof KillSwitchError)) {
+        throw new KillSwitchError(this.kill.reason);
+      }
       throw err;
     } finally {
+      link.dispose();
       this.currentTurnSpan = undefined;
       turnSpan.end();
       await this.hooks?.runStop(turnSpan);
@@ -382,6 +405,9 @@ export class Agent {
     signal?: AbortSignal
   ): Promise<void> {
     for (let i = 0; i < this.maxSteps; i++) {
+      // Checked ahead of the generic abort so a kill mid-turn is reported as
+      // a kill rather than an ordinary cancellation.
+      this.kill.assertLive();
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       this.drainSteerQueue();
 
@@ -546,6 +572,25 @@ export class Agent {
       span.setStatus(code, message).end();
     };
 
+    /**
+     * The kill switch outranks every other gate — plan mode, deny rules,
+     * allow rules, accept-edits. Checked both before the permission prompt and
+     * again just before execution, since the switch can be thrown while a
+     * human is still looking at the prompt.
+     */
+    const killBlocked = (): string => {
+      this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "kill-switch" });
+      logToolOutcome("blocked");
+      finishSpan("ERROR", "blocked: kill switch");
+      handlers.onToolEnd(id, name, summary, "blocked: kill switch active", true);
+      return (
+        "The kill switch is ACTIVE — the user has stopped this session. This tool call was " +
+        "blocked and nothing ran. Do not retry it and do not attempt any further tool calls."
+      );
+    };
+
+    if (this.kill.active) return killBlocked();
+
     if (this.planMode && tool.requiresPermission && !isPlanningDocWrite(name, args)) {
       this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "plan-mode" });
       logToolOutcome("blocked");
@@ -616,6 +661,10 @@ export class Agent {
     } else {
       source = this.permissions.isAlwaysAllowed(tool.name, args) ? "always-allow" : "allow-rule";
     }
+
+    // The permission answer (or a hook) may have taken a while — re-check
+    // before recording an "allowed" verdict for something that must not run.
+    if (this.kill.active) return killBlocked();
 
     this.audit?.logPermission({
       tool: name,

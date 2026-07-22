@@ -166,6 +166,10 @@ export function App({
     branch,
     planMode,
     setPlanMode,
+    killed,
+    killReason,
+    engageKill,
+    releaseKill,
     acceptEdits,
     setAcceptEdits,
     autoApprovedCount,
@@ -234,6 +238,15 @@ export function App({
   };
 
   useInput((_input, key) => {
+    // Ctrl+K is the kill switch, and it comes before every other binding and
+    // phase check on purpose: a panic button that only works from the idle
+    // input line is not a panic button. It fires mid-stream, mid-tool, and
+    // while a permission prompt is on screen.
+    if (key.ctrl && _input === "k") {
+      if (killed) return; // already stopped; /kill off is the way back
+      engageKill("Ctrl+K");
+      return;
+    }
     if (key.escape && phase === "working") {
       abortRef.current?.abort();
     }
@@ -323,6 +336,10 @@ export function App({
       setCtxPct,
       setTasks,
       setPlanMode,
+      killed,
+      killReason,
+      engageKill,
+      releaseKill,
       setModelEverywhere,
       provider,
       setProviderEverywhere,
@@ -628,6 +645,13 @@ export function App({
 
       <Box>
         <Text dimColor>
+          {killed ? (
+            <Text bold color="red">
+              ⛔ KILLED{killReason ? ` (${killReason})` : ""} ·{" "}
+            </Text>
+          ) : (
+            ""
+          )}
           {planMode ? (
             <Text color="cyan">plan · </Text>
           ) : acceptEdits ? (

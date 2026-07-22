@@ -398,6 +398,9 @@ async function main() {
     sub.maxSteps = 15;
     sub.audit = sessionAudit;
     sub.tracer = sessionTracer;
+    // Share the parent's kill switch: a subagent with its own would keep
+    // running after the user stopped the session.
+    sub.kill = agent.kill;
     sub.spanParent = agent.turnSpan;
     sub.spanAttributes = { "kritya.subagent": true, "kritya.subagent_task": task.slice(0, 120) };
     let finalText = "";
@@ -458,6 +461,7 @@ async function main() {
       sub.maxSteps = 30;
       sub.audit = sessionAudit;
       sub.tracer = sessionTracer;
+      sub.kill = agent.kill; // see runReadOnlyAgent
       sub.spanParent = agent.turnSpan;
       sub.spanAttributes = {
         "kritya.subagent": true,
@@ -553,6 +557,16 @@ async function main() {
     specs: SubagentSpec[],
     signal?: AbortSignal
   ): Promise<SubagentResult[]> => {
+    // Don't stand up worktrees and API calls for work that the shared kill
+    // switch would abort on its first step anyway.
+    if (agent.kill.active) {
+      return specs.map((s) => ({
+        task: s.task,
+        write: Boolean(s.write),
+        summary: "",
+        error: "not started — the kill switch is active",
+      }));
+    }
     const results: SubagentResult[] = new Array(specs.length);
     let next = 0;
     const workers = Array.from(

@@ -56,6 +56,10 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
     name: "/budget",
     description: "show session token budget, /budget reset, or /budget <number> to set it",
   },
+  {
+    name: "/kill",
+    description: "emergency stop: /kill [reason] halts everything · /kill off releases (Ctrl+K)",
+  },
   { name: "/exit", description: "leave" },
   { name: "/quit", description: "leave" },
 ];
@@ -67,7 +71,8 @@ Also: @path/to/file attaches a file to your message (with autocomplete).
 @image.png attaches an image for vision-capable models.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
 Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/plan
-mode · ↑/↓ recalls history · Ctrl+O toggles full tool output · Ctrl+C exits`;
+mode · ↑/↓ recalls history · Ctrl+O toggles full tool output · Ctrl+K is the
+kill switch (stops everything until /kill off) · Ctrl+C exits`;
 
 /** Everything a command handler needs from the UI to do its work. */
 export interface CommandContext {
@@ -94,6 +99,11 @@ export interface CommandContext {
   setCtxPct(pct: number): void;
   setTasks(tasks: TaskItem[]): void;
   setPlanMode(next: boolean): void;
+  /** True while the session's kill switch is engaged. */
+  killed: boolean;
+  killReason?: string;
+  engageKill(reason?: string): void;
+  releaseKill(): void;
   setModelEverywhere(id: string): void;
   provider: string;
   setProviderEverywhere(name: string): void;
@@ -441,12 +451,71 @@ const handlers: Record<string, CommandHandler> = {
       ctx.refreshFileList();
     }
   },
+  /**
+   * The emergency stop. `/kill off` (or release/clear/resume) is the only way
+   * back; anything else is treated as the reason it was pulled, which is what
+   * shows up in the audit log and on every subsequent refusal.
+   */
+  "/kill": (ctx) => {
+    const arg = ctx.arg.trim();
+    const word = arg.toLowerCase();
+    if (word === "off" || word === "release" || word === "clear" || word === "resume") {
+      ctx.releaseKill();
+      return;
+    }
+    if (word === "status") {
+      ctx.addItem({
+        kind: "info",
+        text: ctx.killed
+          ? `⛔ Kill switch ACTIVE${ctx.killReason ? ` — ${ctx.killReason}` : ""}. Release it with /kill off.`
+          : "Kill switch is off. Engage it with /kill [reason], or Ctrl+K from anywhere.",
+      });
+      return;
+    }
+    if (ctx.killed) {
+      ctx.addItem({
+        kind: "info",
+        text: `⛔ Kill switch is already ACTIVE${ctx.killReason ? ` — ${ctx.killReason}` : ""}. Release it with /kill off.`,
+      });
+      return;
+    }
+    ctx.engageKill(arg || undefined);
+  },
   "/exit": (ctx) => ctx.exit(),
   "/quit": (ctx) => ctx.exit(),
 };
 
+/**
+ * Commands that still work while the kill switch is engaged: releasing it,
+ * leaving, and reading back what happened. Everything else — anything that
+ * drives the agent, spends tokens, or touches the workspace — is refused,
+ * including custom commands (which are just prompts in disguise).
+ */
+const ALLOWED_WHILE_KILLED = new Set([
+  "/kill",
+  "/help",
+  "/exit",
+  "/quit",
+  "/audit",
+  "/cost",
+  "/diff",
+  "/budget",
+  "/mcp",
+  "/checkpoint",
+]);
+
 /** Dispatch a slash command: built-in handler, then custom commands, then "unknown". */
 export function runCommand(cmd: string, ctx: CommandContext): void | Promise<void> {
+  if (ctx.killed && !ALLOWED_WHILE_KILLED.has(cmd)) {
+    ctx.addItem({
+      kind: "info",
+      text:
+        `⛔ Kill switch ACTIVE${ctx.killReason ? ` — ${ctx.killReason}` : ""}. ` +
+        `${cmd} is blocked. Release it with /kill off.`,
+    });
+    return;
+  }
+
   const handler = handlers[cmd];
   if (handler) return handler(ctx);
 
