@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NVIDIA_BASE_URL } from "../config/config.js";
+import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { ChatMessage, ToolDef, Usage } from "../types.js";
 
 export interface ParsedToolCall {
@@ -84,6 +85,16 @@ const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_TOP_P = 0.95;
 const DEFAULT_MAX_TOKENS = 8192;
 
+/**
+ * Where to hang this request's span. Passed in rather than held on the client
+ * because one client serves many turns, and each request belongs under the
+ * turn that issued it.
+ */
+export interface TraceContext {
+  tracer: Tracer;
+  parent?: Span;
+}
+
 export class ProviderClient {
   private client: OpenAI;
   private temperature?: number;
@@ -100,28 +111,69 @@ export class ProviderClient {
       sampling.maxTokens === null ? undefined : (sampling.maxTokens ?? DEFAULT_MAX_TOKENS);
   }
 
+  /**
+   * One `llm.chat` span covers the whole request *including* its retries and
+   * backoff, so the span's duration is the wall-clock cost the user actually
+   * paid. Each retry is recorded as an event on it, which is what turns "the
+   * turn felt slow" into "we were rate-limited three times".
+   */
   async chat(
     model: string,
     messages: ChatMessage[],
     tools: ToolDef[],
     callbacks: StreamCallbacks,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    trace?: TraceContext
   ): Promise<ChatResult> {
+    const span = (trace?.tracer ?? NOOP_TRACER).startSpan("llm.chat", {
+      parent: trace?.parent,
+      attributes: {
+        "kritya.model": model,
+        "kritya.message_count": messages.length,
+        "kritya.tool_count": tools.length,
+      },
+    });
     let lastErr: unknown;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      try {
-        return await this.chatOnce(model, messages, tools, callbacks, signal);
-      } catch (err) {
-        if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
-        lastErr = err;
-        if (!isRetryable(err)) throw err;
-        if (attempt === MAX_ATTEMPTS - 1) throw new RetryExhaustedError(err, MAX_ATTEMPTS);
-        const status = (err as { status?: number })?.status;
-        callbacks.onRetry?.(attempt + 1, status);
-        await sleep(Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 250, signal);
+    try {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        try {
+          const result = await this.chatOnce(model, messages, tools, callbacks, signal);
+          span.setAttribute("kritya.attempts", attempt + 1);
+          span.setAttribute("kritya.tool_call_count", result.toolCalls.length);
+          if (result.usage) {
+            span.setAttribute("kritya.prompt_tokens", result.usage.promptTokens);
+            span.setAttribute("kritya.completion_tokens", result.usage.completionTokens);
+            span.setAttribute("kritya.cached_tokens", result.usage.cachedPromptTokens ?? 0);
+          } else {
+            // The caller will fall back to estimating; say so on the span
+            // rather than leaving the token attributes silently absent.
+            span.setAttribute("kritya.usage_reported", false);
+          }
+          span.setStatus("OK");
+          return result;
+        } catch (err) {
+          if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
+          lastErr = err;
+          if (!isRetryable(err)) throw err;
+          if (attempt === MAX_ATTEMPTS - 1) throw new RetryExhaustedError(err, MAX_ATTEMPTS);
+          const status = (err as { status?: number })?.status;
+          const backoffMs = Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 250;
+          span.addEvent("retry", {
+            "kritya.attempt": attempt + 1,
+            "kritya.backoff_ms": Math.round(backoffMs),
+            ...(status !== undefined ? { "kritya.status": status } : {}),
+          });
+          callbacks.onRetry?.(attempt + 1, status);
+          await sleep(backoffMs, signal);
+        }
       }
+      throw lastErr;
+    } catch (err) {
+      span.setStatus("ERROR", err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      span.end();
     }
-    throw lastErr;
   }
 
   private async chatOnce(

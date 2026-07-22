@@ -5,7 +5,7 @@ import type { AgentHandlers, ChatMessage, ToolContext, ToolDef } from "../types.
 import { splitForCompaction, renderTranscript } from "./compactor.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { classifyDanger } from "../permissions/danger.js";
-import type { AuditLog, PermissionSource } from "../audit/audit.js";
+import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js";
 import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
@@ -85,6 +85,12 @@ export class Agent {
   audit?: AuditLog;
   /** OpenTelemetry-shaped tracer for the tool loop. No-op unless enabled. */
   tracer: Tracer = NOOP_TRACER;
+  /**
+   * Trace id of the most recent turn, so a caller that reports a result
+   * elsewhere (headless JSON) can point the reader at the matching spans.
+   * Undefined while telemetry is off, since the no-op tracer mints no ids.
+   */
+  lastTraceId?: string;
   /** The span for the in-flight turn, so tool spans can nest under it. */
   private currentTurnSpan?: Span;
   private steerQueue: string[] = [];
@@ -239,7 +245,8 @@ export class Agent {
       ],
       [],
       { onTextDelta: () => {}, onReasoningDelta: () => {} },
-      signal
+      signal,
+      { tracer: this.tracer, parent: this.currentTurnSpan }
     );
     const summary = result.text.trim() || "(summary unavailable)";
     this.history = [
@@ -307,6 +314,7 @@ export class Agent {
       attributes: { "kritya.model": this.getModel(), "kritya.session_id": this.session.id },
     });
     this.currentTurnSpan = turnSpan;
+    this.lastTraceId = turnSpan.traceId || undefined;
     try {
       await this.runLoop(systemMsg, handlers, signal);
       turnSpan.setStatus("OK");
@@ -338,7 +346,8 @@ export class Agent {
           onReasoningDelta: handlers.onReasoningDelta,
           onRetry: handlers.onRetry,
         },
-        signal
+        signal,
+        { tracer: this.tracer, parent: this.currentTurnSpan }
       );
 
       if (result.usage) {
@@ -460,18 +469,30 @@ export class Agent {
       attributes: { "kritya.tool": name, "kritya.summary": summary },
     });
     const startedAt = Date.now();
+    // Set once the tool actually starts running. Everything before that point
+    // — notably however long a human took to answer a permission prompt — is
+    // waiting, not work. Reporting the two separately keeps tool timings a
+    // measure of the machine rather than of the user's reading speed.
+    // Several early returns below mean the assignment further down doesn't
+    // always run, so this can't be collapsed into a single const initializer.
+    // eslint-disable-next-line prefer-const
+    let execStartedAt: number | undefined;
+    const logToolOutcome = (outcome: ToolOutcome): void => {
+      const now = Date.now();
+      const durationMs = execStartedAt === undefined ? 0 : now - execStartedAt;
+      const waitMs = (execStartedAt ?? now) - startedAt;
+      span.setAttribute("kritya.duration_ms", durationMs);
+      span.setAttribute("kritya.wait_ms", waitMs);
+      span.setAttribute("kritya.outcome", outcome);
+      this.audit?.logTool({ tool: name, summary, outcome, durationMs, waitMs });
+    };
     const finishSpan = (code: "OK" | "ERROR", message?: string): void => {
       span.setStatus(code, message).end();
     };
 
     if (this.planMode && tool.requiresPermission && !isPlanningDocWrite(name, args)) {
       this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "plan-mode" });
-      this.audit?.logTool({
-        tool: name,
-        summary,
-        outcome: "blocked",
-        durationMs: Date.now() - startedAt,
-      });
+      logToolOutcome("blocked");
       finishSpan("ERROR", "blocked: plan mode");
       handlers.onToolEnd(id, name, summary, "blocked: plan mode (read-only)", true);
       return (
@@ -484,12 +505,7 @@ export class Agent {
 
     if (this.permissions.isDenied(tool, args)) {
       this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "deny-rule" });
-      this.audit?.logTool({
-        tool: name,
-        summary,
-        outcome: "blocked",
-        durationMs: Date.now() - startedAt,
-      });
+      logToolOutcome("blocked");
       finishSpan("ERROR", "blocked by deny rule");
       handlers.onToolEnd(id, name, summary, "blocked by a deny rule", true);
       return "This action is blocked by a deny rule in the user's settings. Do not retry it; take a different approach.";
@@ -533,12 +549,7 @@ export class Agent {
           source: "interactive",
           danger: danger ?? undefined,
         });
-        this.audit?.logTool({
-          tool: name,
-          summary,
-          outcome: "denied",
-          durationMs: Date.now() - startedAt,
-        });
+        logToolOutcome("denied");
         finishSpan("ERROR", "denied by user");
         handlers.onToolEnd(id, name, summary, "denied by user", true);
         return "The user denied permission for this tool call. Do not retry it; ask the user how to proceed or take a different approach.";
@@ -568,12 +579,7 @@ export class Agent {
     if (this.hooks?.has("preToolUse")) {
       const pre = await this.hooks.runToolHooks("preToolUse", name, args);
       if (pre.blocked) {
-        this.audit?.logTool({
-          tool: name,
-          summary,
-          outcome: "blocked",
-          durationMs: Date.now() - startedAt,
-        });
+        logToolOutcome("blocked");
         finishSpan("ERROR", "blocked by preToolUse hook");
         handlers.onToolEnd(id, name, summary, "blocked by a preToolUse hook", true);
         return pre.output;
@@ -581,6 +587,7 @@ export class Agent {
     }
 
     handlers.onToolStart(id, name, summary);
+    execStartedAt = Date.now();
     try {
       let output = await tool.execute(args, this.ctx, signal);
       if (tool.external) {
@@ -590,23 +597,13 @@ export class Agent {
         const post = await this.hooks.runToolHooks("postToolUse", name, args);
         if (post.output.trim()) output += `\n[postToolUse hook]: ${post.output.trim()}`;
       }
-      this.audit?.logTool({
-        tool: name,
-        summary,
-        outcome: "ok",
-        durationMs: Date.now() - startedAt,
-      });
+      logToolOutcome("ok");
       finishSpan("OK");
       handlers.onToolEnd(id, name, summary, output.slice(0, PREVIEW_CHARS), false);
       return output;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.audit?.logTool({
-        tool: name,
-        summary,
-        outcome: "error",
-        durationMs: Date.now() - startedAt,
-      });
+      logToolOutcome("error");
       finishSpan("ERROR", msg);
       handlers.onToolEnd(id, name, summary, msg.slice(0, PREVIEW_CHARS), true);
       return `Error: ${msg}`;

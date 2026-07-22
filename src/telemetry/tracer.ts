@@ -156,6 +156,19 @@ function telemetryDir(): string {
   return path.join(CONFIG_DIR, "telemetry");
 }
 
+/**
+ * Where this session's spans are written, or undefined when no file sink is
+ * active. Exported so callers that report results (headless JSON) can point
+ * the reader at the trace without duplicating the path logic.
+ */
+export function telemetryFileFor(sessionId: string): string | undefined {
+  const mode = (process.env.KRITYA_OTEL ?? "off").toLowerCase();
+  if (mode === "off" || mode === "" || mode === "false") return undefined;
+  // "console" is the only enabled mode with no file behind it.
+  if (mode === "console") return undefined;
+  return process.env.KRITYA_OTEL_FILE ?? path.join(telemetryDir(), `${sessionId}.otel.jsonl`);
+}
+
 function fileSink(file: string): Sink {
   let ready = false;
   return (span) => {
@@ -193,9 +206,7 @@ export function createTracer(sessionId: string): Tracer {
 
   const sinks: Sink[] = [];
   if (mode === "file" || mode === "both") {
-    const file =
-      process.env.KRITYA_OTEL_FILE ?? path.join(telemetryDir(), `${sessionId}.otel.jsonl`);
-    sinks.push(fileSink(file));
+    sinks.push(fileSink(telemetryFileFor(sessionId)!));
   }
   if (mode === "console" || mode === "both") {
     sinks.push(consoleSink());

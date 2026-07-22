@@ -53,7 +53,14 @@ export interface PermissionRecord extends BaseRecord {
 export interface ToolRecord extends BaseRecord {
   event: "tool";
   outcome: ToolOutcome;
+  /** Time the tool itself ran. Excludes any wait for a permission answer. */
   durationMs?: number;
+  /**
+   * Time spent before the tool started — almost entirely a human reading a
+   * permission prompt. Kept out of durationMs so tool timings stay a measure
+   * of the machine, not of how fast the user reads.
+   */
+  waitMs?: number;
 }
 
 type AuditRecord = (PermissionRecord | ToolRecord) & { prevHash: string; hash: string };
@@ -83,6 +90,11 @@ export class AuditLog {
     private readonly sessionId: string,
     private readonly file: string = defaultAuditFile(sessionId)
   ) {}
+
+  /** Where this session's records are written, for callers that report it. */
+  get path(): string {
+    return this.file;
+  }
 
   /**
    * Off by default only when explicitly disabled; auditing is on otherwise so

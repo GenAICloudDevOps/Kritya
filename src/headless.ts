@@ -13,7 +13,7 @@ import { loadRules } from "./permissions/rules.js";
 import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
-import { createTracer } from "./telemetry/tracer.js";
+import { createTracer, telemetryFileFor } from "./telemetry/tracer.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
@@ -50,6 +50,15 @@ interface HeadlessResult {
   usage: { promptTokens: number; completionTokens: number; cachedPromptTokens: number };
   durationMs: number;
   model?: string;
+  /**
+   * Identifiers and file paths that let a CI consumer join this result to the
+   * records that explain it. Without them the audit log and spans exist on
+   * disk with no way to tell which run they belong to.
+   */
+  sessionId?: string;
+  traceId?: string;
+  auditFile?: string;
+  telemetryFile?: string;
 }
 
 function emit(args: HeadlessArgs, r: HeadlessResult): void {
@@ -234,6 +243,10 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     usage,
     durationMs: Date.now() - startedAt,
     model,
+    sessionId: session.id,
+    traceId: agent.lastTraceId,
+    auditFile: agent.audit?.path,
+    telemetryFile: telemetryFileFor(session.id),
   });
 }
 
