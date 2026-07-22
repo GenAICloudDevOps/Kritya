@@ -238,10 +238,35 @@ export class Agent {
     }
   }
 
-  /** Summarize older history into one message, keeping the recent tail. */
+  /**
+   * Summarize older history into one message, keeping the recent tail. This
+   * discards the original messages permanently (only the summary survives),
+   * so it's recorded as a lifecycle event — both a span and an audit record —
+   * distinct from the `llm.chat` span for the summarization call itself.
+   */
   async compact(signal?: AbortSignal): Promise<string> {
+    const compactSpan = this.tracer.startSpan("agent.compact", { parent: this.currentTurnSpan });
+    const tokensBefore = this.lastPromptTokens;
+    try {
+      const note = await this.doCompact(signal, compactSpan);
+      compactSpan.setStatus("OK");
+      return note;
+    } catch (err) {
+      compactSpan.setStatus("ERROR", err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      compactSpan.setAttribute("kritya.prompt_tokens_before", tokensBefore);
+      compactSpan.setAttribute("kritya.prompt_tokens_after", this.lastPromptTokens);
+      compactSpan.end();
+    }
+  }
+
+  private async doCompact(signal: AbortSignal | undefined, compactSpan: Span): Promise<string> {
     const { toSummarize, keep } = splitForCompaction(this.history);
-    if (!toSummarize.length) return "Nothing to compact yet.";
+    if (!toSummarize.length) {
+      compactSpan.setAttribute("kritya.skipped", true);
+      return "Nothing to compact yet.";
+    }
     const result = await this.client.chat(
       this.getModel(),
       [
@@ -257,7 +282,7 @@ export class Agent {
       [],
       { onTextDelta: () => {}, onReasoningDelta: () => {} },
       signal,
-      { tracer: this.tracer, parent: this.currentTurnSpan }
+      { tracer: this.tracer, parent: compactSpan }
     );
     const summary = result.text.trim() || "(summary unavailable)";
     this.history = [
@@ -269,6 +294,13 @@ export class Agent {
     // Rough size estimate until the next model call reports real usage.
     this.lastPromptTokens = Math.round(JSON.stringify(this.history).length / 4);
     const note = `Compacted context: summarized ${toSummarize.length} messages, kept the last ${keep.length}.`;
+    compactSpan.setAttribute("kritya.messages_summarized", toSummarize.length);
+    compactSpan.setAttribute("kritya.messages_kept", keep.length);
+    this.audit?.logTool({
+      tool: "compact",
+      summary: `summarized ${toSummarize.length} message(s), kept ${keep.length}`,
+      outcome: "ok",
+    });
 
     if (!this.autoMemory) return note;
     // Best-effort: memory distillation is a nice-to-have, never let it fail
@@ -340,7 +372,7 @@ export class Agent {
     } finally {
       this.currentTurnSpan = undefined;
       turnSpan.end();
-      await this.hooks?.runStop();
+      await this.hooks?.runStop(turnSpan);
     }
   }
 
@@ -593,11 +625,11 @@ export class Agent {
     }
 
     if (this.hooks?.has("preToolUse")) {
-      const pre = await this.hooks.runToolHooks("preToolUse", name, args);
+      const pre = await this.hooks.runToolHooks("preToolUse", name, args, span);
       if (pre.blocked) {
         logToolOutcome("blocked");
-        finishSpan("ERROR", "blocked by preToolUse hook");
-        handlers.onToolEnd(id, name, summary, "blocked by a preToolUse hook", true);
+        finishSpan("ERROR", `blocked by preToolUse hook: ${pre.blockedBy}`);
+        handlers.onToolEnd(id, name, summary, `blocked by hook \`${pre.blockedBy}\``, true);
         return pre.output;
       }
     }
@@ -610,7 +642,7 @@ export class Agent {
         output = fenceExternal(output);
       }
       if (this.hooks?.has("postToolUse")) {
-        const post = await this.hooks.runToolHooks("postToolUse", name, args);
+        const post = await this.hooks.runToolHooks("postToolUse", name, args, span);
         if (post.output.trim()) output += `\n[postToolUse hook]: ${post.output.trim()}`;
       }
       logToolOutcome("ok");

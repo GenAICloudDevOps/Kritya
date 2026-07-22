@@ -342,7 +342,8 @@ async function main() {
   const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
   const approvedProjectMcp = await resolveMcpServerTrust(projectMcp);
   const mcpTools: ToolDef[] = await loadMcpTools(
-    mergeMcpServers(config.mcpServers, approvedProjectMcp)
+    mergeMcpServers(config.mcpServers, approvedProjectMcp),
+    { tracer: sessionTracer, audit: sessionAudit }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
@@ -584,6 +585,7 @@ async function main() {
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
   agent.audit = sessionAudit;
   agent.tracer = sessionTracer;
+  agent.hooks.tracer = sessionTracer;
   // Only the main interactive agent distills durable facts into KRITYA.md on
   // compaction — subagents (read-only or write) never do, even though they
   // run the same Agent class and can also trigger auto-compaction.

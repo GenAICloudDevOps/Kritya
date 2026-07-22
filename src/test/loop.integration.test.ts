@@ -450,3 +450,26 @@ test("a subagent sharing the parent's audit log writes to the same chain", async
   // instance weren't serializing writes correctly.
   assert.equal(AuditLog.verify(file).ok, true);
 });
+
+test("compact() writes an audit record, since it permanently discards messages", async () => {
+  const { client } = scriptedClient([textRound("a dense summary of everything so far.")]);
+  const agent = makeAgent(client, []);
+  // Compaction only does anything once history is longer than the kept tail.
+  for (let i = 0; i < 12; i++) {
+    agent.history.push({ role: "user", content: `message ${i}` });
+  }
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "kritya-audit-")), "s.audit.jsonl");
+  agent.audit = new AuditLog("sess", file);
+
+  const note = await agent.compact();
+
+  assert.match(note, /Compacted context/);
+  const records = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const compactRecord = records.find((r) => r.event === "tool" && r.tool === "compact");
+  assert.ok(compactRecord, "compaction should be recorded in the audit log");
+  assert.equal(compactRecord!.outcome, "ok");
+});

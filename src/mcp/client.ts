@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type { McpServerConfig } from "../config/config.js";
 import type { ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
+import type { AuditLog } from "../audit/audit.js";
+import { NOOP_TRACER, type Tracer } from "../telemetry/tracer.js";
 
 /**
  * Model Context Protocol client with two transports and no SDK dependency
@@ -354,13 +356,20 @@ function sanitize(s: string): string {
  * Resilient: a server that fails to start is skipped with a warning (and shows
  * as failed in /mcp), never crashing kritya. Returns an empty list when
  * nothing is configured.
+ *
+ * `trace` is optional so callers that don't care (tests, tools that load MCP
+ * servers ad hoc) can omit it; when given, each connect attempt gets a span
+ * and a failure is also written to the audit log — otherwise a failed server
+ * was only ever a single stderr line that nothing else recorded.
  */
 export async function loadMcpTools(
-  servers: Record<string, McpServerConfig> | undefined
+  servers: Record<string, McpServerConfig> | undefined,
+  trace?: { tracer: Tracer; audit?: AuditLog }
 ): Promise<ToolDef[]> {
   statuses = [];
   if (!servers || Object.keys(servers).length === 0) return [];
   const tools: ToolDef[] = [];
+  const tracer = trace?.tracer ?? NOOP_TRACER;
 
   await Promise.all(
     Object.entries(servers).map(async ([name, cfg]) => {
@@ -372,6 +381,9 @@ export async function loadMcpTools(
         tools: [],
       };
       statuses.push(status);
+      const span = tracer.startSpan("mcp.connect", {
+        attributes: { "kritya.mcp_server": name, "kritya.mcp_transport": status.transport },
+      });
       let conn: McpConnection | undefined;
       try {
         conn = new McpConnection(name, makeTransport(name, cfg));
@@ -382,10 +394,20 @@ export async function loadMcpTools(
           status.tools.push(spec.name);
         }
         status.ok = true;
+        span.setAttribute("kritya.mcp_tool_count", status.tools.length);
+        span.setStatus("OK");
       } catch (err) {
         conn?.close();
         status.error = err instanceof Error ? err.message : String(err);
         process.stderr.write(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);
+        span.setStatus("ERROR", status.error);
+        trace?.audit?.logTool({
+          tool: "mcp_connect",
+          summary: `server "${name}" failed to start: ${status.error}`,
+          outcome: "error",
+        });
+      } finally {
+        span.end();
       }
     })
   );

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR, scrubbedShellEnv } from "../config/config.js";
 import { safeCompileRegex } from "../tools/common.js";
+import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 
 /**
  * User-configured shell hooks, from the `hooks` key of settings.json (workspace
@@ -40,6 +41,8 @@ export type HooksConfig = Partial<Record<HookEvent, HookDef[]>>;
 export interface HookResult {
   blocked: boolean;
   output: string;
+  /** The command of the hook that caused the block, so a block can say which hook did it, not just "a hook". */
+  blockedBy?: string;
 }
 
 const HOOK_TIMEOUT_MS = 30_000;
@@ -86,6 +89,9 @@ function execHook(
 }
 
 export class HookRunner {
+  /** OpenTelemetry-shaped tracer, one span per hook execution. No-op unless set by the caller. */
+  tracer: Tracer = NOOP_TRACER;
+
   constructor(
     private hooks: HooksConfig,
     private workspace: string
@@ -99,7 +105,8 @@ export class HookRunner {
   async runToolHooks(
     event: "preToolUse" | "postToolUse",
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    parent?: Span
   ): Promise<HookResult> {
     const defs = this.hooks[event] ?? [];
     // scrubbedShellEnv: hooks are arbitrary commands and must not silently
@@ -122,22 +129,34 @@ export class HookRunner {
         }
         if (!matches) continue;
       }
+      const span = this.tracer.startSpan(`hook.${event}`, {
+        parent,
+        attributes: { "kritya.hook_command": def.command, "kritya.hook_tool": toolName },
+      });
       const { ok, output } = await execHook(def.command, this.workspace, env);
       if (output) outputs.push(output);
       if (!ok && event === "preToolUse" && def.blocking) {
+        span.setStatus("ERROR", "blocked").end();
         return {
           blocked: true,
-          output: `A preToolUse hook blocked this ${toolName} call:\n${output}`,
+          blockedBy: def.command,
+          output: `A preToolUse hook (\`${def.command}\`) blocked this ${toolName} call:\n${output}`,
         };
       }
+      span.setStatus(ok ? "OK" : "ERROR", ok ? undefined : output.slice(0, 500)).end();
     }
     return { blocked: false, output: outputs.join("\n") };
   }
 
-  async runStop(): Promise<void> {
+  async runStop(parent?: Span): Promise<void> {
     for (const def of this.hooks.stop ?? []) {
-      // stop hooks are best-effort; failures are ignored.
-      await execHook(def.command, this.workspace, scrubbedShellEnv());
+      const span = this.tracer.startSpan("hook.stop", {
+        parent,
+        attributes: { "kritya.hook_command": def.command },
+      });
+      // stop hooks are best-effort; failures are ignored beyond the span.
+      const { ok, output } = await execHook(def.command, this.workspace, scrubbedShellEnv());
+      span.setStatus(ok ? "OK" : "ERROR", ok ? undefined : output.slice(0, 500)).end();
     }
   }
 }

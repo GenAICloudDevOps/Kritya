@@ -117,6 +117,8 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const session = new SessionStore(workspace);
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   session.start(initialHistory);
+  const sessionAudit = AuditLog.forSession(session.id);
+  const sessionTracer = createTracer(session.id);
 
   // Subagents (spawn_agent/spawn_write_agent) aren't wired up here — they
   // need per-call worktree/concurrency plumbing that isn't worth duplicating
@@ -148,7 +150,8 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     }
   }
   const mcpTools: ToolDef[] = await loadMcpTools(
-    mergeMcpServers(config.mcpServers, approvedProjectMcp)
+    mergeMcpServers(config.mcpServers, approvedProjectMcp),
+    { tracer: sessionTracer, audit: sessionAudit }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
@@ -165,8 +168,9 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   agent.contextWindow = contextWindowFor(model, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
-  agent.audit = AuditLog.forSession(session.id);
-  agent.tracer = createTracer(session.id);
+  agent.audit = sessionAudit;
+  agent.tracer = sessionTracer;
+  agent.hooks.tracer = sessionTracer;
 
   const toolCalls: ToolCallRecord[] = [];
   let usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };

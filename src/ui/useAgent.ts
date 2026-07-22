@@ -384,6 +384,12 @@ export function useAgent({
                   `${tokenBudget.toLocaleString()} tokens this session). kritya will stop once it ` +
                   `hits 100% — run /budget to check or raise it.`,
               });
+              agent.audit?.logTool({
+                tool: "budget",
+                summary: `token budget at ${bPct}% (${totalTokensRef.current}/${tokenBudget})`,
+                outcome: "ok",
+              });
+              agent.turnSpan?.addEvent("budget.warn", { "kritya.budget_pct": bPct });
             }
             if (bPct >= 100 && budgetPctRef.current < 100) {
               addItem({
@@ -393,6 +399,12 @@ export function useAgent({
                   `${tokenBudget.toLocaleString()} tokens). Stopping further turns — run ` +
                   `/budget reset to clear it, or /budget <number> to raise the cap.`,
               });
+              agent.audit?.logTool({
+                tool: "budget",
+                summary: `token budget reached, stopping (${totalTokensRef.current}/${tokenBudget})`,
+                outcome: "blocked",
+              });
+              agent.turnSpan?.addEvent("budget.stopped", { "kritya.budget_pct": bPct });
               setBudgetStopped(true);
               abortRef.current?.abort();
             }

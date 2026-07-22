@@ -360,6 +360,14 @@ Headless JSON output (`--prompt ... --output json`) includes `sessionId`,
 `traceId`, `auditFile`, and `telemetryFile`, so a CI run's result can be
 matched back to the detailed records that explain it.
 
+Beyond model calls and tool calls, these events are also recorded (span +,
+where relevant, an audit line): context **compaction** — including the
+automatic one that fires when the context window is nearly full, since it
+permanently discards messages; the session **token budget** crossing its warn
+threshold or hard-stopping a turn; each **hook** run, tagged with which
+specific hook command ran or blocked a call; and **MCP server** connect
+attempts, so a server that fails to start leaves more than one stderr line.
+
 ## Configuration
 
 `~/.kritya/config.json`:
