@@ -23,7 +23,7 @@ import { hardenWindowsDir } from "../config/winAcl.js";
  */
 
 export type SpanStatusCode = "OK" | "ERROR" | "UNSET";
-type AttrValue = string | number | boolean;
+export type AttrValue = string | number | boolean;
 
 export interface SpanExport {
   traceId: string;

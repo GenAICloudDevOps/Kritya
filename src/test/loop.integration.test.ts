@@ -406,3 +406,47 @@ test("a denied tool is recorded as denied and not executed", async () => {
   const exec = records.find((r) => r.event === "tool")!;
   assert.equal(exec.outcome, "denied");
 });
+
+test("a subagent sharing the parent's audit log writes to the same chain", async () => {
+  // Mirrors how index.tsx wires a spawned subagent: one AuditLog instance
+  // handed to both the parent and the subagent, so a subagent's actions
+  // aren't a blind spot in the trail.
+  const parentReadTool = fakeTool("read_file", { output: "contents" });
+  const subWriteTool = fakeTool("write_file", { requiresPermission: true });
+
+  const { client: parentClient } = scriptedClient([
+    toolRound([{ id: "call_1", name: "read_file", argsJson: "{}" }]),
+    textRound("done."),
+  ]);
+  const { client: subClient } = scriptedClient([
+    toolRound([{ id: "call_1", name: "write_file", argsJson: '{"path":"a.ts"}' }]),
+    textRound("subagent done."),
+  ]);
+
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "kritya-audit-")), "s.audit.jsonl");
+  const sharedAudit = new AuditLog("sess", file);
+
+  const parent = makeAgent(parentClient, [parentReadTool]);
+  parent.audit = sharedAudit;
+  await parent.runTurn("investigate", makeHandlers("yes").handlers);
+
+  const sub = makeAgent(subClient, [subWriteTool]);
+  sub.audit = sharedAudit;
+  sub.spanAttributes = { "kritya.subagent": true, "kritya.subagent_task": "fix the bug" };
+  await sub.runTurn("fix it", makeHandlers("yes").handlers);
+
+  const records = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+
+  // Both the parent's and the subagent's tool calls landed in one file.
+  assert.ok(records.some((r) => r.event === "tool" && r.tool === "read_file"));
+  assert.ok(records.some((r) => r.event === "tool" && r.tool === "write_file"));
+
+  // Two agents writing through the same hash-chained log doesn't break the
+  // chain — this is the property that would silently fail if the shared
+  // instance weren't serializing writes correctly.
+  assert.equal(AuditLog.verify(file), -1);
+});

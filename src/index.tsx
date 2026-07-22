@@ -280,6 +280,12 @@ async function main() {
     maxTokens: provider.maxTokens,
   });
   const session = new SessionStore(workspace);
+  // Shared by the main agent and every subagent it spawns, so a write
+  // subagent's commits and a read-only subagent's tool calls land in the same
+  // audit trail and trace tree as the turn that spawned them — an agent that
+  // edits the repo should never do so off the record.
+  const sessionAudit = AuditLog.forSession(session.id);
+  const sessionTracer = createTracer(session.id);
 
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   const initialTasks = args.continue ? SessionStore.loadLatestTasks(workspace) : [];
@@ -372,6 +378,10 @@ async function main() {
       []
     );
     sub.maxSteps = 15;
+    sub.audit = sessionAudit;
+    sub.tracer = sessionTracer;
+    sub.spanParent = agent.turnSpan;
+    sub.spanAttributes = { "kritya.subagent": true, "kritya.subagent_task": task.slice(0, 120) };
     let finalText = "";
     await sub.runTurn(
       task,
@@ -397,8 +407,18 @@ async function main() {
     }
     const wt = createWorktree(workspace);
     if (!wt) {
+      sessionAudit?.logTool({
+        tool: "subagent_worktree",
+        summary: `worktree creation failed for task: ${task.slice(0, 72)}`,
+        outcome: "error",
+      });
       return { task, write: true, summary: "", error: "failed to create an isolated git worktree" };
     }
+    sessionAudit?.logTool({
+      tool: "subagent_worktree",
+      summary: `created branch "${wt.branch}" for task: ${task.slice(0, 72)}`,
+      outcome: "ok",
+    });
 
     let finalText = "";
     try {
@@ -418,6 +438,15 @@ async function main() {
         []
       );
       sub.maxSteps = 30;
+      sub.audit = sessionAudit;
+      sub.tracer = sessionTracer;
+      sub.spanParent = agent.turnSpan;
+      sub.spanAttributes = {
+        "kritya.subagent": true,
+        "kritya.subagent_write": true,
+        "kritya.subagent_task": task.slice(0, 120),
+        "kritya.subagent_branch": wt.branch,
+      };
       await sub.runTurn(
         task,
         silentHandlers(
@@ -432,6 +461,11 @@ async function main() {
     }
 
     const commitState = commitWorktree(wt, `kritya subagent: ${task.slice(0, 72)}`);
+    sessionAudit?.logTool({
+      tool: "subagent_worktree",
+      summary: `branch "${wt.branch}": commit ${commitState}`,
+      outcome: commitState === "failed" ? "error" : "ok",
+    });
     if (commitState === "clean") {
       const cleaned = removeWorktree(workspace, wt, true);
       const summary = finalText.trim() || "(no changes made)";
@@ -537,8 +571,8 @@ async function main() {
   agent.contextWindow = contextWindowFor(modelRef.current, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
-  agent.audit = AuditLog.forSession(session.id);
-  agent.tracer = createTracer(session.id);
+  agent.audit = sessionAudit;
+  agent.tracer = sessionTracer;
   // Only the main interactive agent distills durable facts into KRITYA.md on
   // compaction — subagents (read-only or write) never do, even though they
   // run the same Agent class and can also trigger auto-compaction.

@@ -6,7 +6,7 @@ import { splitForCompaction, renderTranscript } from "./compactor.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { classifyDanger } from "../permissions/danger.js";
 import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js";
-import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
+import { NOOP_TRACER, type AttrValue, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
 import { isPlanningDocWrite } from "./workflow.js";
@@ -91,7 +91,18 @@ export class Agent {
    * Undefined while telemetry is off, since the no-op tracer mints no ids.
    */
   lastTraceId?: string;
-  /** The span for the in-flight turn, so tool spans can nest under it. */
+  /**
+   * When set, the next turn's span nests under this one instead of starting a
+   * fresh trace. Used to fold a subagent's spans into the parent turn's trace
+   * — set by whoever spawns the subagent, using the parent's `turnSpan`.
+   */
+  spanParent?: Span;
+  /** Extra attributes stamped on this agent's turn spans, e.g. to mark and label a subagent. */
+  spanAttributes?: Record<string, AttrValue>;
+  /** The span for the in-flight turn, so tool spans can nest under it, and so a caller (e.g. a subagent spawner) can pass it down as another agent's `spanParent`. */
+  get turnSpan(): Span | undefined {
+    return this.currentTurnSpan;
+  }
   private currentTurnSpan?: Span;
   private steerQueue: string[] = [];
   /** Named points in the conversation for /rewind (in-memory, this session only). */
@@ -311,7 +322,12 @@ export class Agent {
     };
 
     const turnSpan = this.tracer.startSpan("agent.turn", {
-      attributes: { "kritya.model": this.getModel(), "kritya.session_id": this.session.id },
+      parent: this.spanParent,
+      attributes: {
+        "kritya.model": this.getModel(),
+        "kritya.session_id": this.session.id,
+        ...this.spanAttributes,
+      },
     });
     this.currentTurnSpan = turnSpan;
     this.lastTraceId = turnSpan.traceId || undefined;
