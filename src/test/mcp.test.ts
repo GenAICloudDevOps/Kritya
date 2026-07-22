@@ -10,7 +10,9 @@ import {
   expandServerConfig,
   loadProjectMcpServers,
   mergeMcpServers,
+  missingVars,
 } from "../mcp/servers.js";
+import { planSpawn, resolveWindowsCommand } from "../mcp/spawnWin.js";
 import { gatedContentHash, describeGatedContent } from "../trust/trust.js";
 
 after(() => shutdownMcp());
@@ -41,6 +43,66 @@ test("expandServerConfig expands command, args, env, url, and headers", () => {
   assert.deepEqual(out.env, { KEY: "sekret" });
   assert.equal(out.url, "https://x/sekret");
   assert.deepEqual(out.headers, { authorization: "Bearer sekret" });
+});
+
+test("missingVars finds unexpanded ${VAR}s across every field", () => {
+  process.env.KRITYA_TEST_TOKEN = "sekret";
+  const cfg = expandServerConfig({
+    url: "https://example.com/${KRITYA_TEST_TOKEN}",
+    headers: { authorization: "Bearer ${KRITYA_TEST_UNSET_A}" },
+    env: { EXTRA: "${KRITYA_TEST_UNSET_B}" },
+  });
+  assert.deepEqual(missingVars(cfg), ["KRITYA_TEST_UNSET_A", "KRITYA_TEST_UNSET_B"]);
+  assert.deepEqual(missingVars(expandServerConfig({ command: "node" })), []);
+});
+
+test("a server with an unset ${VAR} fails by name instead of reaching the network", async () => {
+  delete process.env.KRITYA_TEST_UNSET_A;
+  const tools = await loadMcpTools({
+    leaky: {
+      url: "http://127.0.0.1:1/mcp",
+      headers: { authorization: "Bearer ${KRITYA_TEST_UNSET_A}" },
+    },
+  });
+  assert.equal(tools.length, 0);
+  const status = mcpStatus().find((s) => s.name === "leaky");
+  assert.equal(status?.ok, false);
+  assert.match(status?.error ?? "", /missing env var KRITYA_TEST_UNSET_A/);
+  // Specifically not misreported as an OAuth problem.
+  assert.notEqual(status?.needsAuth, true);
+});
+
+// ---------- Windows command resolution ----------
+
+test("planSpawn is a passthrough off Windows", () => {
+  if (os.platform() === "win32") return;
+  const plan = planSpawn("npx", ["-y", "pkg"]);
+  assert.equal(plan.command, "npx");
+  assert.deepEqual(plan.args, ["-y", "pkg"]);
+  assert.equal(plan.windowsVerbatimArguments, undefined);
+});
+
+test("planSpawn routes Windows batch files through cmd.exe with escaped args", () => {
+  if (os.platform() !== "win32") return;
+  // npx ships with Node, so it is present wherever these tests run.
+  const resolved = resolveWindowsCommand("npx");
+  assert.ok(resolved, "npx should resolve via PATHEXT");
+  assert.match(resolved, /\.(cmd|exe)$/i);
+
+  const plan = planSpawn("npx", ["-y", "pkg & calc"]);
+  if (/\.cmd$/i.test(resolved)) {
+    assert.match(plan.command, /cmd\.exe$/i);
+    assert.deepEqual(plan.args.slice(0, 3), ["/d", "/s", "/c"]);
+    assert.equal(plan.windowsVerbatimArguments, true);
+    // The injection attempt is caret-escaped, not handed to cmd.exe as syntax.
+    assert.ok(plan.args[3].includes("^&"));
+    assert.ok(!/[^^]&/.test(plan.args[3]));
+  }
+});
+
+test("resolveWindowsCommand returns undefined for a command that does not exist", () => {
+  if (os.platform() !== "win32") return;
+  assert.equal(resolveWindowsCommand("kritya-definitely-not-a-real-command"), undefined);
 });
 
 // ---------- .mcp.json loading and merging ----------
@@ -150,6 +212,31 @@ test("stdio: a server that fails to start is reported, not fatal", async () => {
   assert.ok(status?.error);
 });
 
+test("stdio: a dying server reports its exit code and its stderr", async () => {
+  const tools = await loadMcpTools({
+    noisy: {
+      command: process.execPath,
+      args: ["-e", "console.error('auth error: bad token'); process.exit(3)"],
+    },
+  });
+  assert.equal(tools.length, 0);
+  const status = mcpStatus().find((s) => s.name === "noisy");
+  assert.equal(status?.ok, false);
+  assert.match(status?.error ?? "", /auth error: bad token/);
+  assert.match(status?.error ?? "", /code 3/);
+});
+
+test("stdio: a server that floods stderr keeps working", async () => {
+  // Well past the ~64KB pipe buffer: without a stderr reader the child blocks
+  // in write() forever and this never completes.
+  const flood = `process.stderr.write('x'.repeat(400000));\n${STDIO_SERVER}`;
+  const tools = await loadMcpTools({
+    chatty: { command: process.execPath, args: ["-e", flood] },
+  });
+  assert.equal(tools.length, 1);
+  assert.equal(await tools[0].execute({ text: "hi" }, { workspace: "." }), "echo:hi");
+});
+
 test("a config with neither command nor url is rejected per-server", async () => {
   const tools = await loadMcpTools({ empty: {} });
   assert.equal(tools.length, 0);
@@ -167,8 +254,13 @@ interface SeenRequest {
   auth?: string;
 }
 
-function startHttpMcpServer(): Promise<{ url: string; seen: SeenRequest[]; close(): void }> {
+function startHttpMcpServer(opts: { hangOnCall?: boolean } = {}): Promise<{
+  url: string;
+  seen: SeenRequest[];
+  close(): void;
+}> {
   const seen: SeenRequest[] = [];
+  const hung: http.ServerResponse[] = [];
   const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -216,6 +308,14 @@ function startHttpMcpServer(): Promise<{ url: string; seen: SeenRequest[]; close
           ],
         });
       } else if (m.method === "tools/call") {
+        if (opts.hangOnCall) {
+          // Open the stream and never answer, so the client's cancellation
+          // path is the only thing that can end the call.
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.write(": keep-alive comment\n\n");
+          hung.push(res);
+          return;
+        }
         // Respond as an SSE stream to exercise the event-stream parsing path.
         res.writeHead(200, { "content-type": "text/event-stream" });
         const result = {
@@ -235,7 +335,10 @@ function startHttpMcpServer(): Promise<{ url: string; seen: SeenRequest[]; close
       resolve({
         url: `http://127.0.0.1:${addr.port}/mcp`,
         seen,
-        close: () => server.close(),
+        close: () => {
+          for (const res of hung) res.end();
+          server.close();
+        },
       });
     });
   });
@@ -271,6 +374,28 @@ test("http: initializes, tracks the session id, sends headers, and parses SSE re
     // The negotiated protocol version is sent after initialize.
     const call = srv.seen.find((r) => r.method === "tools/call");
     assert.ok(call?.protocolVersion);
+  } finally {
+    srv.close();
+  }
+});
+
+test("http: cancelling a tool call rejects at once and tells the server", async () => {
+  const srv = await startHttpMcpServer({ hangOnCall: true });
+  try {
+    const tools = await loadMcpTools({ hanger: { url: srv.url } });
+    assert.equal(tools.length, 1);
+
+    const ctrl = new AbortController();
+    const started = Date.now();
+    const call = tools[0].execute({ text: "x" }, { workspace: "." }, ctrl.signal);
+    setTimeout(() => ctrl.abort(), 50);
+    await assert.rejects(call, /cancelled/);
+    // Not the 120s CALL_TIMEOUT_MS.
+    assert.ok(Date.now() - started < 5_000);
+
+    // The server is told to stop working, per the spec's notifications/cancelled.
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(srv.seen.some((r) => r.method === "notifications/cancelled"));
   } finally {
     srv.close();
   }

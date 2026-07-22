@@ -5,6 +5,8 @@ import { VERSION } from "../version.js";
 import type { AuditLog } from "../audit/audit.js";
 import { NOOP_TRACER, type Tracer } from "../telemetry/tracer.js";
 import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oauth.js";
+import { missingVars } from "./servers.js";
+import { planSpawn } from "./spawnWin.js";
 
 /**
  * Model Context Protocol client with two transports and no SDK dependency
@@ -26,6 +28,10 @@ import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oaut
 const PROTOCOL_VERSION = "2025-06-18";
 const CONNECT_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 120_000;
+
+/** How much of a server's stderr to keep for diagnostics, and how much to report. */
+const STDERR_KEEP_BYTES = 8_192;
+const STDERR_REPORT_LINES = 5;
 
 /** Env vars an MCP server's own OS/runtime needs to start up at all, without inheriting API keys. */
 const PASSTHROUGH_ENV_VARS = [
@@ -63,6 +69,8 @@ interface Pending {
   resolve(value: unknown): void;
   reject(err: Error): void;
   timer: NodeJS.Timeout;
+  /** Detach the cancellation listener; run on every path that settles the request. */
+  cleanup(): void;
 }
 
 interface McpToolSpec {
@@ -75,13 +83,34 @@ interface McpToolSpec {
  * A transport delivers JSON-RPC messages to the server and feeds messages
  * coming back through onMessage. `send` resolves once the message (and, for
  * HTTP, its response body) has been fully handled; connection-level failures
- * surface through onError.
+ * surface through onError. `signal` aborts the in-flight delivery when the
+ * user cancels.
  */
 interface Transport {
   onMessage: (msg: JsonRpcMessage) => void;
   onError: (err: Error) => void;
-  send(msg: JsonRpcMessage, timeoutMs: number): Promise<void>;
+  send(msg: JsonRpcMessage, timeoutMs: number, signal?: AbortSignal): Promise<void>;
   close(): void;
+}
+
+/**
+ * A signal that fires on either the per-request timeout or the user's cancel.
+ * `AbortSignal.any` only landed in Node 20 and we support 18, hence the manual
+ * bridge.
+ */
+function withTimeout(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!signal) return timeout;
+  const any = (AbortSignal as unknown as { any?(s: AbortSignal[]): AbortSignal }).any;
+  if (any) return any.call(AbortSignal, [signal, timeout]);
+  const ctrl = new AbortController();
+  const abort = () => ctrl.abort();
+  if (signal.aborted || timeout.aborted) ctrl.abort();
+  else {
+    signal.addEventListener("abort", abort, { once: true });
+    timeout.addEventListener("abort", abort, { once: true });
+  }
+  return ctrl.signal;
 }
 
 class StdioTransport implements Transport {
@@ -89,20 +118,56 @@ class StdioTransport implements Transport {
   onError: (err: Error) => void = () => {};
   private proc: ChildProcess;
   private buffer = "";
+  /** Tail of the server's stderr, kept for the exit message (see below). */
+  private stderrTail = "";
 
   constructor(command: string, args: string[], env: Record<string, string> | undefined) {
-    this.proc = spawn(command, args, {
+    const plan = planSpawn(command, args);
+    this.proc = spawn(plan.command, plan.args, {
       // Minimal env, not the full process env: every provider API key lives
       // in process.env, and an MCP server is third-party code the user opted
       // into but shouldn't automatically receive credentials it never asked
       // for. Servers that need extra vars declare them in their own `env`.
       env: { ...minimalEnv(), ...env },
       stdio: ["pipe", "pipe", "pipe"],
+      windowsVerbatimArguments: plan.windowsVerbatimArguments,
     });
     this.proc.stdout?.setEncoding("utf8");
     this.proc.stdout?.on("data", (chunk: string) => this.onData(chunk));
-    this.proc.on("exit", () => this.onError(new Error("server process exited")));
-    this.proc.on("error", (err) => this.onError(err));
+    // Draining stderr is not optional: we asked for a pipe, and a server that
+    // logs more than the ~64KB pipe buffer blocks in write() forever if nobody
+    // reads it. Keeping the tail also means a server that dies on a bad token
+    // can say why, instead of just "exited".
+    this.proc.stderr?.setEncoding("utf8");
+    this.proc.stderr?.on("data", (chunk: string) => {
+      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_KEEP_BYTES);
+    });
+    // Report on "close" (all stdio flushed), not "exit", so the stderr that
+    // explains the exit has actually arrived. "close" can be held open by a
+    // grandchild inheriting the pipes, so "exit" still arms a short fallback —
+    // a slightly thinner message beats never reporting at all.
+    let reported = false;
+    const report = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (reported) return;
+      reported = true;
+      const how = signal ? `killed by ${signal}` : `exited with code ${code ?? 0}`;
+      this.onError(new Error(`server process ${how}${this.stderrDetail()}`));
+    };
+    this.proc.on("close", report);
+    this.proc.on("exit", (code, signal) => {
+      setTimeout(() => report(code, signal), 200).unref();
+    });
+    this.proc.on("error", (err) => this.onError(new Error(`${err.message}${this.stderrDetail()}`)));
+  }
+
+  /** The last few non-blank stderr lines, formatted for an error message. */
+  private stderrDetail(): string {
+    const lines = this.stderrTail
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .slice(-STDERR_REPORT_LINES);
+    return lines.length ? ` — stderr: ${lines.join(" | ")}` : "";
   }
 
   private onData(chunk: string): void {
@@ -165,8 +230,8 @@ class HttpTransport implements Transport {
     return headers;
   }
 
-  async send(msg: JsonRpcMessage, timeoutMs: number): Promise<void> {
-    let res = await this.post(msg, timeoutMs);
+  async send(msg: JsonRpcMessage, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    let res = await this.post(msg, timeoutMs, signal);
 
     // 401 has two meanings: an access token that just aged out (refresh and
     // retry once — silent, and the common case an hour into a session), or no
@@ -175,7 +240,7 @@ class HttpTransport implements Transport {
       const refreshed = await this.oauth.handleUnauthorized();
       if (refreshed) {
         await res.body?.cancel().catch(() => {});
-        res = await this.post(msg, timeoutMs);
+        res = await this.post(msg, timeoutMs, signal);
       }
       if (res.status === 401) {
         const challenge = parseWwwAuthenticate(res.headers.get("www-authenticate"));
@@ -201,12 +266,18 @@ class HttpTransport implements Transport {
     // Anything else (e.g. a 202 Accepted for a notification) carries no messages.
   }
 
-  private async post(msg: JsonRpcMessage, timeoutMs: number): Promise<Response> {
+  private async post(
+    msg: JsonRpcMessage,
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<Response> {
     return fetch(this.url, {
       method: "POST",
       headers: await this.buildHeaders(),
       body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(timeoutMs),
+      // Cancelling has to tear the socket down too, or the request stays in
+      // flight for the full timeout after the user has walked away.
+      signal: withTimeout(timeoutMs, signal),
     });
   }
 
@@ -268,12 +339,20 @@ class McpConnection {
     transport.onError = (err) => this.fail(new Error(`MCP server "${name}": ${err.message}`));
   }
 
+  /** Remove a pending request and release everything attached to it. */
+  private take(id: number): Pending | undefined {
+    const p = this.pending.get(id);
+    if (!p) return undefined;
+    this.pending.delete(id);
+    clearTimeout(p.timer);
+    p.cleanup();
+    return p;
+  }
+
   private onMessage(msg: JsonRpcMessage): void {
     if (typeof msg.id !== "number" || msg.method) return; // notification or server->client request
-    const p = this.pending.get(msg.id);
+    const p = this.take(msg.id);
     if (!p) return;
-    this.pending.delete(msg.id);
-    clearTimeout(p.timer);
     if (msg.error) p.reject(new Error(msg.error.message ?? "MCP error"));
     else p.resolve(msg.result);
   }
@@ -283,29 +362,52 @@ class McpConnection {
     this.closed = true;
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
+      p.cleanup();
       p.reject(err);
     }
     this.pending.clear();
   }
 
-  request(method: string, params: unknown, timeoutMs: number): Promise<unknown> {
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error(`MCP server "${this.name}" is not running`));
+    if (signal?.aborted) {
+      return Promise.reject(new Error(`MCP request "${method}" was cancelled`));
+    }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`MCP request "${method}" timed out`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.transport.send({ jsonrpc: "2.0", id, method, params }, timeoutMs).catch((err: Error) => {
-        // Transport-level failure for this request (HTTP error, closed pipe):
-        // reject it directly rather than waiting for the timeout.
-        const p = this.pending.get(id);
+      const onAbort = () => {
+        const p = this.take(id);
         if (!p) return;
-        this.pending.delete(id);
-        clearTimeout(p.timer);
-        p.reject(err);
+        // Tell the server to stop: without this it runs the request to
+        // completion on the far side long after the user has moved on. This is
+        // what notifications/cancelled is for.
+        this.notify("notifications/cancelled", { requestId: id, reason: "cancelled by user" });
+        p.reject(new Error(`MCP request "${method}" was cancelled`));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(() => {
+        const p = this.take(id);
+        p?.reject(new Error(`MCP request "${method}" timed out`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        cleanup: () => signal?.removeEventListener("abort", onAbort),
       });
+      this.transport
+        .send({ jsonrpc: "2.0", id, method, params }, timeoutMs, signal)
+        .catch((err: Error) => {
+          // Transport-level failure for this request (HTTP error, closed pipe):
+          // reject it directly rather than waiting for the timeout.
+          const p = this.take(id);
+          p?.reject(err);
+        });
     });
   }
 
@@ -333,11 +435,16 @@ class McpConnection {
     return listed.tools ?? [];
   }
 
-  async callTool(toolName: string, args: Record<string, unknown>): Promise<string> {
+  async callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<string> {
     const result = (await this.request(
       "tools/call",
       { name: toolName, arguments: args },
-      CALL_TIMEOUT_MS
+      CALL_TIMEOUT_MS,
+      signal
     )) as { content?: { type: string; text?: string }[]; isError?: boolean };
     const text = (result.content ?? [])
       .map((c) => (c.type === "text" ? (c.text ?? "") : `[${c.type} content]`))
@@ -451,6 +558,12 @@ export async function connectServer(
   });
   let conn: McpConnection | undefined;
   try {
+    // Checked here rather than at expansion time: this is where a per-server
+    // failure has somewhere to go (`status.error`, and the /mcp table).
+    const missing = missingVars(cfg);
+    if (missing.length) {
+      throw new Error(`missing env var${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
+    }
     conn = new McpConnection(name, makeTransport(name, cfg));
     const specs = await conn.initialize();
     connections.push(conn);
@@ -501,7 +614,7 @@ function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): Too
     requiresPermission: true,
     external: true,
     summarize: (args) => `${server}/${spec.name}(${JSON.stringify(args).slice(0, 80)})`,
-    execute: (args) => conn.callTool(spec.name, args),
+    execute: (args, _ctx, signal) => conn.callTool(spec.name, args, signal),
   };
 }
 

@@ -18,12 +18,37 @@ import type { McpServerConfig } from "../config/config.js";
  * (e.g. "Authorization": "Bearer ${LINEAR_API_KEY}").
  */
 
+const VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
 /** Expand ${VAR} from process.env; unknown variables are left as-is so typos stay visible. */
 export function expandVars(value: string): string {
-  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, name: string) => {
+  return value.replace(VAR_RE, (whole, name: string) => {
     const v = process.env[name];
     return v !== undefined ? v : whole;
   });
+}
+
+/**
+ * Names of ${VAR}s still unexpanded in an already-expanded config.
+ *
+ * Leaving them literal keeps typos visible, but only if something actually
+ * looks: otherwise a missing LINEAR_API_KEY means we POST the literal string
+ * `Bearer ${LINEAR_API_KEY}` to a third party, get an opaque 401 back, and —
+ * because 401 is also how OAuth asks for a login — report it as "needs login".
+ * Callers use this to fail the server with the real reason instead.
+ */
+export function missingVars(cfg: McpServerConfig): string[] {
+  const found = new Set<string>();
+  const scan = (s: string | undefined) => {
+    if (!s) return;
+    for (const m of s.matchAll(VAR_RE)) found.add(m[1]);
+  };
+  scan(cfg.command);
+  cfg.args?.forEach(scan);
+  scan(cfg.url);
+  for (const v of Object.values(cfg.env ?? {})) scan(v);
+  for (const v of Object.values(cfg.headers ?? {})) scan(v);
+  return [...found].sort();
 }
 
 function expandRecord(rec: Record<string, string> | undefined): Record<string, string> | undefined {
