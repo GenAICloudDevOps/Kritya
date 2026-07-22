@@ -567,8 +567,7 @@ Streamable HTTP (`url`):
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
     },
     "linear": {
-      "url": "https://mcp.linear.app/mcp",
-      "headers": { "Authorization": "Bearer ${LINEAR_API_KEY}" }
+      "url": "https://mcp.linear.app/mcp"
     }
   }
 }
@@ -585,6 +584,56 @@ is re-asked whenever the file changes.
 Their tools appear as `mcp_<server>_<tool>`, each call needs your approval,
 and output is treated as untrusted content. A server that fails to start is
 skipped with a warning; `/mcp` shows each server's status and tools.
+
+#### Signing in to hosted servers (OAuth)
+
+Hosted MCP servers — Linear, Notion, Sentry, GitHub, Atlassian — authenticate
+with OAuth 2.1 rather than a static token, so they need a one-time browser
+sign-in:
+
+```bash
+kritya
+```
+
+```text
+/mcp add linear https://mcp.linear.app/mcp
+/mcp login linear
+```
+
+kritya discovers the server's authorization server from its `401`, registers
+itself dynamically, and opens your browser with PKCE. You approve there, the
+redirect lands on a one-shot `127.0.0.1` listener, and the token is written to
+`~/.kritya/mcp-auth.json` (`0600`, plus Windows ACLs). **Your password never
+touches the terminal.** After that the server connects automatically on every
+start, and expired access tokens refresh silently.
+
+| Command                   | What it does                                       |
+| ------------------------- | -------------------------------------------------- |
+| `/mcp`                    | status of every server, and which need a login     |
+| `/mcp add <name> <url>`   | add a remote server (`-- <cmd…>` for stdio)        |
+| `/mcp remove <name>`      | remove it, and revoke any token it held            |
+| `/mcp login <name>`       | browser sign-in                                    |
+| `/mcp logout <name>`      | revoke server-side where supported, delete locally |
+| `/mcp code <name> <code>` | finish a login by pasting the code (SSH/headless)  |
+
+Servers needing a login are marked `○` and simply contribute no tools until you
+run `/mcp login` — kritya never opens a browser during startup. A server
+declared by the _workspace's_ `.mcp.json` asks for one explicit confirmation
+(`/mcp login <name> --yes`) before it can send you to an account-consent screen,
+since that file was written by whoever wrote the repo. Servers in your own
+config sign in without the extra step.
+
+On a headless box or over SSH, `/mcp login` prints the URL instead of opening
+anything; open it elsewhere and finish with `/mcp code <name> <code>`.
+
+`/mcp logout` distinguishes the two things people conflate: it always deletes
+the token locally, and separately reports whether the provider's revocation
+endpoint confirmed the token is dead. If a server offers no revocation endpoint,
+it says so rather than implying the token is gone.
+
+A literal `Authorization` header in config still works and takes precedence —
+if you've pasted a personal access token, kritya uses it and never overrides it
+with a stored grant.
 
 ## Privacy
 

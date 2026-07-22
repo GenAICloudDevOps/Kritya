@@ -4,6 +4,7 @@ import type { ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
 import type { AuditLog } from "../audit/audit.js";
 import { NOOP_TRACER, type Tracer } from "../telemetry/tracer.js";
+import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oauth.js";
 
 /**
  * Model Context Protocol client with two transports and no SDK dependency
@@ -136,13 +137,17 @@ class HttpTransport implements Transport {
   private sessionId: string | undefined;
   /** Negotiated on initialize; sent as MCP-Protocol-Version on later requests. */
   protocolVersion: string | undefined;
+  /** OAuth state for this endpoint, when the user has logged in (see oauth.ts). */
+  private oauth: OAuthSession;
 
   constructor(
     private url: string,
     private headers: Record<string, string>
-  ) {}
+  ) {
+    this.oauth = new OAuthSession(url);
+  }
 
-  private buildHeaders(): Record<string, string> {
+  private async buildHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
@@ -150,16 +155,35 @@ class HttpTransport implements Transport {
     };
     if (this.sessionId) headers["mcp-session-id"] = this.sessionId;
     if (this.protocolVersion) headers["mcp-protocol-version"] = this.protocolVersion;
+    // A configured Authorization header wins: someone who pasted a PAT into
+    // config meant to use it, and shouldn't be overridden by a stale grant.
+    const hasExplicitAuth = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
+    if (!hasExplicitAuth) {
+      const token = await this.oauth.accessToken();
+      if (token) headers.authorization = `Bearer ${token}`;
+    }
     return headers;
   }
 
   async send(msg: JsonRpcMessage, timeoutMs: number): Promise<void> {
-    const res = await fetch(this.url, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    let res = await this.post(msg, timeoutMs);
+
+    // 401 has two meanings: an access token that just aged out (refresh and
+    // retry once — silent, and the common case an hour into a session), or no
+    // usable grant at all, which only a browser login can fix.
+    if (res.status === 401) {
+      const refreshed = await this.oauth.handleUnauthorized();
+      if (refreshed) {
+        await res.body?.cancel().catch(() => {});
+        res = await this.post(msg, timeoutMs);
+      }
+      if (res.status === 401) {
+        const challenge = parseWwwAuthenticate(res.headers.get("www-authenticate"));
+        await res.body?.cancel().catch(() => {});
+        throw new McpAuthRequiredError(this.url, challenge);
+      }
+    }
+
     const sid = res.headers.get("mcp-session-id");
     if (sid) this.sessionId = sid;
     if (!res.ok) {
@@ -175,6 +199,15 @@ class HttpTransport implements Transport {
       for (const m of Array.isArray(parsed) ? parsed : [parsed]) this.onMessage(m);
     }
     // Anything else (e.g. a 202 Accepted for a notification) carries no messages.
+  }
+
+  private async post(msg: JsonRpcMessage, timeoutMs: number): Promise<Response> {
+    return fetch(this.url, {
+      method: "POST",
+      headers: await this.buildHeaders(),
+      body: JSON.stringify(msg),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   }
 
   /** Parse an SSE body, feeding each `data:` event's JSON to onMessage. */
@@ -210,11 +243,15 @@ class HttpTransport implements Transport {
   close(): void {
     // Best-effort explicit session termination, per the Streamable HTTP spec.
     if (!this.sessionId) return;
-    fetch(this.url, {
-      method: "DELETE",
-      headers: this.buildHeaders(),
-      signal: AbortSignal.timeout(3_000),
-    }).catch(() => {});
+    this.buildHeaders()
+      .then((headers) =>
+        fetch(this.url, {
+          method: "DELETE",
+          headers,
+          signal: AbortSignal.timeout(3_000),
+        })
+      )
+      .catch(() => {});
   }
 }
 
@@ -336,6 +373,10 @@ export interface McpServerStatus {
   target: string;
   ok: boolean;
   error?: string;
+  /** The server is reachable but needs an OAuth login (`/mcp login <name>`). */
+  needsAuth?: boolean;
+  /** resource_metadata URL from the 401 challenge, so login skips re-discovery. */
+  authMetadataUrl?: string;
   tools: string[];
 }
 
@@ -369,50 +410,86 @@ export async function loadMcpTools(
   statuses = [];
   if (!servers || Object.keys(servers).length === 0) return [];
   const tools: ToolDef[] = [];
-  const tracer = trace?.tracer ?? NOOP_TRACER;
 
-  await Promise.all(
-    Object.entries(servers).map(async ([name, cfg]) => {
-      const status: McpServerStatus = {
-        name,
-        transport: cfg.url ? "http" : "stdio",
-        target: cfg.url ?? [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" "),
-        ok: false,
-        tools: [],
-      };
-      statuses.push(status);
-      const span = tracer.startSpan("mcp.connect", {
-        attributes: { "kritya.mcp_server": name, "kritya.mcp_transport": status.transport },
-      });
-      let conn: McpConnection | undefined;
-      try {
-        conn = new McpConnection(name, makeTransport(name, cfg));
-        const specs = await conn.initialize();
-        connections.push(conn);
-        for (const spec of specs) {
-          tools.push(mcpToolDef(conn, name, spec));
-          status.tools.push(spec.name);
-        }
-        status.ok = true;
-        span.setAttribute("kritya.mcp_tool_count", status.tools.length);
-        span.setStatus("OK");
-      } catch (err) {
-        conn?.close();
-        status.error = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);
-        span.setStatus("ERROR", status.error);
-        trace?.audit?.logTool({
-          tool: "mcp_connect",
-          summary: `server "${name}" failed to start: ${status.error}`,
-          outcome: "error",
-        });
-      } finally {
-        span.end();
-      }
-    })
+  const results = await Promise.all(
+    Object.entries(servers).map(([name, cfg]) => connectServer(name, cfg, trace))
   );
+  for (const { tools: t, status } of results) {
+    tools.push(...t);
+    statuses.push(status);
+  }
 
   return tools;
+}
+
+/**
+ * Connect one server and wrap its tools. Split out of loadMcpTools so a login
+ * can bring a server up mid-session without restarting kritya (and without
+ * disturbing the servers that are already connected).
+ *
+ * A server that needs OAuth is *not* an error: it reports `needsAuth` and no
+ * tools, so startup stays quiet and `/mcp` can tell the user what to run. The
+ * alternative — opening a browser during `kritya` startup — would hijack the
+ * terminal before the user has typed anything.
+ */
+export async function connectServer(
+  name: string,
+  cfg: McpServerConfig,
+  trace?: { tracer: Tracer; audit?: AuditLog }
+): Promise<{ tools: ToolDef[]; status: McpServerStatus }> {
+  const tracer = trace?.tracer ?? NOOP_TRACER;
+  const tools: ToolDef[] = [];
+  const status: McpServerStatus = {
+    name,
+    transport: cfg.url ? "http" : "stdio",
+    target: cfg.url ?? [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" "),
+    ok: false,
+    tools: [],
+  };
+  const span = tracer.startSpan("mcp.connect", {
+    attributes: { "kritya.mcp_server": name, "kritya.mcp_transport": status.transport },
+  });
+  let conn: McpConnection | undefined;
+  try {
+    conn = new McpConnection(name, makeTransport(name, cfg));
+    const specs = await conn.initialize();
+    connections.push(conn);
+    for (const spec of specs) {
+      tools.push(mcpToolDef(conn, name, spec));
+      status.tools.push(spec.name);
+    }
+    status.ok = true;
+    span.setAttribute("kritya.mcp_tool_count", status.tools.length);
+    span.setStatus("OK");
+  } catch (err) {
+    conn?.close();
+    if (err instanceof McpAuthRequiredError) {
+      status.needsAuth = true;
+      status.authMetadataUrl = err.resourceMetadataUrl;
+      status.error = `needs login — run /mcp login ${name}`;
+      span.setAttribute("kritya.mcp_needs_auth", true);
+      span.setStatus("OK");
+    } else {
+      status.error = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);
+      span.setStatus("ERROR", status.error);
+      trace?.audit?.logTool({
+        tool: "mcp_connect",
+        summary: `server "${name}" failed to start: ${status.error}`,
+        outcome: "error",
+      });
+    }
+  } finally {
+    span.end();
+  }
+  return { tools, status };
+}
+
+/** Replace one server's entry in the /mcp status table after a reconnect. */
+export function replaceStatus(status: McpServerStatus): void {
+  const idx = statuses.findIndex((s) => s.name === status.name);
+  if (idx >= 0) statuses[idx] = status;
+  else statuses.push(status);
 }
 
 function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): ToolDef {
@@ -426,6 +503,31 @@ function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): Too
     summarize: (args) => `${server}/${spec.name}(${JSON.stringify(args).slice(0, 80)})`,
     execute: (args) => conn.callTool(spec.name, args),
   };
+}
+
+/** The tool-name prefix every tool from a given server shares. */
+export function toolPrefix(server: string): string {
+  return `mcp_${sanitize(server)}_`;
+}
+
+/**
+ * Close one server's connection and forget it. Used by `/mcp remove`,
+ * `/mcp logout`, and before a reconnect — leaving the old connection open
+ * would keep a stdio child process alive and, after a logout, keep a
+ * now-revoked session warm on the remote side.
+ */
+export function disconnectServer(name: string): void {
+  for (let i = connections.length - 1; i >= 0; i--) {
+    if (connections[i].name === name) {
+      connections[i].close();
+      connections.splice(i, 1);
+    }
+  }
+}
+
+/** Drop a server from the /mcp status table entirely. */
+export function forgetStatus(name: string): void {
+  statuses = statuses.filter((s) => s.name !== name);
 }
 
 /** Kill all MCP servers (call on exit). */

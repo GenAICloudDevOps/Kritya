@@ -127,6 +127,33 @@ export class Agent {
     this.history = initialHistory;
   }
 
+  /**
+   * Add tools to the live tool set. Used when an MCP server comes up after
+   * startup (e.g. `/mcp login` finished, or `/mcp add`), so a new server is
+   * usable in the current conversation instead of after a restart. Names are
+   * deduplicated: reconnecting a server must replace its tools, not shadow
+   * them with a second set pointing at a dead connection.
+   */
+  addTools(defs: ToolDef[]): void {
+    for (const def of defs) {
+      const idx = this.tools.findIndex((t) => t.name === def.name);
+      if (idx >= 0) this.tools[idx] = def;
+      else this.tools.push(def);
+    }
+  }
+
+  /** Drop tools by name (a server was removed or logged out of). */
+  removeTools(predicate: (name: string) => boolean): number {
+    let removed = 0;
+    for (let i = this.tools.length - 1; i >= 0; i--) {
+      if (predicate(this.tools[i].name)) {
+        this.tools.splice(i, 1);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   reset(): void {
     this.history = [];
     this.checkpoints.clear();

@@ -8,6 +8,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OAuth 2.1 for remote MCP servers** — HTTP servers previously got only the
+  static `headers` from config, which meant every hosted MCP server (Linear,
+  Notion, Sentry, GitHub, Atlassian) was unreachable, since they all require
+  OAuth with dynamic client registration and PKCE. kritya now implements the
+  full flow: a `401` is parsed for its `WWW-Authenticate` challenge, the
+  protected-resource (RFC 9728) and authorization-server (RFC 8414) metadata are
+  discovered, the client registers itself dynamically (RFC 7591) as a public
+  client, and the user approves in a browser via authorization-code + PKCE
+  (RFC 7636) with the redirect captured by a one-shot loopback listener on
+  `127.0.0.1` (RFC 8252). Tokens are bound to the server with `resource`
+  (RFC 8707) and stored in `~/.kritya/mcp-auth.json` at `0600` with the same
+  Windows-ACL hardening as the rest of `~/.kritya`; expired access tokens
+  refresh on `401` and the request is retried, with concurrent refreshes
+  serialized so a burst of parallel connects can't invalidate each other's
+  grant. A server needing a login is reported as `needsAuth` rather than as a
+  failure, and no browser ever opens during startup.
+
+- **`/mcp` subcommands** — `/mcp add <name> <url>` (or `-- <command…>` for
+  stdio), `/mcp remove <name>`, `/mcp login <name>`, `/mcp logout <name>`, and
+  `/mcp code <name> <code>` for headless/SSH sessions where the loopback
+  redirect can't be reached. Adding, removing, or logging in attaches and
+  withdraws that server's tools in the running session — no restart. `/mcp add`
+  refuses plain-HTTP URLs (localhost excepted). `/mcp logout` reports revocation
+  and local deletion separately, so a server without a revocation endpoint is
+  never described as fully signed out. Bare `/mcp` remains available while the
+  kill switch is engaged; its mutating subcommands do not.
+
+- **Project-declared servers confirm before an account login** — a server from
+  the workspace's `.mcp.json` was written by whoever wrote the repo, so
+  `/mcp login` on one requires an explicit `--yes` before it can open a consent
+  screen against the user's real account. Servers in the user's own
+  `~/.kritya/config.json` sign in without the extra step. This is narrower than,
+  and additional to, the existing per-server trust gate.
+
 - **Kill switch** — `Ctrl+K` (or `/kill [reason]`) is a session-wide emergency
   stop. It aborts the in-flight model stream, any running tool, and every
   subagent, then refuses all further work — new turns, tool calls, compaction,

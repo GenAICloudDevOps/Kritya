@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Agent } from "../agent/loop.js";
 import { AuditLog, summarizeAudit } from "../audit/audit.js";
-import { mcpStatus } from "../mcp/client.js";
+import { runMcpCommand } from "./mcpCommand.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
@@ -34,7 +34,10 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/redo", description: "reapply the change most recently undone" },
   { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
   { name: "/web-search", description: "search the web: /web-search <query>" },
-  { name: "/mcp", description: "show MCP server status and their tools" },
+  {
+    name: "/mcp",
+    description: "MCP servers: status, /mcp add|remove <name>, /mcp login|logout <name>",
+  },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
   {
     name: "/checkpoint",
@@ -151,25 +154,19 @@ const handlers: Record<string, CommandHandler> = {
     ctx.setProviderEverywhere(ctx.arg);
   },
   "/mcp": (ctx) => {
-    const statuses = mcpStatus();
-    if (statuses.length === 0) {
+    // Bare /mcp is read-only and stays available while the kill switch is
+    // engaged (see ALLOWED_WHILE_KILLED); its subcommands connect servers,
+    // write config, and mint tokens, so they are not.
+    if (ctx.killed && ctx.arg.trim()) {
       ctx.addItem({
         kind: "info",
         text:
-          "No MCP servers configured.\n\nAdd them under mcpServers in ~/.kritya/config.json, or in a .mcp.json\nat the workspace root:\n" +
-          `  { "mcpServers": { "linear": { "url": "https://mcp.linear.app/mcp" },\n` +
-          `                    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] } } }`,
+          `⛔ Kill switch ACTIVE${ctx.killReason ? ` — ${ctx.killReason}` : ""}. ` +
+          `/mcp ${ctx.arg.trim().split(/\s+/)[0]} is blocked; plain /mcp still works. Release it with /kill off.`,
       });
       return;
     }
-    const lines = statuses.map((s) => {
-      const head = `${s.ok ? "✔" : "✘"} ${s.name} (${s.transport}) — ${s.target}`;
-      const detail = s.ok
-        ? `    ${s.tools.length} tool(s): ${s.tools.join(", ") || "(none)"}`
-        : `    failed: ${s.error}`;
-      return `${head}\n${detail}`;
-    });
-    ctx.addItem({ kind: "info", text: `MCP servers:\n${lines.join("\n")}` });
+    return runMcpCommand(ctx);
   },
   "/web-search": (ctx) => {
     if (!ctx.arg) {
