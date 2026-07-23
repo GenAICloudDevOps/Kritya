@@ -7,6 +7,27 @@ on:
     branches: [main]
 
 jobs:
+  # Dependency checks that ask the registry, not the machine: the answer is the
+  # same on every OS and Node version, so running them once per matrix entry
+  # bought no extra coverage and made a registry-side hiccup look like five
+  # separate failures. Here a failure is one clearly-labelled red job.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 20.x
+          cache: npm
+
+      # npm ci is itself the integrity check: it fails if any tarball doesn't
+      # match the hash pinned in package-lock.json.
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm audit signatures
+      - run: npm run check:install-scripts
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -28,10 +49,9 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm audit --audit-level=high
-      - run: npm audit signatures
-      - run: npm run check:install-scripts
       - run: npm run build
       - run: npm run lint
+      # Kept per-OS rather than moved above: Windows checkouts can differ in
+      # line endings, so this isn't purely a repeat of the Linux run.
       - run: npm run format:check
       - run: npm test
