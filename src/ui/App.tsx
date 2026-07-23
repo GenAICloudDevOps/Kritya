@@ -21,6 +21,7 @@ import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
+import { mcpPrompts, mcpResources } from "../mcp/client.js";
 import { useAgent } from "./useAgent.js";
 
 export type { UiBridge };
@@ -211,6 +212,8 @@ export function App({
   const allCommands = [
     ...BUILTIN_COMMANDS,
     ...customCommands.map((c) => ({ name: c.name, description: c.description })),
+    // Servers can contribute slash commands too (MCP prompts).
+    ...mcpPrompts().map((p) => ({ name: p.command, description: p.description })),
   ];
 
   // Command suggestions while typing a slash command (before any arguments).
@@ -225,7 +228,9 @@ export function App({
   const mentionFragment = mentionMatch ? mentionMatch[2].toLowerCase() : null;
   const fileSuggestions =
     mentionFragment !== null
-      ? fileList.filter((f) => f.toLowerCase().includes(mentionFragment)).slice(0, 8)
+      ? [...fileList, ...mcpResources().map((r) => r.mention)]
+          .filter((f) => f.toLowerCase().includes(mentionFragment))
+          .slice(0, 8)
       : [];
   const selectedFile = fileSuggestions.length ? Math.min(fileIndex, fileSuggestions.length - 1) : 0;
 
@@ -354,11 +359,30 @@ export function App({
     void runCommand(cmd, ctx);
   };
 
-  const expandMentions = (text: string): string => {
+  const expandMentions = async (text: string): Promise<string> => {
     const mentions = [...new Set([...text.matchAll(MENTION_ALL_RE)].map((m) => m[1]))];
     let extra = "";
     for (const p of mentions) {
       if (IMAGE_RE.test(p)) continue; // images are attached separately, not inlined as text
+      // An @mcp:… mention names a document a server offers rather than a file
+      // on disk, so it's fetched instead of read — and marked as external,
+      // since a server wrote it.
+      const resource = mcpResources().find((r) => r.mention === p);
+      if (resource) {
+        try {
+          const body = await resource.read();
+          const capped =
+            body.length > MAX_MENTION_CHARS
+              ? body.slice(0, MAX_MENTION_CHARS) + "\n… (truncated)"
+              : body;
+          extra +=
+            `\n\n[Attached MCP resource: ${resource.uri} from server "${resource.server}" — ` +
+            `external content]\n\`\`\`\n${capped}\n\`\`\``;
+        } catch (err) {
+          extra += `\n\n[MCP resource ${p} could not be read: ${err instanceof Error ? err.message : String(err)}]`;
+        }
+        continue;
+      }
       try {
         const abs = resolveSafe(workspace, p);
         const content = fs.readFileSync(abs, "utf8");
@@ -423,7 +447,7 @@ export function App({
     addItem({ kind: "user", text });
     const images = collectImages(text);
     if (images.length) addItem({ kind: "info", text: `Attached ${images.length} image(s).` });
-    await runAgent(expandMentions(text), images);
+    await runAgent(await expandMentions(text), images);
   };
 
   return (
@@ -525,7 +549,7 @@ export function App({
                   return;
                 }
                 addItem({ kind: "user", text: `${text} (queued)` });
-                agent.queueSteer(expandMentions(text));
+                void expandMentions(text).then((t) => agent.queueSteer(t));
               }}
               placeholder="steer the agent… (Enter to queue)"
             />

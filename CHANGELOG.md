@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **MCP prompts and resources** — kritya implemented one of the protocol's
+  three server primitives. A server's prompts now appear as slash commands
+  named `/<server>-<prompt>`, with argument hints and autocomplete, so a Linear
+  server can contribute `/linear-triage` without the user writing a command
+  file; they are matched after built-ins and user command files, so a server
+  cannot redefine `/plan`. A server's resources appear as `@mcp:<server>/<name>`
+  attachments alongside file mentions. Both are labelled as external content
+  when handed to the model, since a server authored them. Neither is requested
+  from a server that doesn't advertise the capability.
+- **`roots/list`** — kritya advertised no client capabilities and dropped every
+  server-to-client request on the floor, so a filesystem-style server had no way
+  to learn where the workspace was and fell back to whatever its own config
+  guessed. kritya now declares the `roots` capability and answers with the
+  workspace. Other server requests get a proper "method not found" error rather
+  than silence, so a server can tell an unsupported client from a hung one.
 - **Per-server tool allow/deny** — a server's entire tool list was exposed
   unconditionally, and every exposed tool's schema is sent on every request, so
   a 100-tool server cost tokens each turn and buried the handful of tools that
@@ -126,6 +141,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Non-text tool results are no longer discarded** — every content block that
+  wasn't plain text became the literal string `[image content]`, throwing away
+  three things that carry real payload today. `structuredContent` (the
+  machine-readable result, spec 2025-06-18) is now used when a tool returns no
+  text blocks; resources the server embedded in the response are inlined
+  instead of dropped; `resource_link` blocks name their target; and images and
+  audio become placeholders that state their media type and size rather than a
+  bare `[image content]`. A text block still wins over `structuredContent`,
+  since servers that provide both send the same data twice.
 - **The new-MCP-server prompt is per server** — it approved every pending
   server declared by a workspace as one batch, so a branch adding a good server
   and a hostile one offered only "both" or "neither" — and someone who wanted

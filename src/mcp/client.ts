@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { McpServerConfig, McpToolFilter } from "../config/config.js";
 import type { ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
@@ -78,7 +79,7 @@ interface JsonRpcMessage {
   method?: string;
   params?: unknown;
   result?: unknown;
-  error?: { message?: string };
+  error?: { code?: number; message?: string };
 }
 
 interface Pending {
@@ -105,6 +106,124 @@ interface McpToolSpec {
   description?: string;
   inputSchema?: Record<string, unknown>;
   annotations?: McpToolAnnotations;
+}
+
+/** An embedded resource's payload, as carried by `resource` content blocks. */
+interface McpResourceContents {
+  uri?: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+
+interface McpContentBlock {
+  type: string;
+  text?: string;
+  /** image/audio: base64 payload plus its media type. */
+  mimeType?: string;
+  data?: string;
+  /** resource_link: a pointer the client can read separately. */
+  uri?: string;
+  name?: string;
+  description?: string;
+  /** resource: the payload inlined by the server. */
+  resource?: McpResourceContents;
+}
+
+/** What the server said it offers, from the initialize result. */
+interface McpServerCapabilities {
+  tools?: unknown;
+  prompts?: unknown;
+  resources?: unknown;
+}
+
+interface McpPromptArgSpec {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+interface McpPromptSpec {
+  name: string;
+  description?: string;
+  arguments?: McpPromptArgSpec[];
+}
+
+interface McpResourceSpec {
+  uri: string;
+  name?: string;
+  description?: string;
+  mimeType?: string;
+}
+
+interface McpToolResult {
+  content?: McpContentBlock[];
+  /** Machine-readable result (spec 2025-06-18), when the tool declares an outputSchema. */
+  structuredContent?: unknown;
+  isError?: boolean;
+}
+
+/** Rough size of a base64 payload, for the placeholder that stands in for it. */
+function base64Bytes(data: string): number {
+  return Math.floor((data.length * 3) / 4);
+}
+
+/**
+ * Flatten a tool result into the text the model sees.
+ *
+ * Everything that wasn't a text block used to become the literal string
+ * `[image content]`, which threw away three things that carry real payload
+ * today: `structuredContent` (the machine-readable result), resources the
+ * server inlined into the response, and links to resources it can serve. Text
+ * is still the only channel a tool result has, so binary blobs stay
+ * placeholders — but they now say what they are and how big, instead of
+ * pretending nothing was there.
+ */
+function renderToolResult(result: McpToolResult): string {
+  const parts: string[] = [];
+  for (const block of result.content ?? []) {
+    switch (block.type) {
+      case "text":
+        parts.push(block.text ?? "");
+        break;
+      case "image":
+      case "audio": {
+        const size = block.data ? `, ~${base64Bytes(block.data)} bytes` : "";
+        parts.push(`[${block.type}: ${block.mimeType ?? "unknown type"}${size}]`);
+        break;
+      }
+      case "resource_link":
+        parts.push(
+          `[resource: ${block.uri ?? "unknown"}${block.name ? ` — ${block.name}` : ""}` +
+            `${block.description ? ` (${block.description})` : ""}]`
+        );
+        break;
+      case "resource": {
+        // Embedded, so the payload is already here — no second round trip.
+        const r = block.resource;
+        if (r?.text !== undefined) {
+          parts.push(`[resource: ${r.uri ?? "inline"}]\n${r.text}`);
+        } else if (r?.blob) {
+          parts.push(
+            `[resource: ${r.uri ?? "inline"} — ${r.mimeType ?? "binary"}, ` +
+              `~${base64Bytes(r.blob)} bytes]`
+          );
+        }
+        break;
+      }
+      default:
+        parts.push(`[${block.type} content]`);
+    }
+  }
+
+  // Servers that declare an outputSchema SHOULD send the same data as both
+  // structuredContent and a serialized text block, so only fall back to it
+  // when the content blocks gave us nothing — otherwise every such call would
+  // pay for the payload twice.
+  const text = parts.filter((p) => p !== "").join("\n");
+  if (text) return text;
+  if (result.structuredContent !== undefined) return JSON.stringify(result.structuredContent);
+  return "";
 }
 
 /**
@@ -400,7 +519,9 @@ class McpConnection {
 
   constructor(
     public readonly name: string,
-    private transport: Transport
+    private transport: Transport,
+    /** The workspace this session is working on — what `roots/list` reports. */
+    private workspace: string
   ) {
     transport.onMessage = (msg) => this.onMessage(msg);
     transport.onError = (err) => this.fail(new Error(`MCP server "${name}": ${err.message}`));
@@ -417,11 +538,40 @@ class McpConnection {
   }
 
   private onMessage(msg: JsonRpcMessage): void {
-    if (typeof msg.id !== "number" || msg.method) return; // notification or server->client request
+    if (msg.method) {
+      // A request from the server (it has an id) or a notification (it doesn't).
+      if (typeof msg.id === "number") this.onServerRequest(msg.id, msg.method);
+      return;
+    }
+    if (typeof msg.id !== "number") return;
     const p = this.take(msg.id);
     if (!p) return;
     if (msg.error) p.reject(new Error(msg.error.message ?? "MCP error"));
     else p.resolve(msg.result);
+  }
+
+  /**
+   * Answer a request the server made of us.
+   *
+   * Only `roots/list` for now. Without it a filesystem-style server has no way
+   * to learn where the user's project is and falls back to whatever its own
+   * config guessed; with it, one workspace root is all most servers need. Every
+   * other method gets a proper "method not found" rather than silence, so a
+   * server can tell the difference between an unsupported client and a hung one.
+   */
+  private onServerRequest(id: number, method: string): void {
+    const reply = (body: Partial<JsonRpcMessage>) =>
+      this.transport.send({ jsonrpc: "2.0", id, ...body }, CONNECT_TIMEOUT_MS).catch(() => {});
+
+    if (method === "roots/list") {
+      reply({
+        result: {
+          roots: [{ uri: pathToFileURL(this.workspace).href, name: path.basename(this.workspace) }],
+        },
+      });
+      return;
+    }
+    reply({ error: { code: -32601, message: `method "${method}" is not supported by kritya` } });
   }
 
   private fail(err: Error): void {
@@ -482,24 +632,101 @@ class McpConnection {
     this.transport.send({ jsonrpc: "2.0", method, params }, CONNECT_TIMEOUT_MS).catch(() => {});
   }
 
-  async initialize(): Promise<McpToolSpec[]> {
+  async initialize(): Promise<{
+    tools: McpToolSpec[];
+    prompts: McpPromptSpec[];
+    resources: McpResourceSpec[];
+  }> {
     const init = (await this.request(
       "initialize",
       {
         protocolVersion: PROTOCOL_VERSION,
-        capabilities: {},
+        // Declaring roots is what lets a server scope itself to the user's
+        // project instead of whatever its own config guessed.
+        capabilities: { roots: {} },
         clientInfo: { name: "kritya", version: VERSION },
       },
       CONNECT_TIMEOUT_MS
-    )) as { protocolVersion?: string };
+    )) as { protocolVersion?: string; capabilities?: McpServerCapabilities };
     if (this.transport instanceof HttpTransport) {
       this.transport.protocolVersion = init.protocolVersion ?? PROTOCOL_VERSION;
     }
     this.notify("notifications/initialized");
+
+    const caps = init.capabilities ?? {};
+    // Tools are always asked for, declared or not: servers in the wild are
+    // sloppy about announcing capabilities, and a missing `tools` key is far
+    // more often an oversight than a server with no tools. Prompts and
+    // resources are gated, because there asking costs a round trip (and an
+    // error on strict servers) for something most servers genuinely lack.
+    const [tools, prompts, resources] = await Promise.all([
+      this.listTools(),
+      caps.prompts ? this.listPrompts() : Promise.resolve([]),
+      caps.resources ? this.listResources() : Promise.resolve([]),
+    ]);
+    return { tools, prompts, resources };
+  }
+
+  private async listTools(): Promise<McpToolSpec[]> {
     const listed = (await this.request("tools/list", {}, CONNECT_TIMEOUT_MS)) as {
       tools?: McpToolSpec[];
     };
     return listed.tools ?? [];
+  }
+
+  /** Prompts and resources are extras: a server that fails to list them still connects. */
+  private async listPrompts(): Promise<McpPromptSpec[]> {
+    try {
+      const listed = (await this.request("prompts/list", {}, CONNECT_TIMEOUT_MS)) as {
+        prompts?: McpPromptSpec[];
+      };
+      return listed.prompts ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async listResources(): Promise<McpResourceSpec[]> {
+    try {
+      const listed = (await this.request("resources/list", {}, CONNECT_TIMEOUT_MS)) as {
+        resources?: McpResourceSpec[];
+      };
+      return listed.resources ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async getPrompt(name: string, args: Record<string, string>): Promise<string> {
+    const result = (await this.request(
+      "prompts/get",
+      { name, arguments: args },
+      CALL_TIMEOUT_MS
+    )) as { description?: string; messages?: { role?: string; content?: McpContentBlock }[] };
+    const messages = result.messages ?? [];
+    // A prompt is normally a single user message; when it isn't, keep the roles
+    // visible rather than silently flattening a scripted exchange into one voice.
+    const multiRole = new Set(messages.map((m) => m.role ?? "user")).size > 1;
+    return messages
+      .map((m) => {
+        const body = m.content ? renderToolResult({ content: [m.content] }) : "";
+        return multiRole ? `[${m.role ?? "user"}] ${body}` : body;
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  async readResource(uri: string): Promise<string> {
+    const result = (await this.request("resources/read", { uri }, CALL_TIMEOUT_MS)) as {
+      contents?: McpResourceContents[];
+    };
+    return (result.contents ?? [])
+      .map((c) =>
+        c.text !== undefined
+          ? c.text
+          : `[binary resource: ${c.mimeType ?? "unknown"}, ~${base64Bytes(c.blob ?? "")} bytes]`
+      )
+      .join("\n");
   }
 
   async callTool(
@@ -512,10 +739,8 @@ class McpConnection {
       { name: toolName, arguments: args },
       CALL_TIMEOUT_MS,
       signal
-    )) as { content?: { type: string; text?: string }[]; isError?: boolean };
-    const text = (result.content ?? [])
-      .map((c) => (c.type === "text" ? (c.text ?? "") : `[${c.type} content]`))
-      .join("\n");
+    )) as McpToolResult;
+    const text = renderToolResult(result);
     if (result.isError) throw new Error(text || "MCP tool reported an error");
     return text || "(no output)";
   }
@@ -622,6 +847,10 @@ export interface McpServerStatus {
   /** resource_metadata URL from the 401 challenge, so login skips re-discovery. */
   authMetadataUrl?: string;
   tools: string[];
+  /** Prompt names the server contributes as slash commands. */
+  prompts: string[];
+  /** Resource names the server contributes as @-attachments. */
+  resources: string[];
   /** How many of the server's tools the config's allow/deny lists held back. */
   hiddenTools?: number;
 }
@@ -635,6 +864,56 @@ let statuses: McpServerStatus[] = [];
 const registeredNames = new Map<string, string>();
 /** Server -> the exposed tool names it currently owns, for withdrawal and reuse. */
 const serverToolNames = new Map<string, Set<string>>();
+
+/**
+ * A server-contributed slash command, backed by `prompts/get`.
+ *
+ * MCP prompts are user-initiated templates, which is exactly what kritya's
+ * slash commands already are — so a Linear server can contribute
+ * `/linear-triage` without the user writing a command file for it.
+ */
+export interface McpPrompt {
+  server: string;
+  /** The prompt's own name, as the server knows it. */
+  name: string;
+  /** The slash command it's exposed as, e.g. "/linear-triage". */
+  command: string;
+  description: string;
+  args: McpPromptArgSpec[];
+  /** Expand the prompt into the text to send, given whatever the user typed after it. */
+  expand(argText: string): Promise<string>;
+}
+
+/** A document a server can hand over, attachable with @. */
+export interface McpResource {
+  server: string;
+  uri: string;
+  /** The @-mention that refers to it, e.g. "mcp:docs/handbook". */
+  mention: string;
+  description: string;
+  read(): Promise<string>;
+}
+
+const prompts: McpPrompt[] = [];
+const resources: McpResource[] = [];
+
+/** Slash commands contributed by connected MCP servers. */
+export function mcpPrompts(): McpPrompt[] {
+  return prompts;
+}
+
+/** Attachable documents contributed by connected MCP servers. */
+export function mcpResources(): McpResource[] {
+  return resources;
+}
+
+function forgetContributions(server: string): void {
+  for (const list of [prompts, resources] as { server: string }[][]) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].server === server) list.splice(i, 1);
+    }
+  }
+}
 
 function toolIdentity(server: string, toolName: string): string {
   return `${server}\u0000${toolName}`;
@@ -695,6 +974,8 @@ export async function loadMcpTools(
   statuses = [];
   registeredNames.clear();
   serverToolNames.clear();
+  prompts.length = 0;
+  resources.length = 0;
   if (!servers || Object.keys(servers).length === 0) return [];
   const tools: ToolDef[] = [];
 
@@ -733,6 +1014,8 @@ export async function connectServer(
     target: cfg.url ?? [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" "),
     ok: false,
     tools: [],
+    prompts: [],
+    resources: [],
   };
   const span = tracer.startSpan("mcp.connect", {
     attributes: { "kritya.mcp_server": name, "kritya.mcp_transport": status.transport },
@@ -745,12 +1028,16 @@ export async function connectServer(
     if (missing.length) {
       throw new Error(`missing env var${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
     }
-    conn = new McpConnection(name, makeTransport(name, cfg, workspace));
-    const specs = await conn.initialize();
+    conn = new McpConnection(name, makeTransport(name, cfg, workspace), workspace);
+    const listed = await conn.initialize();
+    const specs = listed.tools;
     connections.push(conn);
     // Reconnects re-derive names from scratch; releasing the old claims first
     // keeps a server from colliding with its own previous incarnation.
     releaseToolNames(name);
+    forgetContributions(name);
+    registerPrompts(conn, name, listed.prompts, status);
+    registerResources(conn, name, listed.resources, status);
     const owned = new Set<string>();
     const exposed = specs.filter((s) => toolAllowed(s.name, cfg.tools));
     status.hiddenTools = specs.length - exposed.length;
@@ -787,6 +1074,84 @@ export async function connectServer(
     span.end();
   }
   return { tools, status };
+}
+
+/**
+ * Expose a server's prompts as slash commands.
+ *
+ * Named `/<server>-<prompt>` so two servers offering "triage" don't fight over
+ * one command, and so it's obvious where a command came from. A server's
+ * prompt never displaces a built-in or a user's own command file: those are
+ * matched first, and a server that names a prompt "plan" shouldn't be able to
+ * quietly redefine /plan.
+ */
+function registerPrompts(
+  conn: McpConnection,
+  server: string,
+  specs: McpPromptSpec[],
+  status: McpServerStatus
+): void {
+  for (const spec of specs) {
+    const command = `/${sanitizeCommand(server)}-${sanitizeCommand(spec.name)}`;
+    const args = spec.arguments ?? [];
+    prompts.push({
+      server,
+      name: spec.name,
+      command,
+      description: `[MCP: ${server}] ${spec.description ?? spec.name}`,
+      args,
+      expand: (argText) => conn.getPrompt(spec.name, splitPromptArgs(argText, args)),
+    });
+    status.prompts.push(spec.name);
+  }
+}
+
+/**
+ * Map what the user typed after the command onto the prompt's named arguments.
+ *
+ * Positional by whitespace, with the last declared argument soaking up the
+ * remainder — so a single-argument prompt gets the whole line, which is how
+ * every slash command in kritya already behaves.
+ */
+function splitPromptArgs(argText: string, args: McpPromptArgSpec[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!args.length) return out;
+  const rest = argText.trim();
+  if (args.length === 1) {
+    if (rest) out[args[0].name] = rest;
+    return out;
+  }
+  const parts = rest.split(/\s+/).filter(Boolean);
+  args.forEach((arg, i) => {
+    const value = i === args.length - 1 ? parts.slice(i).join(" ") : parts[i];
+    if (value) out[arg.name] = value;
+  });
+  return out;
+}
+
+/** Expose a server's resources as `@mcp:<server>/<name>` attachments. */
+function registerResources(
+  conn: McpConnection,
+  server: string,
+  specs: McpResourceSpec[],
+  status: McpServerStatus
+): void {
+  for (const spec of specs) {
+    const label = spec.name ?? spec.uri;
+    resources.push({
+      server,
+      uri: spec.uri,
+      mention: `mcp:${sanitizeCommand(server)}/${sanitizeCommand(label)}`,
+      description: spec.description ?? spec.mimeType ?? spec.uri,
+      read: () => conn.readResource(spec.uri),
+    });
+    status.resources.push(label);
+  }
+}
+
+/** Command/mention-safe form of a name: no spaces, no leading slash confusion. */
+function sanitizeCommand(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 /** Replace one server's entry in the /mcp status table after a reconnect. */
@@ -872,6 +1237,7 @@ export function forgetStatus(name: string): void {
   // Callers withdraw the tools first (they need isToolOf while it still
   // resolves), so this is the right point to give the names back.
   releaseToolNames(name);
+  forgetContributions(name);
 }
 
 /** Kill all MCP servers (call on exit). */
@@ -880,4 +1246,6 @@ export function shutdownMcp(): void {
   connections.length = 0;
   registeredNames.clear();
   serverToolNames.clear();
+  prompts.length = 0;
+  resources.length = 0;
 }

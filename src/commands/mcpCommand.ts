@@ -110,7 +110,17 @@ function showStatus(ctx: CommandContext): void {
     if (s.ok) {
       const auth = s.transport === "http" && loadAuth(s.target) ? " · signed in" : "";
       const hidden = s.hiddenTools ? ` · ${s.hiddenTools} hidden by config` : "";
-      return `${head}${auth}${hidden}\n    ${s.tools.length} tool(s): ${s.tools.join(", ") || "(none)"}`;
+      const extras = [
+        s.prompts.length ? `    ${s.prompts.length} prompt(s): ${s.prompts.join(", ")}` : "",
+        s.resources.length
+          ? `    ${s.resources.length} resource(s): ${s.resources.join(", ")}`
+          : "",
+      ].filter(Boolean);
+      return [
+        `${head}${auth}${hidden}`,
+        `    ${s.tools.length} tool(s): ${s.tools.join(", ") || "(none)"}`,
+        ...extras,
+      ].join("\n");
     }
     return `${head}\n    ${s.needsAuth ? s.error : `failed: ${s.error}`}`;
   });
@@ -444,6 +454,8 @@ async function logoutServer(ctx: CommandContext, name: string | undefined): Prom
     needsAuth: true,
     error: `needs login — run /mcp login ${name}`,
     tools: [],
+    prompts: [],
+    resources: [],
   });
 
   // Deleting a token locally is not the same as killing it, and only one of

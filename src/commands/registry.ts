@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Agent } from "../agent/loop.js";
 import { AuditLog, summarizeAudit } from "../audit/audit.js";
 import { runMcpCommand } from "./mcpCommand.js";
+import { mcpPrompts } from "../mcp/client.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
@@ -72,6 +73,8 @@ ${BUILTIN_COMMANDS.map((c) => `  ${c.name.padEnd(14)} ${c.description}`).join("\
 
 Also: @path/to/file attaches a file to your message (with autocomplete).
 @image.png attaches an image for vision-capable models.
+@mcp:server/name attaches a document an MCP server offers.
+MCP servers can also contribute their own /server-prompt commands.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
 Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/plan
 mode · ↑/↓ recalls history · Ctrl+O toggles full tool output · Ctrl+K is the
@@ -113,7 +116,7 @@ export interface CommandContext {
   refreshFileList(): void;
   runAgent(text: string, images?: string[]): Promise<void>;
   runWebSearch(query: string): Promise<void>;
-  expandMentions(text: string): string;
+  expandMentions(text: string): Promise<string>;
   costReport(): string;
   gitDiffStat(workspace: string): string | null;
   exit(): void;
@@ -501,8 +504,8 @@ const ALLOWED_WHILE_KILLED = new Set([
   "/checkpoint",
 ]);
 
-/** Dispatch a slash command: built-in handler, then custom commands, then "unknown". */
-export function runCommand(cmd: string, ctx: CommandContext): void | Promise<void> {
+/** Dispatch a slash command: built-in, then custom, then MCP prompt, then "unknown". */
+export async function runCommand(cmd: string, ctx: CommandContext): Promise<void> {
   if (ctx.killed && !ALLOWED_WHILE_KILLED.has(cmd)) {
     ctx.addItem({
       kind: "info",
@@ -519,7 +522,44 @@ export function runCommand(cmd: string, ctx: CommandContext): void | Promise<voi
   const custom = ctx.customCommands.find((c) => c.name === cmd);
   if (custom) {
     ctx.addItem({ kind: "user", text: ctx.raw.trim() });
-    return ctx.runAgent(expandCommand(custom.body, ctx.expandMentions(ctx.arg)));
+    return ctx.runAgent(expandCommand(custom.body, await ctx.expandMentions(ctx.arg)));
+  }
+
+  // Checked after built-ins and the user's own command files, so a server
+  // can't redefine /plan by naming a prompt "plan".
+  const prompt = mcpPrompts().find((p) => p.command === cmd);
+  if (prompt) {
+    const missing = prompt.args.filter((a) => a.required).map((a) => a.name);
+    if (missing.length && !ctx.arg.trim()) {
+      ctx.addItem({
+        kind: "info",
+        text: `${cmd} needs ${missing.join(", ")}.\n\nUsage: ${cmd} <${missing.join("> <")}>`,
+      });
+      return;
+    }
+    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+    ctx.setActivity(`Fetching ${prompt.name} from ${prompt.server}…`);
+    let expanded: string;
+    try {
+      expanded = await prompt.expand(ctx.arg);
+    } catch (err) {
+      ctx.addItem({
+        kind: "info",
+        text: `${cmd} failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    } finally {
+      ctx.setActivity(null);
+    }
+    if (!expanded.trim()) {
+      ctx.addItem({ kind: "info", text: `${cmd} returned an empty prompt.` });
+      return;
+    }
+    // The server wrote this text, so it's untrusted input being handed to the
+    // model as if the user typed it — label it rather than let it pass as ours.
+    return ctx.runAgent(
+      `[MCP prompt "${prompt.name}" from server "${prompt.server}" — external content]\n\n${expanded}`
+    );
   }
 
   ctx.addItem({ kind: "info", text: `Unknown command: ${cmd}. Try /help` });

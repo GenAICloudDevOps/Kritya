@@ -600,6 +600,16 @@ servers must use `https://` (a `http://` loopback address is exempt), and a
 redirect to a different origin is refused rather than forwarding your
 credentials to it.
 
+kritya answers `roots/list`, so a server that asks can scope itself to your
+workspace instead of guessing from its own config.
+
+Servers can contribute more than tools. A server's **prompts** become slash
+commands named `/<server>-<prompt>` (so a Linear server can ship
+`/linear-triage`), matched only after built-ins and your own command files —
+a server can't redefine `/plan`. Its **resources** become `@mcp:<server>/<name>`
+attachments, autocompleted alongside your files. Both are labelled as external
+content when they reach the model, since the server wrote them.
+
 Their tools appear as `mcp_<server>_<tool>`, and output is treated as
 untrusted content. Calls need your approval unless the server marks the tool
 `readOnlyHint` — those run without prompting and are also available to

@@ -4,7 +4,15 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { loadMcpTools, mcpStatus, shutdownMcp, toolAllowed } from "../mcp/client.js";
+import {
+  connectServer,
+  loadMcpTools,
+  mcpPrompts,
+  mcpResources,
+  mcpStatus,
+  shutdownMcp,
+  toolAllowed,
+} from "../mcp/client.js";
 import { NOOP_TRACER } from "../telemetry/tracer.js";
 import {
   expandVars,
@@ -603,4 +611,190 @@ test("expandServerConfig carries the tool filter through", () => {
     tools: { allow: ["a"], deny: ["b"] },
   });
   assert.deepEqual(out.tools, { allow: ["a"], deny: ["b"] });
+});
+
+// ---------- non-text tool results ----------
+
+/** A stdio server that answers tools/call with a fixed result object. */
+function stdioServerReturning(result: unknown): string {
+  return STDIO_SERVER.replace(
+    "reply({ content: [{ type: 'text', text: 'echo:' + m.params.arguments.text }] })",
+    `reply(${JSON.stringify(result)})`
+  );
+}
+
+async function callOnce(result: unknown, name = "res"): Promise<string> {
+  const tools = await loadMcpTools({
+    [name]: { command: process.execPath, args: ["-e", stdioServerReturning(result)] },
+  });
+  return tools[0].execute({ text: "x" }, { workspace: "." });
+}
+
+test("structuredContent is used when there are no text blocks", async () => {
+  const out = await callOnce({ content: [], structuredContent: { count: 3, ok: true } });
+  assert.equal(out, JSON.stringify({ count: 3, ok: true }));
+});
+
+test("a text block wins over structuredContent, so the payload isn't sent twice", async () => {
+  const out = await callOnce({
+    content: [{ type: "text", text: "the answer" }],
+    structuredContent: { answer: 42 },
+  });
+  assert.equal(out, "the answer");
+});
+
+test("an embedded resource's text is inlined rather than discarded", async () => {
+  const out = await callOnce({
+    content: [
+      { type: "resource", resource: { uri: "file:///notes.md", text: "# Notes" } },
+      { type: "resource_link", uri: "file:///other.md", name: "other" },
+    ],
+  });
+  assert.match(out, /# Notes/);
+  assert.match(out, /file:\/\/\/notes\.md/);
+  // A link is a pointer, not a payload — it should still name the target.
+  assert.match(out, /file:\/\/\/other\.md/);
+  assert.match(out, /other/);
+});
+
+test("binary content becomes a labelled placeholder, not a bare [image content]", async () => {
+  const out = await callOnce({
+    content: [{ type: "image", mimeType: "image/png", data: "AAAAAAAAAAAA" }],
+  });
+  assert.match(out, /image\/png/);
+  assert.match(out, /bytes/);
+  assert.notEqual(out, "[image content]");
+});
+
+// ---------- roots/list ----------
+
+// A server that asks the client for its roots right after initialize, then
+// reports whatever came back as the text of its one tool.
+const ROOTS_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "let roots = 'none';",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'initialize')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+  "      capabilities: { tools: {} }, serverInfo: { name: 'roots', version: '1' } } });",
+  "  if (m.method === 'notifications/initialized')",
+  "    return send({ jsonrpc: '2.0', id: 9001, method: 'ROOTS_METHOD' });",
+  "  if (m.id === 9001) { roots = JSON.stringify(m.result !== undefined ? m.result : { error: m.error }); return; }",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'where' }] } });",
+  "  if (m.method === 'tools/call')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: roots }] } });",
+  "});",
+].join("\n");
+
+test("a server asking roots/list is told the workspace", async () => {
+  const workspace = await fs.realpath(await makeWorkspace());
+  const tools = await loadMcpTools(
+    {
+      rooted: {
+        command: process.execPath,
+        args: ["-e", ROOTS_SERVER.replace("ROOTS_METHOD", "roots/list")],
+      },
+    },
+    { tracer: NOOP_TRACER, workspace }
+  );
+  assert.equal(tools.length, 1);
+  const answer = await tools[0].execute({}, { workspace });
+  assert.match(answer, /"roots"/);
+  assert.match(answer, /file:/);
+  // The root must be the workspace, not kritya's own directory.
+  assert.match(answer, new RegExp(path.basename(workspace)));
+});
+
+test("an unsupported server request gets an error reply, not silence", async () => {
+  const tools = await loadMcpTools({
+    unsupported: {
+      command: process.execPath,
+      args: ["-e", ROOTS_SERVER.replace("ROOTS_METHOD", "sampling/createMessage")],
+    },
+  });
+  // A reply arrived, and it was a proper JSON-RPC error rather than silence
+  // or a bogus success.
+  const answer = await tools[0].execute({}, { workspace: "." });
+  assert.match(answer, /-32601/);
+  assert.match(answer, /not supported/);
+});
+
+// ---------- prompts and resources ----------
+
+const FULL_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.id === undefined) return;",
+  "  const reply = (result) => send({ jsonrpc: '2.0', id: m.id, result });",
+  "  if (m.method === 'initialize')",
+  "    return reply({ protocolVersion: m.params.protocolVersion,",
+  "      capabilities: { tools: {}, prompts: {}, resources: {} },",
+  "      serverInfo: { name: 'full', version: '1' } });",
+  "  if (m.method === 'tools/list') return reply({ tools: [] });",
+  "  if (m.method === 'prompts/list')",
+  "    return reply({ prompts: [{ name: 'triage', description: 'triage an issue',",
+  "      arguments: [{ name: 'issue', required: true }] }] });",
+  "  if (m.method === 'prompts/get')",
+  "    return reply({ messages: [{ role: 'user',",
+  "      content: { type: 'text', text: 'Triage: ' + m.params.arguments.issue } }] });",
+  "  if (m.method === 'resources/list')",
+  "    return reply({ resources: [{ uri: 'mem://handbook', name: 'handbook',",
+  "      description: 'team handbook' }] });",
+  "  if (m.method === 'resources/read')",
+  "    return reply({ contents: [{ uri: m.params.uri, text: 'handbook body' }] });",
+  "});",
+].join("\n");
+
+test("a server's prompts become slash commands and expand through prompts/get", async () => {
+  await loadMcpTools({ linear: { command: process.execPath, args: ["-e", FULL_SERVER] } });
+
+  const prompt = mcpPrompts().find((p) => p.command === "/linear-triage");
+  assert.ok(prompt, `expected /linear-triage, got ${mcpPrompts().map((p) => p.command)}`);
+  assert.equal(prompt.server, "linear");
+  assert.deepEqual(
+    prompt.args.map((a) => a.name),
+    ["issue"]
+  );
+  // A single argument takes the whole line, as every other slash command does.
+  assert.equal(await prompt.expand("login is broken"), "Triage: login is broken");
+
+  assert.deepEqual(mcpStatus().find((s) => s.name === "linear")?.prompts, ["triage"]);
+});
+
+test("a server's resources become @-mentions and read through resources/read", async () => {
+  await loadMcpTools({ docs: { command: process.execPath, args: ["-e", FULL_SERVER] } });
+
+  const resource = mcpResources().find((r) => r.mention === "mcp:docs/handbook");
+  assert.ok(resource, `expected mcp:docs/handbook, got ${mcpResources().map((r) => r.mention)}`);
+  assert.equal(resource.uri, "mem://handbook");
+  assert.equal(await resource.read(), "handbook body");
+
+  assert.deepEqual(mcpStatus().find((s) => s.name === "docs")?.resources, ["handbook"]);
+});
+
+test("nothing is requested from a server that doesn't advertise prompts or resources", async () => {
+  // STDIO_SERVER declares only tools; asking anyway would error or hang.
+  await loadMcpTools({ plain: { command: process.execPath, args: ["-e", STDIO_SERVER] } });
+  assert.deepEqual(
+    mcpPrompts().filter((p) => p.server === "plain"),
+    []
+  );
+  assert.deepEqual(
+    mcpResources().filter((r) => r.server === "plain"),
+    []
+  );
+});
+
+test("a reconnect replaces a server's prompts instead of duplicating them", async () => {
+  const cfg = { command: process.execPath, args: ["-e", FULL_SERVER] };
+  await loadMcpTools({ again: cfg });
+  await connectServer("again", cfg);
+  assert.equal(mcpPrompts().filter((p) => p.server === "again").length, 1);
 });
