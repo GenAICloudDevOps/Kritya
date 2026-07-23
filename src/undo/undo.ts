@@ -50,6 +50,7 @@ export class UndoStack {
   private lastOwnWriteAt = new Map<string, number>(); // absPath -> Date.now() of our last snapshot()
   private watchedDirs = new Map<string, fs.FSWatcher>(); // parent dir -> watcher
   private debounceTimers = new Map<string, NodeJS.Timeout>(); // absPath -> pending settle check
+  private ownWriteSyncTimers = new Map<string, NodeJS.Timeout>(); // absPath -> pending self-write re-read
   /** Fires when a file-watcher checkpoint is created for an external edit. */
   onExternalChange?: (relPath: string) => void;
 
@@ -66,6 +67,33 @@ export class UndoStack {
     this.redoStack = [];
     this.lastOwnWriteAt.set(absPath, Date.now());
     this.watchForExternalEdits(absPath, relPath);
+    this.scheduleOwnWriteSync(absPath);
+  }
+
+  /**
+   * Re-read the file once the own-write grace window closes, and record that
+   * as what we believe is on disk.
+   *
+   * `lastKnownContent` used to be updated only when a watcher event arrived,
+   * which quietly assumed every write produces one. macOS coalesces FSEvents
+   * and can drop the event for a write that lands just after the watch is
+   * registered — and when the event for *our own* write goes missing, the
+   * baseline stays at whatever it was before (typically null, for a file we
+   * just created). The next genuine hand-edit is then checkpointed against
+   * that null, and undoing it deletes the user's file rather than restoring
+   * it. Reading the file ourselves removes the dependency on the event.
+   */
+  private scheduleOwnWriteSync(absPath: string): void {
+    const existing = this.ownWriteSyncTimers.get(absPath);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.ownWriteSyncTimers.delete(absPath);
+      // Only meaningful while the grace window is the reason we'd ignore a
+      // change; a checkpoint taken in the meantime already set the baseline.
+      this.lastKnownContent.set(absPath, readOrNull(absPath));
+    }, OWN_WRITE_GRACE_MS);
+    timer.unref();
+    this.ownWriteSyncTimers.set(absPath, timer);
   }
 
   /** Evict whole turns, never part of one — a half-evicted turn would make
@@ -159,6 +187,8 @@ export class UndoStack {
     this.watchedDirs.clear();
     for (const timer of this.debounceTimers.values()) clearTimeout(timer);
     this.debounceTimers.clear();
+    for (const timer of this.ownWriteSyncTimers.values()) clearTimeout(timer);
+    this.ownWriteSyncTimers.clear();
   }
 
   get size(): number {
