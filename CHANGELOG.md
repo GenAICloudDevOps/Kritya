@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-22
+
 ### Added
 
 - **Per-tool time limits** — `ToolDef.execute` has always taken an abort
