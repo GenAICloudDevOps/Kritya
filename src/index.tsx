@@ -30,6 +30,7 @@ import { loadCustomCommands } from "./commands/custom.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
+import { installCrashHandlers } from "./crash.js";
 import {
   createWorktree,
   commitWorktree,
@@ -309,6 +310,10 @@ async function main() {
 
   const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
 
+  // Filled in once the app is mounted, below; the crash handler needs a way to
+  // tear the UI down and is installed before there is a UI to tear down.
+  const ui: { instance?: ReturnType<typeof render> } = {};
+
   const cleanup = () => {
     backgroundManager.killAll();
     lspManager.disposeAll();
@@ -316,6 +321,20 @@ async function main() {
     undoStack.closeAll();
   };
   process.on("exit", cleanup);
+  // Same reasoning as the signal handlers below, for the other way the process
+  // can die without firing "exit": an error nothing caught. Also hands the
+  // terminal back — Ink leaves it in raw mode with the cursor hidden.
+  installCrashHandlers({
+    cleanup,
+    restoreTerminal: true,
+    unmountUi: () => ui.instance?.unmount(),
+    details: () => {
+      const file = session.path;
+      return file
+        ? ["", `The conversation was saved to ${file}`, `Resume it with:  kritya -c ${workspace}`]
+        : [];
+    },
+  });
   // Default signal handling terminates WITHOUT firing "exit", which would
   // orphan background dev servers and MCP children (e.g. when the terminal
   // window closes → SIGHUP). Clean up, then exit with the conventional code.
@@ -615,7 +634,7 @@ async function main() {
   // run the same Agent class and can also trigger auto-compaction.
   agent.autoMemory = true;
 
-  render(
+  ui.instance = render(
     <App
       agent={agent}
       workspace={workspace}

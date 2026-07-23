@@ -23,6 +23,7 @@ import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
+import { installCrashHandlers } from "./crash.js";
 import type { AgentHandlers, ToolDef } from "./types.js";
 
 export interface HeadlessArgs {
@@ -124,6 +125,17 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const session = new SessionStore(workspace);
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   session.start(initialHistory);
+
+  // A crash here orphans MCP children and background processes onto a CI
+  // runner, where nothing will ever reap them. No terminal to restore.
+  installCrashHandlers({
+    cleanup: () => {
+      backgroundManager.killAll();
+      lspManager.disposeAll();
+      shutdownMcp();
+    },
+    details: () => (session.path ? ["", `Transcript: ${session.path}`] : []),
+  });
   const sessionAudit = AuditLog.forSession(session.id, config.audit);
   const sessionTracer = createTracer(session.id, config.otel);
 

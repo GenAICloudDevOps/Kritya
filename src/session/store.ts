@@ -59,6 +59,15 @@ export class SessionStore {
     return path.basename(this.file, ".jsonl");
   }
 
+  /**
+   * Absolute path of this session's transcript, or undefined when ephemeral
+   * (nothing is on disk). Used by the crash handler to tell the user where the
+   * conversation survives — a crash is exactly when that matters.
+   */
+  get path(): string | undefined {
+    return this.ephemeral ? undefined : this.file;
+  }
+
   /** Path of the sidecar file that holds this session's task checklist. */
   private tasksFilePath(): string {
     return SessionStore.tasksFilePathFor(this.file);

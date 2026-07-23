@@ -28,13 +28,125 @@ export interface StreamCallbacks {
 /** Retry transient provider failures (429 / 5xx / network) with backoff. */
 const MAX_ATTEMPTS = 4;
 
-function isRetryable(err: unknown): boolean {
+/**
+ * Thrown when a stream that opened successfully then goes quiet for longer
+ * than the idle timeout. This is its own error because it is invisible to
+ * every other guard: the request succeeded, nothing threw, and the socket is
+ * still open — the turn simply hangs forever with a spinner on it. Treated as
+ * retryable, since a provider that stalls mid-answer is the same class of
+ * transient failure as one that resets the connection.
+ */
+export class StreamIdleError extends Error {
+  readonly idleMs: number;
+
+  constructor(idleMs: number) {
+    super(`Provider stopped sending data for ${Math.round(idleMs / 1000)}s`);
+    this.name = "StreamIdleError";
+    this.idleMs = idleMs;
+  }
+}
+
+/**
+ * Transport-level error codes that mean "try again", beyond the four obvious
+ * ones. The UND_ERR_* family comes from undici (Node's fetch, which the OpenAI
+ * SDK uses) and shows up on exactly the flaky-network conditions retries exist
+ * for; ERR_STREAM_PREMATURE_CLOSE is what a cut response stream surfaces as.
+ */
+const RETRYABLE_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETRESET",
+  "ERR_STREAM_PREMATURE_CLOSE",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+]);
+
+/** OpenAI SDK error classes that always mean a transport failure, not a bad request. */
+const RETRYABLE_ERROR_NAMES = new Set([
+  "APIConnectionError",
+  "APIConnectionTimeoutError",
+  "StreamIdleError",
+]);
+
+/** Exported for tests; the retry loop below is the only real caller. */
+export function isRetryable(err: unknown): boolean {
+  if (err instanceof StreamIdleError) return true;
   const status = (err as { status?: number })?.status;
-  if (status === 429 || (typeof status === "number" && status >= 500)) return true;
+  // 408 Request Timeout joins 429/5xx: the request never got a verdict, so
+  // re-sending it is safe and is usually the thing that works.
+  if (status === 429 || status === 408 || (typeof status === "number" && status >= 500))
+    return true;
+  const name = (err as { name?: string })?.name;
+  if (name && RETRYABLE_ERROR_NAMES.has(name)) return true;
   const code = (err as { code?: string })?.code;
-  return (
-    code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND" || code === "EAI_AGAIN"
-  );
+  if (code && RETRYABLE_CODES.has(code)) return true;
+  // undici nests the real cause one level down (fetch failed → cause).
+  const cause = (err as { cause?: unknown })?.cause;
+  if (cause && cause !== err) {
+    const causeCode = (cause as { code?: string })?.code;
+    if (causeCode && RETRYABLE_CODES.has(causeCode)) return true;
+  }
+  return false;
+}
+
+/** Read one header case-insensitively from whatever shape the SDK attached. */
+function headerValue(err: unknown, name: string): string | undefined {
+  const headers = (err as { headers?: unknown })?.headers;
+  if (!headers) return undefined;
+  const get = (headers as { get?: (k: string) => string | null }).get;
+  if (typeof get === "function") return get.call(headers, name) ?? undefined;
+  for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
+    if (k.toLowerCase() === name) return typeof v === "string" ? v : String(v);
+  }
+  return undefined;
+}
+
+/** Longest Retry-After we'll honor. Beyond this, our own backoff and the
+ *  user's patience are the better answer than sleeping for minutes. */
+const MAX_RETRY_AFTER_MS = 60_000;
+
+/**
+ * The provider's own `Retry-After`, in milliseconds, when it sent one. Backing
+ * off for less than a rate limiter asked for just burns another attempt
+ * against the same closed window — which is exactly how a four-attempt budget
+ * evaporates in two seconds on a free tier. Both header forms are accepted:
+ * delay-seconds and an HTTP-date. Exported for tests.
+ */
+export function retryAfterMs(err: unknown): number | undefined {
+  const raw = headerValue(err, "retry-after")?.trim();
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(raw) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return undefined;
+  return Math.min(ms, MAX_RETRY_AFTER_MS);
+}
+
+/** Message fragments providers use when the prompt exceeds the context window. */
+const CONTEXT_OVERFLOW_RE =
+  /context[ _-]?length|context[ _-]?window|maximum context|too many tokens|reduce the length|prompt is too long|input is too long/i;
+
+/**
+ * Whether a failure means "this prompt does not fit", as opposed to any other
+ * bad request. It is worth separating because it is the one 400 with an
+ * automatic remedy — compact the history and the same turn can continue —
+ * whereas every other 400 is a genuine hard failure. Providers disagree on the
+ * wording and on the error `code`, so both are checked.
+ */
+export function isContextOverflowError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  if (typeof status === "number" && status !== 400 && status !== 413) return false;
+  const code = (err as { code?: string })?.code ?? "";
+  if (code === "context_length_exceeded" || code === "string_above_max_length") return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return CONTEXT_OVERFLOW_RE.test(message);
 }
 
 /**
@@ -86,6 +198,26 @@ const DEFAULT_TOP_P = 0.95;
 const DEFAULT_MAX_TOKENS = 8192;
 
 /**
+ * Deadlines for a single request attempt.
+ *
+ * Two are needed, because they catch different failures. `requestTimeoutMs`
+ * bounds the whole call and is the SDK's own knob. `streamIdleTimeoutMs`
+ * bounds the gap *between chunks* — the case the first one handles badly: a
+ * long, healthy answer and a provider that accepted the connection and then
+ * went silent look identical to an overall timer, so setting that timer tight
+ * enough to catch the stall would cut off legitimate long answers.
+ */
+export interface TimeoutOptions {
+  /** Whole-request ceiling handed to the SDK. Default 10 minutes. */
+  requestTimeoutMs?: number;
+  /** Max gap between streamed chunks before the attempt is abandoned. Default 60s. */
+  streamIdleTimeoutMs?: number;
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
+
+/**
  * Where to hang this request's span. Passed in rather than held on the client
  * because one client serves many turns, and each request belongs under the
  * turn that issued it.
@@ -100,10 +232,22 @@ export class ProviderClient {
   private temperature?: number;
   private topP?: number;
   private maxTokens?: number;
+  private streamIdleTimeoutMs: number;
 
-  constructor(apiKey: string, baseURL: string = NVIDIA_BASE_URL, sampling: SamplingOptions = {}) {
+  constructor(
+    apiKey: string,
+    baseURL: string = NVIDIA_BASE_URL,
+    sampling: SamplingOptions = {},
+    timeouts: TimeoutOptions = {}
+  ) {
     // We do our own streaming-aware retry loop, so disable the SDK's.
-    this.client = new OpenAI({ apiKey, baseURL, maxRetries: 0 });
+    this.client = new OpenAI({
+      apiKey,
+      baseURL,
+      maxRetries: 0,
+      timeout: timeouts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    });
+    this.streamIdleTimeoutMs = timeouts.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
     this.temperature =
       sampling.temperature === null ? undefined : (sampling.temperature ?? DEFAULT_TEMPERATURE);
     this.topP = sampling.topP === null ? undefined : (sampling.topP ?? DEFAULT_TOP_P);
@@ -157,10 +301,18 @@ export class ProviderClient {
           if (!isRetryable(err)) throw err;
           if (attempt === MAX_ATTEMPTS - 1) throw new RetryExhaustedError(err, MAX_ATTEMPTS);
           const status = (err as { status?: number })?.status;
-          const backoffMs = Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 250;
+          // The provider's own Retry-After wins when it asks for longer than
+          // our schedule — under-waiting a rate limit just spends the next
+          // attempt on the same closed window.
+          const ownBackoffMs = Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 250;
+          const serverBackoffMs = retryAfterMs(err);
+          const backoffMs = Math.max(ownBackoffMs, serverBackoffMs ?? 0);
           span.addEvent("retry", {
             "kritya.attempt": attempt + 1,
             "kritya.backoff_ms": Math.round(backoffMs),
+            ...(serverBackoffMs !== undefined
+              ? { "kritya.retry_after_ms": Math.round(serverBackoffMs) }
+              : {}),
             ...(status !== undefined ? { "kritya.status": status } : {}),
           });
           callbacks.onRetry?.(attempt + 1, status);
@@ -210,7 +362,7 @@ export class ProviderClient {
     const calls = new Map<number, { id: string; name: string; argsJson: string }>();
     let usage: Usage | undefined;
 
-    for await (const chunk of stream) {
+    for await (const chunk of this.withIdleWatchdog(stream)) {
       if (chunk.usage) {
         usage = {
           promptTokens: chunk.usage.prompt_tokens ?? 0,
@@ -264,5 +416,62 @@ export class ProviderClient {
     } as ChatMessage;
 
     return { message, text, toolCalls, usage };
+  }
+
+  /**
+   * Re-yield a stream's chunks, giving up if the gap between two of them
+   * exceeds the idle timeout.
+   *
+   * A `for await` over a stalled stream waits forever: nothing throws, the
+   * socket stays open, and neither the retry loop nor the user's Esc is
+   * reached, so the turn hangs with a live spinner on it until the process is
+   * killed. Racing each `next()` against a timer turns that into an ordinary
+   * retryable error. The underlying stream is aborted on the way out — without
+   * it the abandoned request keeps consuming a connection (and, on metered
+   * providers, keeps generating) after we've stopped reading.
+   */
+  private async *withIdleWatchdog<T>(stream: AsyncIterable<T>): AsyncGenerator<T> {
+    const idleMs = this.streamIdleTimeoutMs;
+    if (!Number.isFinite(idleMs) || idleMs <= 0) {
+      yield* stream;
+      return;
+    }
+    const iterator = stream[Symbol.asyncIterator]();
+    try {
+      for (;;) {
+        let timer: NodeJS.Timeout | undefined;
+        const idle = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new StreamIdleError(idleMs)), idleMs);
+        });
+        const pending = iterator.next();
+        // If the timer wins the race, this promise still settles later with
+        // nobody awaiting it — pre-attach a handler so a late rejection can't
+        // surface as an unhandled rejection and take the process down.
+        pending.catch(() => {});
+        let next: IteratorResult<T>;
+        try {
+          next = await Promise.race([pending, idle]);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (next.done) return;
+        yield next.value;
+      }
+    } catch (err) {
+      if (err instanceof StreamIdleError) {
+        (stream as { controller?: AbortController }).controller?.abort();
+      }
+      throw err;
+    } finally {
+      // Covers the caller breaking out early (an abort mid-turn) as well as
+      // the idle path above; returning a generator is a no-op if it's done.
+      //
+      // Deliberately not awaited. An async generator suspended at an `await`
+      // doesn't run its return until that await settles — so on the stalled
+      // stream this exists to escape, awaiting here would block for exactly as
+      // long as the hang we just refused to wait for, and the retry would
+      // never be reached.
+      void Promise.resolve(iterator.return?.()).catch(() => {});
+    }
   }
 }

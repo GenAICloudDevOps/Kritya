@@ -1,8 +1,13 @@
-import type { ParsedToolCall, ProviderClient } from "../provider/client.js";
+import {
+  isContextOverflowError,
+  type ParsedToolCall,
+  type ProviderClient,
+} from "../provider/client.js";
 import type { PermissionManager } from "../permissions/permissions.js";
 import type { SessionStore } from "../session/store.js";
 import type { AgentHandlers, ChatMessage, ToolContext, ToolDef } from "../types.js";
-import { splitForCompaction, renderTranscript } from "./compactor.js";
+import { splitForCompaction, renderTranscript, fallbackSummary } from "./compactor.js";
+import { estimateHistoryTokens, estimateTokens } from "./tokens.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { classifyDanger } from "../permissions/danger.js";
 import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js";
@@ -33,6 +38,8 @@ function fenceExternal(output: string): string {
 /** How much tool output to hand the UI (it shows a preview and expands on toggle). */
 const PREVIEW_CHARS = 4000;
 const COMPACT_THRESHOLD = 0.8;
+/** Below this, compaction has nothing to summarize away that isn't the live tail. */
+const MIN_HISTORY_TO_COMPACT = 12;
 
 /**
  * Tools "accept edits" mode auto-approves without prompting. Deliberately
@@ -304,42 +311,80 @@ export class Agent {
       compactSpan.setAttribute("kritya.skipped", true);
       return "Nothing to compact yet.";
     }
-    const result = await this.client.chat(
-      this.getModel(),
-      [
-        {
-          role: "system",
-          content:
-            "You summarize coding-session transcripts. Produce a dense briefing: the user's goals, " +
-            "key decisions, files created/modified (with paths), commands run and their outcomes, " +
-            "current state, and open items. Plain text, no preamble.",
-        },
-        { role: "user", content: renderTranscript(toSummarize) },
-      ],
-      [],
-      { onTextDelta: () => {}, onReasoningDelta: () => {} },
-      signal,
-      { tracer: this.tracer, parent: compactSpan }
-    );
-    const summary = result.text.trim() || "(summary unavailable)";
+    // Compaction is a recovery action, and it is reached almost exclusively
+    // when things are already going badly — a nearly-full context, often a
+    // provider that is rate-limiting or timing out. Letting the summarization
+    // call's failure propagate would abort the turn at exactly the point the
+    // user most needs it to survive, so a failure degrades to a mechanical
+    // record of the dropped messages instead. Cancellation is not a failure of
+    // this kind and still propagates: the user asked to stop.
+    let summarized: string;
+    let degraded = false;
+    try {
+      const result = await this.client.chat(
+        this.getModel(),
+        [
+          {
+            role: "system",
+            content:
+              "You summarize coding-session transcripts. Produce a dense briefing: the user's goals, " +
+              "key decisions, files created/modified (with paths), commands run and their outcomes, " +
+              "current state, and open items. Plain text, no preamble.",
+          },
+          { role: "user", content: renderTranscript(toSummarize) },
+        ],
+        [],
+        { onTextDelta: () => {}, onReasoningDelta: () => {} },
+        signal,
+        { tracer: this.tracer, parent: compactSpan }
+      );
+      summarized = result.text.trim() || "(summary unavailable)";
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        (err as Error)?.name === "AbortError" ||
+        err instanceof KillSwitchError
+      )
+        throw err;
+      this.kill.assertLive();
+      degraded = true;
+      summarized = fallbackSummary(toSummarize);
+      compactSpan.addEvent("compact.degraded", {
+        "kritya.reason": err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const summary = summarized;
     this.history = [
-      { role: "user", content: `[Conversation summary of earlier work]\n${summary}` },
+      {
+        role: "user",
+        content: degraded ? summary : `[Conversation summary of earlier work]\n${summary}`,
+      },
       ...keep,
     ];
     this.session.rotate();
     this.session.start(this.history);
     // Rough size estimate until the next model call reports real usage.
-    this.lastPromptTokens = Math.round(JSON.stringify(this.history).length / 4);
-    const note = `Compacted context: summarized ${toSummarize.length} messages, kept the last ${keep.length}.`;
+    this.lastPromptTokens = estimateHistoryTokens(this.history);
+    const note = degraded
+      ? `Compacted context WITHOUT a summary (the summarization request failed): dropped ` +
+        `${toSummarize.length} messages, kept the last ${keep.length}. Earlier detail is lost — ` +
+        `re-read anything the next step depends on.`
+      : `Compacted context: summarized ${toSummarize.length} messages, kept the last ${keep.length}.`;
     compactSpan.setAttribute("kritya.messages_summarized", toSummarize.length);
     compactSpan.setAttribute("kritya.messages_kept", keep.length);
+    compactSpan.setAttribute("kritya.degraded", degraded);
     this.audit?.logTool({
       tool: "compact",
-      summary: `summarized ${toSummarize.length} message(s), kept ${keep.length}`,
-      outcome: "ok",
+      summary: degraded
+        ? `dropped ${toSummarize.length} message(s) without a summary, kept ${keep.length}`
+        : `summarized ${toSummarize.length} message(s), kept ${keep.length}`,
+      outcome: degraded ? "error" : "ok",
     });
 
-    if (!this.autoMemory) return note;
+    // No point asking the model for memory facts when it just failed to
+    // summarize, and no honest source to distill them from either.
+    if (!this.autoMemory || degraded) return note;
     // Best-effort: memory distillation is a nice-to-have, never let it fail
     // (or block on) the compaction it's piggybacking on.
     try {
@@ -438,18 +483,47 @@ export class Agent {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       this.drainSteerQueue();
 
-      const result = await this.client.chat(
-        this.getModel(),
-        [systemMsg, ...this.history],
-        this.tools,
-        {
-          onTextDelta: handlers.onTextDelta,
-          onReasoningDelta: handlers.onReasoningDelta,
-          onRetry: handlers.onRetry,
-        },
-        signal,
-        { tracer: this.tracer, parent: this.currentTurnSpan }
-      );
+      // Pre-flight. Auto-compaction below only fires on a *reported* prompt
+      // size, which is always one request behind: a single large tool result
+      // can push the next request past the window, and a context overflow is a
+      // hard 400 that no retry recovers. Estimating what we're about to send
+      // catches that before it's sent.
+      await this.compactIfPredictedOverflow(systemMsg, handlers, signal);
+
+      const send = () =>
+        this.client.chat(
+          this.getModel(),
+          [systemMsg, ...this.history],
+          this.tools,
+          {
+            onTextDelta: handlers.onTextDelta,
+            onReasoningDelta: handlers.onReasoningDelta,
+            onRetry: handlers.onRetry,
+          },
+          signal,
+          { tracer: this.tracer, parent: this.currentTurnSpan }
+        );
+
+      let result: Awaited<ReturnType<typeof send>>;
+      try {
+        result = await send();
+      } catch (err) {
+        // The one 400 with a remedy: the prompt doesn't fit. Compact and send
+        // the (now shorter) history once more rather than failing the turn.
+        // Only ever once per step — if it still doesn't fit, something is
+        // wrong that compaction can't fix and the error should surface.
+        if (!isContextOverflowError(err) || !this.canCompact()) throw err;
+        this.currentTurnSpan?.addEvent("context.overflow_recovery");
+        const note = await this.compact(signal);
+        handlers.onToolEnd(
+          "compact",
+          "compact",
+          "Context overflow — compacted and retrying",
+          note,
+          false
+        );
+        result = await send();
+      }
 
       if (result.usage) {
         this.lastPromptTokens = result.usage.promptTokens;
@@ -460,10 +534,10 @@ export class Agent {
         // and still report it (marked `estimated`) so cost/budget tracking
         // isn't silently blind for the whole session — but the caller can
         // tell an estimate from a real number and show it as approximate.
-        this.lastPromptTokens = Math.round(JSON.stringify([systemMsg, ...this.history]).length / 4);
+        this.lastPromptTokens = estimateHistoryTokens([systemMsg, ...this.history]);
         handlers.onUsage({
           promptTokens: this.lastPromptTokens,
-          completionTokens: Math.round(result.text.length / 4),
+          completionTokens: estimateTokens(result.text),
           estimated: true,
         });
       }
@@ -484,15 +558,73 @@ export class Agent {
         this.session.append(toolMsg);
       }
 
-      if (this.contextUsage() > COMPACT_THRESHOLD && this.history.length > 12) {
-        const note = await this.compact(signal);
-        handlers.onToolEnd("compact", "compact", "Auto-compacted context", note, false);
+      if (this.contextUsage() > COMPACT_THRESHOLD && this.canCompact()) {
+        await this.tryCompact("Auto-compacted context", handlers, signal);
       }
     }
 
     handlers.onAssistantText(
       `[Stopped after ${this.maxSteps} steps — the safety limit for one request. ` +
         `Send "continue" to keep going, or raise "maxSteps" in ~/.kritya/config.json.]`
+    );
+  }
+
+  /** Whether there is enough history for compaction to actually shrink anything. */
+  private canCompact(): boolean {
+    return this.history.length > MIN_HISTORY_TO_COMPACT;
+  }
+
+  /**
+   * Compact, treating a failure as recoverable. doCompact already degrades to
+   * a summary-free record rather than throwing, so reaching the catch here
+   * means something more unusual went wrong — and even then, continuing with
+   * an over-full context (which may still fit, or may be caught by the
+   * overflow recovery on the next call) beats destroying the turn over a
+   * housekeeping step. Cancellation still propagates.
+   */
+  private async tryCompact(
+    label: string,
+    handlers: AgentHandlers,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      const note = await this.compact(signal);
+      handlers.onToolEnd("compact", "compact", label, note, false);
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        (err as Error)?.name === "AbortError" ||
+        err instanceof KillSwitchError
+      )
+        throw err;
+      this.kill.assertLive();
+      const msg = err instanceof Error ? err.message : String(err);
+      this.currentTurnSpan?.addEvent("compact.failed", { "kritya.reason": msg });
+      handlers.onToolEnd("compact", "compact", label, `Compaction failed: ${msg}`, true);
+    }
+  }
+
+  /**
+   * Compact ahead of a request whose estimated size already exceeds the
+   * threshold. The estimate covers the history and system prompt but not the
+   * tool schemas, which are a fixed cost the threshold's headroom absorbs.
+   */
+  private async compactIfPredictedOverflow(
+    systemMsg: ChatMessage,
+    handlers: AgentHandlers,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!this.canCompact()) return;
+    const predicted = estimateHistoryTokens([systemMsg, ...this.history]);
+    if (predicted <= this.contextWindow * COMPACT_THRESHOLD) return;
+    this.currentTurnSpan?.addEvent("context.preflight_compact", {
+      "kritya.predicted_prompt_tokens": predicted,
+      "kritya.context_window": this.contextWindow,
+    });
+    await this.tryCompact(
+      "Compacted context before sending (predicted overflow)",
+      handlers,
+      signal
     );
   }
 
