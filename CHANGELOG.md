@@ -8,6 +8,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Per-tool time limits** — `ToolDef.execute` has always taken an abort
+  signal, but only three of kritya's tools honored it, and the loop awaited the
+  call without racing it. A tool that hung hung the whole turn, and neither Esc
+  nor the kill switch could free it, since both work by aborting a signal
+  nothing was listening to. Any tool call now has 120 seconds
+  (`toolTimeoutSeconds` in config.json; 0 disables) before it's abandoned and
+  reported to the model as a failure it shouldn't blindly retry. Tools that
+  enforce their own deadline — `shell`, subagents, MCP calls — opt out via
+  `ToolDef.timeoutMs = 0` and keep theirs. This rescues asynchronous hangs
+  only: a tool spinning the CPU synchronously blocks the event loop, so the
+  timer cannot fire, and abandoning is not cancelling — a tool that ignores its
+  signal keeps running in the background.
+- **A crash no longer takes the terminal and the session with it** — an
+  unhandled rejection anywhere terminated the process without firing `"exit"`,
+  which is where every cleanup path hangs off: background dev servers, MCP
+  stdio children, and LSP servers all outlived the session, and Ink left the
+  terminal in raw mode with the cursor hidden, so the shell underneath was
+  unusable until the user blind-typed `reset`. kritya now catches
+  `uncaughtException` and `unhandledRejection` in both interactive and headless
+  mode, shuts those children down, restores the terminal, and prints the
+  transcript path with the `-c` command to resume.
+- **Stream idle timeout** — a provider that accepted the connection and then
+  went quiet left the turn hanging indefinitely with a live spinner: the
+  request had succeeded, nothing threw, and the retry loop was never reached.
+  Requests now carry a whole-call ceiling, and the gap between streamed chunks
+  is bounded separately at 60 seconds — the two catch different failures, since
+  an overall timer tight enough to notice a stall would cut off legitimate long
+  answers. A stall aborts the dead stream and retries.
+
 - **MCP prompts and resources** — kritya implemented one of the protocol's
   three server primitives. A server's prompts now appear as slash commands
   named `/<server>-<prompt>`, with argument hints and autocomplete, so a Linear
@@ -141,6 +170,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`/undo` no longer deletes a file instead of restoring it** — the undo
+  stack learned what kritya had written only from a file-watcher event, which
+  assumed every write produces one. macOS coalesces FSEvents and can drop the
+  event for a write landing just after the watch is registered; when the event
+  for kritya's own write went missing, the baseline stayed at "this file did
+  not exist", so a later hand-edit was checkpointed against that null and
+  undoing it removed the user's file. kritya now re-reads the file itself once
+  its own write settles rather than waiting to be told. Caught by the macOS CI
+  runner.
+- **Writes can no longer leave a file cut in half** — `fs.writeFile` truncates
+  the target before filling it back in, so a crash, the kill switch, a full
+  disk, or a power cut in that window destroyed the file, with the original
+  surviving only in the memory of the process that just died. Every write now
+  goes to a sibling temp file that is renamed over the target, which is a
+  single filesystem operation: readers see the whole old file or the whole new
+  one. Symlinks are still followed rather than replaced, the original's
+  permissions are preserved (a renamed-in file would otherwise silently lose a
+  script's executable bit), and on Windows a rename blocked by another process
+  holding the file open falls back to writing in place rather than failing.
+  Applied to `write_file`, `edit_file`, notebooks, documents, LSP renames, and
+  `/undo`'s own restore; the session store's private copy of this logic was
+  replaced by the shared one. There is deliberately no `fsync`: the hazard
+  closed here is truncation, not power loss.
+- **Compaction failure no longer destroys the turn** — summarizing older
+  history is reached almost exclusively when things are already going badly, so
+  the summarization call failing aborted the turn at exactly the point the user
+  most needed it to survive. A failure now degrades to a mechanical record of
+  the dropped span — which files were touched, which commands ran — labelled as
+  not being a summary so the model doesn't trust it as one. Cancellation still
+  propagates.
+- **A prompt too large for the context window is recovered, not fatal** —
+  auto-compaction fired on the prompt size a provider _reported_, always one
+  request behind, so a single large tool result could push the next request
+  past the window; the resulting error is a hard 400 that no retry fixes.
+  kritya now estimates the request before sending and compacts pre-emptively,
+  and a context-overflow rejection is caught, compacted, and re-sent once. The
+  token estimate that drives the context meter on providers that don't report
+  usage was also replaced: it now accounts for tool-call payloads and charges
+  an attached image a flat cost instead of counting its base64 data URL, which
+  made one small image look like 150,000 tokens.
+- **More network failures are retried, and `Retry-After` is honored** — the
+  retry classifier recognized four errno codes, missing undici's `UND_ERR_*`
+  family (what Node's own fetch reports on flaky connections),
+  `ERR_STREAM_PREMATURE_CLOSE`, `ECONNREFUSED`, `EPIPE`, causes nested one
+  level down, the SDK's own connection-error classes, and HTTP 408. Backoff
+  also ignored the provider's `Retry-After`, so kritya could wait less than a
+  rate limiter asked and spend the next attempt against the same closed window
+  — which is how a four-attempt budget evaporates in two seconds on a free
+  tier.
+- **`web_search` had no timeout** — the Tavily call was a bare `fetch` with no
+  signal, so a socket that never answered hung the tool indefinitely. It is now
+  bounded at 30 seconds, which is needed independently of the per-tool limit
+  above because `/web-search` calls it outside the agent loop.
 - **Non-text tool results are no longer discarded** — every content block that
   wasn't plain text became the literal string `[image content]`, throwing away
   three things that carry real payload today. `structuredContent` (the
