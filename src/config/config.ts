@@ -97,6 +97,21 @@ export interface McpServerConfig {
   url?: string;
   /** Extra HTTP headers sent on every request (e.g. Authorization). */
   headers?: Record<string, string>;
+  /**
+   * Which of the server's tools to expose, by the server's own tool names
+   * (`*` wildcards allowed). `deny` wins over `allow`; an omitted `allow`
+   * means "everything the server offers".
+   *
+   * Not just tidiness: every exposed tool's schema is sent on every request,
+   * so a 100-tool server costs tokens on each turn and buries the tools that
+   * matter under ones the user never calls.
+   */
+  tools?: McpToolFilter;
+}
+
+export interface McpToolFilter {
+  allow?: string[];
+  deny?: string[];
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");

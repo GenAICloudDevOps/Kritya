@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { loadMcpTools, mcpStatus, shutdownMcp } from "../mcp/client.js";
+import { loadMcpTools, mcpStatus, shutdownMcp, toolAllowed } from "../mcp/client.js";
 import { NOOP_TRACER } from "../telemetry/tracer.js";
 import {
   expandVars,
@@ -545,4 +545,62 @@ test("readOnlyHint drops the permission prompt; destructiveHint overrides it", a
   assert.equal(byName["mcp_ann_plain"].requiresPermission, true);
   // Read-only or not, MCP output is still untrusted external content.
   assert.equal(byName["mcp_ann_lookup"].external, true);
+});
+
+// ---------- per-server tool allow/deny ----------
+
+test("toolAllowed: deny wins, wildcards match, absent allow means everything", () => {
+  assert.equal(toolAllowed("search", undefined), true);
+  assert.equal(toolAllowed("search", {}), true);
+  // allow narrows
+  assert.equal(toolAllowed("search", { allow: ["search"] }), true);
+  assert.equal(toolAllowed("delete", { allow: ["search"] }), false);
+  // deny overrides an allow that would otherwise match
+  assert.equal(toolAllowed("delete_repo", { allow: ["*"], deny: ["delete_*"] }), false);
+  assert.equal(toolAllowed("list_repo", { allow: ["*"], deny: ["delete_*"] }), true);
+  // an empty allow list is "unset", not "nothing"
+  assert.equal(toolAllowed("search", { allow: [] }), true);
+  // patterns are literal apart from *, so regex characters don't match wildly
+  assert.equal(toolAllowed("axb", { allow: ["a.b"] }), false);
+  assert.equal(toolAllowed("a.b", { allow: ["a.b"] }), true);
+});
+
+test("a server's denied tools never reach the model, and /mcp says how many", async () => {
+  const server = stdioServerWith([{ name: "search" }, { name: "delete_all" }, { name: "list" }]);
+  const tools = await loadMcpTools({
+    gh: {
+      command: process.execPath,
+      args: ["-e", server],
+      tools: { deny: ["delete_*"] },
+    },
+  });
+  assert.deepEqual(
+    tools.map((t) => t.name),
+    ["mcp_gh_search", "mcp_gh_list"]
+  );
+  const status = mcpStatus().find((s) => s.name === "gh");
+  assert.deepEqual(status?.tools, ["search", "list"]);
+  assert.equal(status?.hiddenTools, 1);
+});
+
+test("an allow list keeps only what it names", async () => {
+  const server = stdioServerWith([{ name: "search" }, { name: "write" }]);
+  const tools = await loadMcpTools({
+    narrow: {
+      command: process.execPath,
+      args: ["-e", server],
+      tools: { allow: ["search"] },
+    },
+  });
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].name, "mcp_narrow_search");
+  assert.equal(mcpStatus().find((s) => s.name === "narrow")?.hiddenTools, 1);
+});
+
+test("expandServerConfig carries the tool filter through", () => {
+  const out = expandServerConfig({
+    command: "node",
+    tools: { allow: ["a"], deny: ["b"] },
+  });
+  assert.deepEqual(out.tools, { allow: ["a"], deny: ["b"] });
 });

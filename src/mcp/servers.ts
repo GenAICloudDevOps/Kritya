@@ -67,6 +67,9 @@ export function expandServerConfig(cfg: McpServerConfig): McpServerConfig {
     cwd: cfg.cwd !== undefined ? expandVars(cfg.cwd) : undefined,
     url: cfg.url !== undefined ? expandVars(cfg.url) : undefined,
     headers: expandRecord(cfg.headers),
+    // Carried through verbatim: these are tool-name patterns, not values, and
+    // dropping them here would silently expose a server's whole tool list.
+    tools: cfg.tools,
   };
 }
 

@@ -8,6 +8,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Per-server tool allow/deny** — a server's entire tool list was exposed
+  unconditionally, and every exposed tool's schema is sent on every request, so
+  a 100-tool server cost tokens each turn and buried the handful of tools that
+  mattered. `"tools": { "allow": [...], "deny": [...] }` on a server entry now
+  limits what's exposed, matched against the server's own tool names with `*`
+  wildcards; `deny` wins over `allow`, and an absent `allow` means everything.
+  `/mcp` reports how many tools a server's config held back. The filter is part
+  of the trust fingerprint, so relaxing `allow` from `["search"]` to `["*"]`
+  re-asks rather than inheriting the earlier approval.
+- **`/mcp trust` and `/mcp trust revoke <name>`** — the per-server allowlist
+  could only ever be appended to. Since approval is matched by config
+  fingerprint across every workspace, an entry for a server you'd stopped using
+  silently re-approved it the next time any repo declared the same config, and
+  the only way out was hand-editing the store. Approvals can now be listed and
+  withdrawn. `/mcp remove` also withdraws the approval of the server it
+  removes, and its message for a project-declared server now points at
+  `/mcp trust revoke`, which is the only way to stop one loading without
+  editing the repo.
 - **MCP tool annotations are honored** — every MCP tool was hardcoded as
   requiring approval, which prompted on pure lookups (a docs fetch, an issue
   search); approval fatigue is what trains people to accept without reading, so
@@ -107,6 +125,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   redoable.
 
 ### Fixed
+
+- **The new-MCP-server prompt is per server** — it approved every pending
+  server declared by a workspace as one batch, so a branch adding a good server
+  and a hostile one offered only "both" or "neither" — and someone who wanted
+  the good one took both. Each server is now presented and decided on its own,
+  with a marker on remote endpoints, since those send requests and any token
+  you hold off the machine.
 
 - **MCP redirects no longer carry credentials off-origin** — HTTP requests used
   `fetch`'s default redirect handling, which re-sends every header, including

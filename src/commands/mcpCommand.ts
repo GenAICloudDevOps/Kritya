@@ -11,7 +11,14 @@ import { beginLogin, logout, pendingLogin } from "../mcp/login.js";
 import { loadAuth } from "../mcp/tokens.js";
 import { expandServerConfig, loadProjectMcpServers } from "../mcp/servers.js";
 import { loadConfig, saveConfig, type McpServerConfig } from "../config/config.js";
-import { isServerTrusted, serverFingerprint, trustServer } from "../trust/mcpTrust.js";
+import {
+  isServerTrusted,
+  loadMcpAllowlist,
+  revokeFingerprint,
+  revokeServer,
+  serverFingerprint,
+  trustServer,
+} from "../trust/mcpTrust.js";
 import type { CommandContext } from "./registry.js";
 
 /**
@@ -54,7 +61,9 @@ const USAGE = `Usage:
   /mcp remove <name>            remove a server from your config
   /mcp login <name>             sign in to a server via your browser
   /mcp logout <name>            revoke and delete a server's saved token
-  /mcp code <name> <code>       finish a login by pasting the code (SSH/headless)`;
+  /mcp code <name> <code>       finish a login by pasting the code (SSH/headless)
+  /mcp trust                    list the servers you've approved
+  /mcp trust revoke <name>      withdraw approval, so it's asked about again`;
 
 export async function runMcpCommand(ctx: CommandContext): Promise<void> {
   const parts = ctx.arg.trim().split(/\s+/).filter(Boolean);
@@ -74,6 +83,8 @@ export async function runMcpCommand(ctx: CommandContext): Promise<void> {
       return logoutServer(ctx, parts[1]);
     case "code":
       return submitCode(ctx, parts[1], parts.slice(2).join(" "));
+    case "trust":
+      return trustCommand(ctx, parts.slice(1));
     default:
       ctx.addItem({ kind: "info", text: `Unknown /mcp subcommand "${sub}".\n\n${USAGE}` });
   }
@@ -98,7 +109,8 @@ function showStatus(ctx: CommandContext): void {
     const head = `${mark} ${s.name} (${s.transport}) — ${s.target}`;
     if (s.ok) {
       const auth = s.transport === "http" && loadAuth(s.target) ? " · signed in" : "";
-      return `${head}${auth}\n    ${s.tools.length} tool(s): ${s.tools.join(", ") || "(none)"}`;
+      const hidden = s.hiddenTools ? ` · ${s.hiddenTools} hidden by config` : "";
+      return `${head}${auth}${hidden}\n    ${s.tools.length} tool(s): ${s.tools.join(", ") || "(none)"}`;
     }
     return `${head}\n    ${s.needsAuth ? s.error : `failed: ${s.error}`}`;
   });
@@ -185,7 +197,8 @@ async function removeServer(ctx: CommandContext, name: string | undefined): Prom
     ctx.addItem({
       kind: "info",
       text: inProject
-        ? `"${name}" comes from this workspace's .mcp.json, not your config — remove it from that file (it is checked into the repo).`
+        ? `"${name}" comes from this workspace's .mcp.json, not your config — remove it from that file (it is checked into the repo).\n` +
+          `To stop it loading without touching the repo: /mcp trust revoke ${name}`
         : `No server named "${name}" in ~/.kritya/config.json.`,
     });
     return;
@@ -208,6 +221,11 @@ async function removeServer(ctx: CommandContext, name: string | undefined): Prom
     }
   }
 
+  // Leaving the approval behind would re-approve this exact config silently
+  // the next time any workspace declares it — the server is gone, so the
+  // standing permission should go with it.
+  const untrusted = revokeFingerprint(serverFingerprint(cfg));
+
   disconnectServer(name);
   // Withdraw before forgetting: forgetStatus releases the server's tool names,
   // after which isToolOf can no longer identify them.
@@ -215,7 +233,9 @@ async function removeServer(ctx: CommandContext, name: string | undefined): Prom
   forgetStatus(name);
   ctx.addItem({
     kind: "info",
-    text: `Removed "${name}" — ${removed} tool(s) withdrawn.${tokenNote}`,
+    text:
+      `Removed "${name}" — ${removed} tool(s) withdrawn.${tokenNote}` +
+      (untrusted ? "\nIts approval was withdrawn too." : ""),
   });
 }
 
@@ -307,6 +327,74 @@ async function loginServer(
   } finally {
     ctx.setActivity(null);
   }
+}
+
+/**
+ * `/mcp trust` — inspect and withdraw per-server approvals.
+ *
+ * Trust is matched by fingerprint across every workspace, so an entry left
+ * behind for a server you've stopped using will silently approve it again the
+ * next time any repo declares the same config. Listing makes that visible;
+ * revoking is the only way to undo an approval short of editing the store.
+ */
+function trustCommand(ctx: CommandContext, args: string[]): void {
+  const sub = args[0]?.toLowerCase();
+  if (sub === undefined) return listTrusted(ctx);
+  if (sub !== "revoke") {
+    ctx.addItem({ kind: "info", text: `Usage: /mcp trust  ·  /mcp trust revoke <name>` });
+    return;
+  }
+
+  const name = args[1];
+  if (!name) {
+    ctx.addItem({ kind: "info", text: "Usage: /mcp trust revoke <name>" });
+    return;
+  }
+  const removed = revokeServer(name);
+  if (!removed.length) {
+    ctx.addItem({
+      kind: "info",
+      text: `"${name}" isn't in the trust list — nothing to revoke. See /mcp trust.`,
+    });
+    return;
+  }
+  // Revoking doesn't stop a server already running this session: it governs
+  // whether the next load asks again. Say so rather than implying it's dead.
+  const running = mcpStatus().find((s) => s.name === name && s.ok);
+  const note = running
+    ? `\n\nIt stays connected for this session — /mcp remove ${name} withdraws it now.`
+    : "";
+  ctx.addItem({
+    kind: "info",
+    text:
+      `Revoked trust for "${name}" (${removed.length} entr${removed.length > 1 ? "ies" : "y"}).\n` +
+      `Any workspace declaring it will ask before loading it again.${note}`,
+  });
+}
+
+function listTrusted(ctx: CommandContext): void {
+  const entries = loadMcpAllowlist();
+  if (!entries.length) {
+    ctx.addItem({
+      kind: "info",
+      text: "No MCP servers have been approved yet.\n\nServers you approve at startup are listed here.",
+    });
+    return;
+  }
+  const lines = entries
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((e) => {
+      const when = e.trustedAt.slice(0, 10);
+      return `  ${e.name}  — approved ${when}  (${e.fingerprint.slice(0, 12)})`;
+    });
+  ctx.addItem({
+    kind: "info",
+    text:
+      `Approved MCP servers:\n${lines.join("\n")}\n\n` +
+      `Approval is matched by config fingerprint and applies in every workspace.\n` +
+      `Withdraw one with /mcp trust revoke <name>.`,
+  });
 }
 
 function submitCode(ctx: CommandContext, name: string | undefined, code: string): void {

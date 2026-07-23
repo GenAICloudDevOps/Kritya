@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
-import type { McpServerConfig } from "../config/config.js";
+import type { McpServerConfig, McpToolFilter } from "../config/config.js";
 import type { ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
 import type { AuditLog } from "../audit/audit.js";
@@ -526,6 +526,30 @@ class McpConnection {
   }
 }
 
+/**
+ * Match a tool name against one `*`-wildcard pattern, e.g. `github_*`.
+ * Everything else is literal — these are tool names, not paths.
+ */
+function matchesPattern(name: string, pattern: string): boolean {
+  const rx = pattern
+    .split("*")
+    .map((literal) => literal.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${rx}$`).test(name);
+}
+
+/**
+ * Whether a server's tool passes its configured allow/deny lists. Deny wins,
+ * so a broad allow can be trimmed without rewriting it; an absent or empty
+ * allow means everything.
+ */
+export function toolAllowed(name: string, filter: McpToolFilter | undefined): boolean {
+  if (!filter) return true;
+  if (filter.deny?.some((p) => matchesPattern(name, p))) return false;
+  if (!filter.allow?.length) return true;
+  return filter.allow.some((p) => matchesPattern(name, p));
+}
+
 /** Loopback is exempt from the https requirement: there's no network to sniff. */
 function isLoopback(hostname: string): boolean {
   const h = hostname.replace(/^\[|\]$/g, "");
@@ -598,6 +622,8 @@ export interface McpServerStatus {
   /** resource_metadata URL from the 401 challenge, so login skips re-discovery. */
   authMetadataUrl?: string;
   tools: string[];
+  /** How many of the server's tools the config's allow/deny lists held back. */
+  hiddenTools?: number;
 }
 
 const connections: McpConnection[] = [];
@@ -726,7 +752,9 @@ export async function connectServer(
     // keeps a server from colliding with its own previous incarnation.
     releaseToolNames(name);
     const owned = new Set<string>();
-    for (const spec of specs) {
+    const exposed = specs.filter((s) => toolAllowed(s.name, cfg.tools));
+    status.hiddenTools = specs.length - exposed.length;
+    for (const spec of exposed) {
       const def = mcpToolDef(conn, name, spec);
       registeredNames.set(def.name, toolIdentity(name, spec.name));
       owned.add(def.name);

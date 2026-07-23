@@ -216,6 +216,10 @@ async function resolveWorkspaceTrust(): Promise<boolean> {
  * `git pull` or a malicious PR branch) doesn't silently inherit trust from
  * servers the user already reviewed. Already-approved servers (by
  * fingerprint, across all workspaces) pass straight through.
+ *
+ * Pending servers are decided one at a time: a batch approval makes refusing
+ * one server cost you the others, which is how people end up approving things
+ * they wouldn't have alone.
  */
 async function resolveMcpServerTrust(
   projectMcp: Record<string, McpServerConfig> | undefined
@@ -228,14 +232,14 @@ async function resolveMcpServerTrust(
     const instance = render(
       <McpTrustPrompt
         servers={pending}
-        onDecision={(trust) => {
-          if (trust) {
-            for (const [name, cfg] of Object.entries(pending)) {
-              trustServer(name, serverFingerprint(cfg));
-            }
+        onComplete={(approved) => {
+          const loaded = { ...trusted };
+          for (const name of approved) {
+            trustServer(name, serverFingerprint(pending[name]));
+            loaded[name] = pending[name];
           }
           instance.unmount();
-          resolve(trust ? { ...trusted, ...pending } : trusted);
+          resolve(loaded);
         }}
       />
     );

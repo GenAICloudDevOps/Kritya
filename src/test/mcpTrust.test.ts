@@ -7,6 +7,8 @@ import {
   isServerTrusted,
   loadMcpAllowlist,
   partitionByTrust,
+  revokeFingerprint,
+  revokeServer,
   serverFingerprint,
   trustServer,
 } from "../trust/mcpTrust.js";
@@ -85,4 +87,56 @@ test("serverFingerprint changes with cwd, so widening a server's scope re-prompt
   const root = serverFingerprint({ ...base, cwd: "/" });
   assert.notEqual(docs, root, "a cwd change must not inherit the earlier approval");
   assert.notEqual(serverFingerprint(base), docs);
+});
+
+test("serverFingerprint changes when a tool allow/deny list is relaxed", () => {
+  const base = { url: "https://mcp.example.com/mcp" };
+  const narrow = serverFingerprint({ ...base, tools: { allow: ["search"] } });
+  const wide = serverFingerprint({ ...base, tools: { allow: ["*"] } });
+  assert.notEqual(narrow, wide, "widening the exposed tool set must re-prompt");
+});
+
+test("revokeServer drops every entry for a name and reports what it removed", async () => {
+  const store = await makeStoreFile();
+  trustServer("linear", "fp-one", store);
+  trustServer("linear", "fp-two", store);
+  trustServer("github", "fp-three", store);
+
+  const removed = revokeServer("linear", store);
+  assert.equal(removed.length, 2);
+  assert.deepEqual(removed.map((e) => e.fingerprint).sort(), ["fp-one", "fp-two"]);
+  assert.equal(isServerTrusted("fp-one", store), false);
+  assert.equal(isServerTrusted("fp-two", store), false);
+  // Untouched servers survive.
+  assert.equal(isServerTrusted("fp-three", store), true);
+});
+
+test("revokeServer on an unknown name is a no-op, not an error", async () => {
+  const store = await makeStoreFile();
+  trustServer("linear", "fp-one", store);
+  assert.deepEqual(revokeServer("nope", store), []);
+  assert.equal(loadMcpAllowlist(store).length, 1);
+});
+
+test("revokeFingerprint removes one exact config and leaves siblings alone", async () => {
+  const store = await makeStoreFile();
+  trustServer("files", "fp-docs", store);
+  trustServer("files", "fp-root", store);
+
+  assert.equal(revokeFingerprint("fp-docs", store), true);
+  assert.equal(isServerTrusted("fp-docs", store), false);
+  assert.equal(isServerTrusted("fp-root", store), true);
+  // Second call finds nothing left to remove.
+  assert.equal(revokeFingerprint("fp-docs", store), false);
+});
+
+test("a revoked server is pending again, not silently re-approved", async () => {
+  const store = await makeStoreFile();
+  const cfg = { command: "node", args: ["server.js"] };
+  trustServer("srv", serverFingerprint(cfg), store);
+  assert.deepEqual(Object.keys(partitionByTrust({ srv: cfg }, store).pending), []);
+
+  revokeServer("srv", store);
+  // The point of revocation: the same config in any workspace asks again.
+  assert.deepEqual(Object.keys(partitionByTrust({ srv: cfg }, store).pending), ["srv"]);
 });

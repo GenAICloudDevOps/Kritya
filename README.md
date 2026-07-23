@@ -568,7 +568,8 @@ Streamable HTTP (`url`):
       "cwd": "./docs"
     },
     "linear": {
-      "url": "https://mcp.linear.app/mcp"
+      "url": "https://mcp.linear.app/mcp",
+      "tools": { "deny": ["delete_*"] }
     }
   }
 }
@@ -580,7 +581,16 @@ VS Code read); on a name clash your global config wins. `${VAR}` in any string
 is expanded from the environment, so a checked-in `.mcp.json` never needs to
 contain a literal secret. Because `.mcp.json` launches processes and contacts
 endpoints on your behalf, it's part of the workspace trust prompt, and trust
-is re-asked whenever the file changes.
+is re-asked whenever the file changes. On top of that, each server needs its
+own first-use approval, asked **one server at a time** — so a branch that adds
+a useful server and a dubious one can be answered separately rather than as a
+single take-it-or-leave-it. `/mcp trust` lists what you've approved and
+`/mcp trust revoke <name>` withdraws it.
+
+`tools` limits which of a server's tools are exposed, by the server's own tool
+names (`*` wildcards allowed, `deny` wins over `allow`). Worth using on large
+servers: every exposed tool's schema is sent on every request, so a 100-tool
+server costs tokens each turn and buries the tools you actually want.
 
 A stdio server runs in the workspace root by default — not in whatever
 directory you happened to launch `kritya` from — so a server configured with a
@@ -618,14 +628,16 @@ redirect lands on a one-shot `127.0.0.1` listener, and the token is written to
 touches the terminal.** After that the server connects automatically on every
 start, and expired access tokens refresh silently.
 
-| Command                   | What it does                                       |
-| ------------------------- | -------------------------------------------------- |
-| `/mcp`                    | status of every server, and which need a login     |
-| `/mcp add <name> <url>`   | add a remote server (`-- <cmd…>` for stdio)        |
-| `/mcp remove <name>`      | remove it, and revoke any token it held            |
-| `/mcp login <name>`       | browser sign-in                                    |
-| `/mcp logout <name>`      | revoke server-side where supported, delete locally |
-| `/mcp code <name> <code>` | finish a login by pasting the code (SSH/headless)  |
+| Command                    | What it does                                       |
+| -------------------------- | -------------------------------------------------- |
+| `/mcp`                     | status of every server, and which need a login     |
+| `/mcp add <name> <url>`    | add a remote server (`-- <cmd…>` for stdio)        |
+| `/mcp remove <name>`       | remove it, revoke any token, withdraw its approval |
+| `/mcp login <name>`        | browser sign-in                                    |
+| `/mcp logout <name>`       | revoke server-side where supported, delete locally |
+| `/mcp code <name> <code>`  | finish a login by pasting the code (SSH/headless)  |
+| `/mcp trust`               | list every server you've approved                  |
+| `/mcp trust revoke <name>` | withdraw approval, so it's asked about again       |
 
 Servers needing a login are marked `○` and simply contribute no tools until you
 run `/mcp login` — kritya never opens a browser during startup. A server
