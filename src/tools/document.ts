@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ToolDef } from "../types.js";
+import { writeFileAtomic } from "../atomicWrite.js";
 import { resolveSafe, truncateResult } from "./common.js";
 import { readDocx, writeDocx } from "./document/docx.js";
 import { readXlsx, writeXlsx, editXlsx } from "./document/xlsx.js";
@@ -149,7 +150,7 @@ export const writeDocumentTool: ToolDef = {
 
     await fs.mkdir(path.dirname(abs), { recursive: true });
     ctx.undo?.snapshot(abs, relPath);
-    await fs.writeFile(abs, buf);
+    await writeFileAtomic(abs, buf);
     return `Wrote ${relPath}`;
   },
 };
@@ -223,7 +224,7 @@ export const editSpreadsheetTool: ToolDef = {
     const { buf: out, applied } = await editXlsx(buf, edits);
 
     ctx.undo?.snapshot(abs, relPath);
-    await fs.writeFile(abs, out);
+    await writeFileAtomic(abs, out);
     const detail = applied.map((a) => `${a.sheet}!${a.cell}=${a.newValue}`).join(", ");
     return `Updated ${applied.length} cell(s) in ${relPath}: ${detail}`;
   },
@@ -326,12 +327,12 @@ export const editPdfTool: ToolDef = {
       }
       await fs.mkdir(path.dirname(outAbs), { recursive: true });
       ctx.undo?.snapshot(outAbs, outRel);
-      await fs.writeFile(outAbs, out);
+      await writeFileAtomic(outAbs, out);
       return `${summary} → ${outRel}`;
     }
 
     ctx.undo?.snapshot(abs, relPath);
-    await fs.writeFile(abs, out);
+    await writeFileAtomic(abs, out);
     return `${summary} in ${relPath}`;
   },
 };

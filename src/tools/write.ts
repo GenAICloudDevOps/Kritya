@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ToolDef } from "../types.js";
+import { writeFileAtomic } from "../atomicWrite.js";
 import { resolveSafe } from "./common.js";
 import { diffLines } from "./diff.js";
 import { formatSecretWarning, scanForSecrets } from "./secretScan.js";
@@ -40,7 +41,7 @@ export const writeFileTool: ToolDef = {
     }
     await fs.mkdir(path.dirname(abs), { recursive: true });
     ctx.undo?.snapshot(abs, String(args.path));
-    await fs.writeFile(abs, String(args.content), "utf8");
+    await writeFileAtomic(abs, content);
     return `Wrote ${args.path}`;
   },
 };

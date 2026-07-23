@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import type { ToolDef } from "../types.js";
+import { writeFileAtomic } from "../atomicWrite.js";
 import { resolveSafe } from "./common.js";
 import { diffLines } from "./diff.js";
 import { applyEdit } from "./fuzzyMatch.js";
@@ -55,7 +56,7 @@ export const editFileTool: ToolDef = {
     }
 
     ctx.undo?.snapshot(abs, String(args.path));
-    await fs.writeFile(abs, match.result!, "utf8");
+    await writeFileAtomic(abs, match.result!);
     const fuzzy = match.strategy === "line-trimmed" ? " (matched ignoring whitespace)" : "";
     return `Replaced ${replaceAll ? match.count : 1} occurrence(s) in ${args.path}${fuzzy}`;
   },

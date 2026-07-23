@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileAtomicSync } from "../atomicWrite.js";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
 import { debugLog } from "../config/debug.js";
@@ -12,20 +13,14 @@ function sessionDir(workspace: string): string {
 }
 
 /**
- * Write `data` to `filePath` without ever leaving a truncated/partial file
- * behind if the process crashes or is killed mid-write: write to a sibling
- * tmp file first, then rename it over the target. A rename is a single
- * filesystem metadata operation (atomic on both POSIX and Windows/NTFS), so
- * readers only ever see the old complete file or the new complete file, never
- * something in between.
+ * Transcripts can contain secrets that passed through tool output, so they are
+ * always written 0o600 rather than inheriting whatever mode the file had.
+ * writeFileAtomicSync is the shared implementation (see src/atomicWrite.ts):
+ * a sibling temp file renamed over the target, so a crash mid-write can never
+ * leave a half-written transcript behind.
  */
-function writeFileAtomic(filePath: string, data: string, mode: number): void {
-  const tmp = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
-  fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, filePath);
+function writeSessionFile(filePath: string, data: string): void {
+  writeFileAtomicSync(filePath, data, { mode: 0o600 });
 }
 
 /**
@@ -91,7 +86,7 @@ export class SessionStore {
         fs.rmSync(this.tasksFilePath(), { force: true });
         return;
       }
-      writeFileAtomic(this.tasksFilePath(), JSON.stringify(tasks), 0o600);
+      writeSessionFile(this.tasksFilePath(), JSON.stringify(tasks));
     } catch (err) {
       debugLog(`SessionStore.saveTasks(${this.tasksFilePath()})`, err);
     }
@@ -123,7 +118,7 @@ export class SessionStore {
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     hardenWindowsDir(CONFIG_DIR);
     if (seed.length) {
-      writeFileAtomic(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""), 0o600);
+      writeSessionFile(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""));
     }
   }
 
@@ -155,7 +150,7 @@ export class SessionStore {
   /**
    * Rewrite the session file to hold exactly `messages`, atomically. The log
    * is otherwise append-only; this is the one place it's rewound — used by
-   * /rewind to drop the messages after a checkpoint. writeFileAtomic means a
+   * /rewind to drop the messages after a checkpoint. The atomic write means a
    * reader (e.g. a concurrent --continue) never sees a half-written file.
    */
   overwrite(messages: ChatMessage[]): void {
@@ -163,7 +158,7 @@ export class SessionStore {
     try {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       hardenWindowsDir(CONFIG_DIR);
-      writeFileAtomic(this.file, messages.map((m) => JSON.stringify(m) + "\n").join(""), 0o600);
+      writeSessionFile(this.file, messages.map((m) => JSON.stringify(m) + "\n").join(""));
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
       debugLog(`SessionStore.overwrite(${this.file})`, err);

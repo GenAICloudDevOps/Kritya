@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileAtomicSync } from "../atomicWrite.js";
 
 interface FileState {
   relPath: string;
@@ -280,7 +281,10 @@ function restore(state: FileState): string {
     return `Removed ${state.relPath}`;
   }
   fs.mkdirSync(path.dirname(state.absPath), { recursive: true });
-  fs.writeFileSync(state.absPath, state.content, "latin1");
+  // Atomic for the same reason the write tools are: a crash while restoring
+  // would leave the file half-reverted, with the original now gone from both
+  // the disk and the stack entry we just popped.
+  writeFileAtomicSync(state.absPath, state.content, { encoding: "latin1" });
   return `Restored ${state.relPath}`;
 }
 

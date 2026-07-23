@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import type { ToolDef } from "../types.js";
+import { writeFileAtomic } from "../atomicWrite.js";
 import { resolveSafe, truncateResult } from "./common.js";
 
 /**
@@ -101,7 +102,7 @@ async function loadNotebook(abs: string): Promise<Notebook> {
 
 async function saveNotebook(abs: string, nb: Notebook): Promise<void> {
   // Jupyter writes notebooks with 1-space indent and a trailing newline; match it to keep diffs small.
-  await fs.writeFile(abs, JSON.stringify(nb, null, 1) + "\n", "utf8");
+  await writeFileAtomic(abs, JSON.stringify(nb, null, 1) + "\n");
 }
 
 export const readNotebookTool: ToolDef = {

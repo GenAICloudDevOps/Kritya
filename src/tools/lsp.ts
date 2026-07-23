@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { lspManager } from "../lsp/manager.js";
 import type { LspDiagnostic, LspFileEdits, LspLocation, LspPosition } from "../lsp/client.js";
 import type { ToolDef } from "../types.js";
+import { writeFileAtomic } from "../atomicWrite.js";
 import { resolveSafe, truncateResult } from "./common.js";
 
 const MAX_LOCATIONS = 100;
@@ -241,7 +242,7 @@ export const lspRenameTool: ToolDef = {
       const updated = applyTextEdits(content, t.edits);
       if (updated === content) continue;
       ctx.undo?.snapshot(t.abs, t.rel);
-      await fs.writeFile(t.abs, updated, "utf8");
+      await writeFileAtomic(t.abs, updated);
       totalEdits += t.edits.length;
     }
 
