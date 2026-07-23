@@ -36,6 +36,10 @@ export function serverFingerprint(cfg: McpServerConfig): string {
   const shape = {
     command: cfg.command,
     args: cfg.args ?? [],
+    // Part of the identity, not a detail: cwd decides what a filesystem-style
+    // server can reach. Leaving it out would let a .mcp.json edit widen a
+    // server approved for ./docs to the whole disk without re-prompting.
+    cwd: cfg.cwd,
     url: cfg.url,
     envKeys: cfg.env ? Object.keys(cfg.env).sort() : [],
     headerKeys: cfg.headers ? Object.keys(cfg.headers).sort() : [],

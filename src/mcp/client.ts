@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
+import path from "node:path";
 import type { McpServerConfig } from "../config/config.js";
 import type { ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
@@ -28,6 +30,20 @@ import { planSpawn } from "./spawnWin.js";
 const PROTOCOL_VERSION = "2025-06-18";
 const CONNECT_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 120_000;
+
+/** Same-origin redirects we'll follow before calling it a loop. */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Provider function-name ceiling. OpenAI-compatible endpoints reject the whole
+ * request — every tool, not just the offending one — when any name exceeds
+ * this, which surfaces as an inexplicable model failure rather than an MCP one.
+ */
+const MAX_TOOL_NAME_LEN = 64;
+
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
 
 /** How much of a server's stderr to keep for diagnostics, and how much to report. */
 const STDERR_KEEP_BYTES = 8_192;
@@ -73,10 +89,22 @@ interface Pending {
   cleanup(): void;
 }
 
+/**
+ * Behavioral hints a server may attach to a tool (spec 2025-06-18). They are
+ * hints, not guarantees — the server is the one making the claim — so they can
+ * only ever *relax* a requirement the user already accepted by trusting the
+ * server, never tighten anything else.
+ */
+interface McpToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+}
+
 interface McpToolSpec {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  annotations?: McpToolAnnotations;
 }
 
 /**
@@ -121,7 +149,12 @@ class StdioTransport implements Transport {
   /** Tail of the server's stderr, kept for the exit message (see below). */
   private stderrTail = "";
 
-  constructor(command: string, args: string[], env: Record<string, string> | undefined) {
+  constructor(
+    command: string,
+    args: string[],
+    env: Record<string, string> | undefined,
+    cwd: string
+  ) {
     const plan = planSpawn(command, args);
     this.proc = spawn(plan.command, plan.args, {
       // Minimal env, not the full process env: every provider API key lives
@@ -129,6 +162,9 @@ class StdioTransport implements Transport {
       // into but shouldn't automatically receive credentials it never asked
       // for. Servers that need extra vars declare them in their own `env`.
       env: { ...minimalEnv(), ...env },
+      // Always explicit. Inheriting kritya's cwd makes a server's scope depend
+      // on which directory the user launched from — see McpServerConfig.cwd.
+      cwd,
       stdio: ["pipe", "pipe", "pipe"],
       windowsVerbatimArguments: plan.windowsVerbatimArguments,
     });
@@ -271,14 +307,44 @@ class HttpTransport implements Transport {
     timeoutMs: number,
     signal?: AbortSignal
   ): Promise<Response> {
-    return fetch(this.url, {
-      method: "POST",
-      headers: await this.buildHeaders(),
-      body: JSON.stringify(msg),
-      // Cancelling has to tear the socket down too, or the request stays in
-      // flight for the full timeout after the user has walked away.
-      signal: withTimeout(timeoutMs, signal),
-    });
+    const body = JSON.stringify(msg);
+    let url = this.url;
+    // Bounded, because a redirect chain is otherwise a free loop.
+    for (let hop = 0; ; hop++) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: await this.buildHeaders(),
+        body,
+        // Following redirects automatically re-sends every header — including
+        // Authorization — to whatever Location names. A compromised server, or
+        // anyone able to rewrite a plaintext hop, could point that at their own
+        // origin and collect the token. Handle them here so we can look first.
+        redirect: "manual",
+        // Cancelling has to tear the socket down too, or the request stays in
+        // flight for the full timeout after the user has walked away.
+        signal: withTimeout(timeoutMs, signal),
+      });
+      if (!isRedirect(res.status)) return res;
+
+      const location = res.headers.get("location");
+      await res.body?.cancel().catch(() => {});
+      if (!location) throw new Error(`HTTP ${res.status} redirect with no Location header`);
+      if (hop >= MAX_REDIRECTS) throw new Error(`too many redirects from ${this.url}`);
+
+      const target = new URL(location, url);
+      // Same-origin only. A cross-origin redirect may be entirely legitimate
+      // (a vendor moving endpoints), but we cannot tell that from an attack,
+      // and the cost of guessing wrong is the user's bearer token. Refuse, and
+      // name the destination so a real migration is a one-line config edit.
+      if (target.origin !== new URL(url).origin) {
+        throw new Error(
+          `refusing redirect to a different origin (${target.origin}) — ` +
+            `it would send this server's credentials there. ` +
+            `If that endpoint is genuine, point the server's "url" at it directly.`
+        );
+      }
+      url = target.toString();
+    }
   }
 
   /** Parse an SSE body, feeding each `data:` event's JSON to onMessage. */
@@ -319,6 +385,7 @@ class HttpTransport implements Transport {
         fetch(this.url, {
           method: "DELETE",
           headers,
+          redirect: "manual",
           signal: AbortSignal.timeout(3_000),
         })
       )
@@ -459,17 +526,63 @@ class McpConnection {
   }
 }
 
-function makeTransport(name: string, cfg: McpServerConfig): Transport {
+/** Loopback is exempt from the https requirement: there's no network to sniff. */
+function isLoopback(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "");
+  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h.endsWith(".localhost");
+}
+
+/**
+ * Reject a remote server reachable only over plaintext. `/mcp add` already
+ * refuses these, but that guards one entrance: a server hand-written into
+ * ~/.kritya/config.json or a repo's .mcp.json never passes through it and
+ * would happily POST a bearer token in the clear. This is the choke point all
+ * three sources share.
+ */
+export function assertSafeUrl(name: string, url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`server "${name}" has an invalid url: ${url}`);
+  }
+  if (parsed.protocol === "https:") return parsed;
+  if (parsed.protocol === "http:" && isLoopback(parsed.hostname)) return parsed;
+  if (parsed.protocol !== "http:") {
+    throw new Error(`server "${name}" uses unsupported scheme "${parsed.protocol}" — use https://`);
+  }
+  throw new Error(
+    `server "${name}" uses plain http:// (${parsed.host}) — an MCP session carries ` +
+      `your credentials in cleartext over it. Use https:// (localhost is exempt).`
+  );
+}
+
+function makeTransport(name: string, cfg: McpServerConfig, workspace: string): Transport {
   if (cfg.url) {
     if (cfg.command) {
       throw new Error(`server "${name}" sets both "command" and "url"; pick one`);
     }
+    assertSafeUrl(name, cfg.url);
     return new HttpTransport(cfg.url, cfg.headers ?? {});
   }
   if (!cfg.command) {
     throw new Error(`server "${name}" needs either "command" (stdio) or "url" (HTTP)`);
   }
-  return new StdioTransport(cfg.command, cfg.args ?? [], cfg.env);
+  // Relative to the workspace, so a checked-in .mcp.json stays portable.
+  const cwd = cfg.cwd ? path.resolve(workspace, cfg.cwd) : workspace;
+  return new StdioTransport(cfg.command, cfg.args ?? [], cfg.env, cwd);
+}
+
+/**
+ * Cross-cutting inputs for connecting servers. `tracer`/`audit` are optional so
+ * callers that don't care (tests, ad-hoc loads) can omit them; `workspace` is
+ * what a stdio server's relative `cwd` resolves against, defaulting to the
+ * process cwd only because a caller that omits it has no better answer.
+ */
+export interface McpLoadOptions {
+  tracer: Tracer;
+  audit?: AuditLog;
+  workspace?: string;
 }
 
 /** What /mcp reports for one configured server. */
@@ -489,6 +602,17 @@ export interface McpServerStatus {
 
 const connections: McpConnection[] = [];
 let statuses: McpServerStatus[] = [];
+/**
+ * Exposed tool name -> the identity that claimed it, so a second tool whose
+ * sanitized form lands on the same string doesn't silently shadow the first.
+ */
+const registeredNames = new Map<string, string>();
+/** Server -> the exposed tool names it currently owns, for withdrawal and reuse. */
+const serverToolNames = new Map<string, Set<string>>();
+
+function toolIdentity(server: string, toolName: string): string {
+  return `${server}\u0000${toolName}`;
+}
 
 /** Status of every configured MCP server from the last loadMcpTools call. */
 export function mcpStatus(): McpServerStatus[] {
@@ -497,6 +621,34 @@ export function mcpStatus(): McpServerStatus[] {
 
 function sanitize(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function shortHash(s: string): string {
+  return crypto.createHash("sha256").update(s).digest("hex").slice(0, 8);
+}
+
+/**
+ * The name a tool is exposed to the model under.
+ *
+ * Two things can go wrong with the obvious `mcp_<server>_<tool>`. sanitize is
+ * lossy — `my.tool` and `my-tool` both become `my_tool`, so one tool shadows
+ * the other and calls silently go to the wrong place. And the result can
+ * exceed the provider's 64-character function-name limit, which fails the
+ * entire request rather than the one tool, looking like a broken model.
+ *
+ * Both are resolved by folding a hash of the true identity into the name:
+ * deterministic across runs (so allow-rules and transcripts stay valid), and
+ * distinct wherever the sanitized forms are not.
+ */
+function exposedToolName(server: string, toolName: string): string {
+  const base = `mcp_${sanitize(server)}_${sanitize(toolName)}`;
+  const identity = toolIdentity(server, toolName);
+  const claimed = registeredNames.get(base);
+  const needsHash =
+    base.length > MAX_TOOL_NAME_LEN || (claimed !== undefined && claimed !== identity);
+  if (!needsHash) return base;
+  const suffix = `_${shortHash(identity)}`;
+  return base.slice(0, MAX_TOOL_NAME_LEN - suffix.length) + suffix;
 }
 
 /**
@@ -512,9 +664,11 @@ function sanitize(s: string): string {
  */
 export async function loadMcpTools(
   servers: Record<string, McpServerConfig> | undefined,
-  trace?: { tracer: Tracer; audit?: AuditLog }
+  trace?: McpLoadOptions
 ): Promise<ToolDef[]> {
   statuses = [];
+  registeredNames.clear();
+  serverToolNames.clear();
   if (!servers || Object.keys(servers).length === 0) return [];
   const tools: ToolDef[] = [];
 
@@ -542,9 +696,10 @@ export async function loadMcpTools(
 export async function connectServer(
   name: string,
   cfg: McpServerConfig,
-  trace?: { tracer: Tracer; audit?: AuditLog }
+  trace?: McpLoadOptions
 ): Promise<{ tools: ToolDef[]; status: McpServerStatus }> {
   const tracer = trace?.tracer ?? NOOP_TRACER;
+  const workspace = trace?.workspace ?? process.cwd();
   const tools: ToolDef[] = [];
   const status: McpServerStatus = {
     name,
@@ -564,13 +719,21 @@ export async function connectServer(
     if (missing.length) {
       throw new Error(`missing env var${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
     }
-    conn = new McpConnection(name, makeTransport(name, cfg));
+    conn = new McpConnection(name, makeTransport(name, cfg, workspace));
     const specs = await conn.initialize();
     connections.push(conn);
+    // Reconnects re-derive names from scratch; releasing the old claims first
+    // keeps a server from colliding with its own previous incarnation.
+    releaseToolNames(name);
+    const owned = new Set<string>();
     for (const spec of specs) {
-      tools.push(mcpToolDef(conn, name, spec));
+      const def = mcpToolDef(conn, name, spec);
+      registeredNames.set(def.name, toolIdentity(name, spec.name));
+      owned.add(def.name);
+      tools.push(def);
       status.tools.push(spec.name);
     }
+    serverToolNames.set(name, owned);
     status.ok = true;
     span.setAttribute("kritya.mcp_tool_count", status.tools.length);
     span.setStatus("OK");
@@ -605,13 +768,33 @@ export function replaceStatus(status: McpServerStatus): void {
   else statuses.push(status);
 }
 
+/**
+ * Whether a tool can run without asking the user first.
+ *
+ * Marking every MCP tool as permission-requiring costs more than it looks. It
+ * prompts on pure lookups (a docs fetch, an issue search), and approval fatigue
+ * is exactly what trains people to accept without reading — so the blanket
+ * prompt makes the prompts that matter *less* effective. It also silently
+ * excluded MCP from subagents, which are only handed tools that don't prompt.
+ *
+ * We take readOnlyHint at face value, but only that one: it is a claim by a
+ * server the user has already trusted (workspace trust + per-server trust) that
+ * a tool doesn't change anything. destructiveHint being set overrides it, since
+ * a server contradicting itself should get the cautious reading.
+ */
+function isReadOnly(spec: McpToolSpec): boolean {
+  const a = spec.annotations;
+  return a?.readOnlyHint === true && a.destructiveHint !== true;
+}
+
 function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): ToolDef {
-  const name = `mcp_${sanitize(server)}_${sanitize(spec.name)}`;
   return {
-    name,
+    name: exposedToolName(server, spec.name),
     description: `[MCP: ${server}] ${spec.description ?? spec.name}`,
     parameters: spec.inputSchema ?? { type: "object", properties: {} },
-    requiresPermission: true,
+    requiresPermission: !isReadOnly(spec),
+    // Read-only or not, the output came from outside the workspace and is
+    // wrapped as untrusted — a lookup tool is a prime injection vector.
     external: true,
     summarize: (args) => `${server}/${spec.name}(${JSON.stringify(args).slice(0, 80)})`,
     execute: (args, _ctx, signal) => conn.callTool(spec.name, args, signal),
@@ -621,6 +804,23 @@ function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): Too
 /** The tool-name prefix every tool from a given server shares. */
 export function toolPrefix(server: string): string {
   return `mcp_${sanitize(server)}_`;
+}
+
+/**
+ * Predicate matching the tools a server currently contributes. Prefer this to
+ * a bare prefix test: a name that had to be hash-shortened is a truncation of
+ * `mcp_<server>_...` and can lose the prefix outright.
+ */
+export function isToolOf(server: string): (toolName: string) => boolean {
+  const owned = serverToolNames.get(server);
+  if (!owned) return (t) => t.startsWith(toolPrefix(server));
+  return (t) => owned.has(t);
+}
+
+/** Release a server's claimed tool names so they can be reused. */
+function releaseToolNames(server: string): void {
+  for (const n of serverToolNames.get(server) ?? []) registeredNames.delete(n);
+  serverToolNames.delete(server);
 }
 
 /**
@@ -641,10 +841,15 @@ export function disconnectServer(name: string): void {
 /** Drop a server from the /mcp status table entirely. */
 export function forgetStatus(name: string): void {
   statuses = statuses.filter((s) => s.name !== name);
+  // Callers withdraw the tools first (they need isToolOf while it still
+  // resolves), so this is the right point to give the names back.
+  releaseToolNames(name);
 }
 
 /** Kill all MCP servers (call on exit). */
 export function shutdownMcp(): void {
   for (const conn of connections) conn.close();
   connections.length = 0;
+  registeredNames.clear();
+  serverToolNames.clear();
 }

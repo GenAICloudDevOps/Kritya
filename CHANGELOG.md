@@ -8,6 +8,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **MCP tool annotations are honored** — every MCP tool was hardcoded as
+  requiring approval, which prompted on pure lookups (a docs fetch, an issue
+  search); approval fatigue is what trains people to accept without reading, so
+  the blanket prompt made the prompts that matter less effective. It also had a
+  consequence nothing surfaced: subagents are only handed tools that don't
+  prompt, so no MCP tool was ever available to any subagent. Tools a server
+  marks `readOnlyHint` (and not `destructiveHint`) now run without a prompt and
+  reach subagents. Their output is still wrapped as untrusted content.
+- **`cwd` for stdio MCP servers** — a server was launched in whichever
+  directory kritya was started from, so a filesystem-style server configured
+  with a relative root (`server-filesystem .`) scoped itself to the home
+  directory under `cd ~ && kritya ~/projects/app` instead of the project.
+  Servers now default to the workspace root, and `cwd` overrides that (resolved
+  against the workspace, so a checked-in `.mcp.json` stays portable). `cwd` is
+  part of the per-server trust fingerprint: widening a server's directory
+  re-asks for approval instead of inheriting the old one.
+
 - **OAuth 2.1 for remote MCP servers** — HTTP servers previously got only the
   static `headers` from config, which meant every hosted MCP server (Linear,
   Notion, Sentry, GitHub, Atlassian) was unreachable, since they all require
@@ -90,6 +107,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   redoable.
 
 ### Fixed
+
+- **MCP redirects no longer carry credentials off-origin** — HTTP requests used
+  `fetch`'s default redirect handling, which re-sends every header, including
+  `Authorization`, to whatever `Location` names. A compromised server, or anyone
+  able to rewrite a plaintext hop, could point that at their own origin and
+  collect the token. Redirects are now handled explicitly and refused when they
+  leave the origin.
+- **The `https://` requirement covers all three config sources** — `/mcp add`
+  refused plaintext remote servers, but a server hand-written into
+  `~/.kritya/config.json` or a repo's `.mcp.json` bypassed that check entirely
+  and would POST a bearer token in the clear. The check now runs where every
+  source converges, at connect time. Loopback stays exempt.
+- **MCP tool names can no longer collide or overflow** — name sanitizing is
+  lossy, so `my.tool` and `my-tool` both became `mcp_<server>_my_tool` and one
+  silently shadowed the other. Separately, OpenAI-compatible endpoints cap
+  function names at 64 characters and reject the _entire_ request when any name
+  exceeds it, which presented as an inexplicable model failure rather than an
+  MCP one. Colliding and over-long names now get a deterministic hash suffix.
 
 - **Cross-platform CI verification**: CI now runs the full test suite on
   Windows and macOS runners (in addition to Ubuntu 18.x/20.x/22.x), not just

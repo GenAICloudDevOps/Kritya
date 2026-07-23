@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { loadMcpTools, mcpStatus, shutdownMcp } from "../mcp/client.js";
+import { NOOP_TRACER } from "../telemetry/tracer.js";
 import {
   expandVars,
   expandServerConfig,
@@ -408,4 +409,140 @@ test("http: an unreachable server is reported, not fatal", async () => {
   assert.equal(tools.length, 0);
   const status = mcpStatus().find((s) => s.name === "down");
   assert.equal(status?.ok, false);
+});
+
+// ---------- stdio working directory ----------
+
+/** A stdio server whose one tool reports the directory it was launched in. */
+const CWD_SERVER = STDIO_SERVER.replace("'echo:' + m.params.arguments.text", "process.cwd()");
+
+test("stdio: a server runs in the workspace, not in kritya's launch directory", async () => {
+  const workspace = await fs.realpath(await makeWorkspace());
+  const tools = await loadMcpTools(
+    { where: { command: process.execPath, args: ["-e", CWD_SERVER] } },
+    { tracer: NOOP_TRACER, workspace }
+  );
+  assert.equal(tools.length, 1);
+  const reported = await tools[0].execute({ text: "" }, { workspace });
+  assert.equal(reported, workspace);
+  assert.notEqual(reported, process.cwd());
+});
+
+test("stdio: an explicit cwd resolves against the workspace, keeping .mcp.json portable", async () => {
+  const workspace = await fs.realpath(await makeWorkspace());
+  await fs.mkdir(path.join(workspace, "docs"));
+  const tools = await loadMcpTools(
+    { where: { command: process.execPath, args: ["-e", CWD_SERVER], cwd: "./docs" } },
+    { tracer: NOOP_TRACER, workspace }
+  );
+  assert.equal(await tools[0].execute({}, { workspace }), path.join(workspace, "docs"));
+});
+
+// ---------- transport security ----------
+
+test("a remote server on plain http:// is refused before any request is sent", async () => {
+  const tools = await loadMcpTools({ leaky: { url: "http://mcp.example.com/mcp" } });
+  assert.equal(tools.length, 0);
+  const status = mcpStatus().find((s) => s.name === "leaky");
+  assert.equal(status?.ok, false);
+  assert.match(status?.error ?? "", /plain http/i);
+  // Not reported as a login problem — that would send the user to /mcp login.
+  assert.notEqual(status?.needsAuth, true);
+});
+
+test("loopback stays exempt from the https requirement", async () => {
+  const srv = await startHttpMcpServer();
+  try {
+    const tools = await loadMcpTools({ local: { url: srv.url } });
+    assert.equal(tools.length, 1);
+  } finally {
+    srv.close();
+  }
+});
+
+/** An endpoint that answers every POST with a redirect to `target`. */
+function startRedirector(target: string): Promise<{ url: string; close(): void }> {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(307, { location: target }).end();
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address() as { port: number };
+      resolve({ url: `http://127.0.0.1:${addr.port}/mcp`, close: () => server.close() });
+    });
+  });
+}
+
+test("a cross-origin redirect is refused rather than forwarding credentials", async () => {
+  const real = await startHttpMcpServer();
+  // Same host, different port — a different origin, and the cheapest stand-in
+  // for the attacker-controlled destination this check exists to stop.
+  const redirector = await startRedirector(real.url);
+  try {
+    const tools = await loadMcpTools({
+      hijack: { url: redirector.url, headers: { authorization: "Bearer sekret" } },
+    });
+    assert.equal(tools.length, 0);
+    const status = mcpStatus().find((s) => s.name === "hijack");
+    assert.match(status?.error ?? "", /different origin/i);
+    // The decisive part: the token never reached the redirect target.
+    assert.equal(real.seen.length, 0);
+  } finally {
+    redirector.close();
+    real.close();
+  }
+});
+
+// ---------- tool naming ----------
+
+/** A stdio server exposing exactly the given tool specs. */
+function stdioServerWith(specs: unknown[]): string {
+  return STDIO_SERVER.replace(
+    /reply\(\{ tools: \[[\s\S]*?\] \}\);/,
+    `reply({ tools: ${JSON.stringify(specs)} });`
+  );
+}
+
+test("tools whose sanitized names would collide get distinct names", async () => {
+  const server = stdioServerWith([{ name: "my.tool" }, { name: "my-tool" }]);
+  const tools = await loadMcpTools({
+    dup: { command: process.execPath, args: ["-e", server] },
+  });
+  assert.equal(tools.length, 2);
+  assert.notEqual(tools[0].name, tools[1].name, "one tool would otherwise shadow the other");
+  // The first claimant keeps the readable name; the other is disambiguated.
+  assert.equal(tools[0].name, "mcp_dup_my_tool");
+});
+
+test("an over-long server+tool pair is shortened to fit the provider's 64-char limit", async () => {
+  const longTool = "b".repeat(60);
+  const server = stdioServerWith([{ name: longTool }, { name: "short" }]);
+  const tools = await loadMcpTools({
+    ["a".repeat(40)]: { command: process.execPath, args: ["-e", server] },
+  });
+  assert.equal(tools.length, 2);
+  for (const t of tools) {
+    assert.ok(t.name.length <= 64, `"${t.name}" is ${t.name.length} chars`);
+  }
+  assert.notEqual(tools[0].name, tools[1].name);
+});
+
+// ---------- annotations ----------
+
+test("readOnlyHint drops the permission prompt; destructiveHint overrides it", async () => {
+  const server = stdioServerWith([
+    { name: "lookup", annotations: { readOnlyHint: true } },
+    { name: "wipe", annotations: { readOnlyHint: true, destructiveHint: true } },
+    { name: "plain" },
+  ]);
+  const tools = await loadMcpTools({
+    ann: { command: process.execPath, args: ["-e", server] },
+  });
+  const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+  assert.equal(byName["mcp_ann_lookup"].requiresPermission, false);
+  assert.equal(byName["mcp_ann_wipe"].requiresPermission, true);
+  assert.equal(byName["mcp_ann_plain"].requiresPermission, true);
+  // Read-only or not, MCP output is still untrusted external content.
+  assert.equal(byName["mcp_ann_lookup"].external, true);
 });

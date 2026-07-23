@@ -349,7 +349,7 @@ async function main() {
   const approvedProjectMcp = await resolveMcpServerTrust(projectMcp);
   const mcpTools: ToolDef[] = await loadMcpTools(
     mergeMcpServers(config.mcpServers, approvedProjectMcp),
-    { tracer: sessionTracer, audit: sessionAudit }
+    { tracer: sessionTracer, audit: sessionAudit, workspace }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 

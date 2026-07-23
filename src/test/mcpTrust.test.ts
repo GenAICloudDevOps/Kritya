@@ -78,3 +78,11 @@ test("isServerTrusted tolerates a missing manifest file", async () => {
   const storeFile = path.join(os.tmpdir(), "kritya-mcp-trust-does-not-exist", "mcp-trusted.json");
   assert.equal(isServerTrusted(serverFingerprint({ command: "node" }), storeFile), false);
 });
+
+test("serverFingerprint changes with cwd, so widening a server's scope re-prompts", () => {
+  const base = { command: "npx", args: ["-y", "server-filesystem", "."] };
+  const docs = serverFingerprint({ ...base, cwd: "./docs" });
+  const root = serverFingerprint({ ...base, cwd: "/" });
+  assert.notEqual(docs, root, "a cwd change must not inherit the earlier approval");
+  assert.notEqual(serverFingerprint(base), docs);
+});

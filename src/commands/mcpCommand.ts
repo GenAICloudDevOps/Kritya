@@ -1,10 +1,11 @@
 import {
+  assertSafeUrl,
   connectServer,
   disconnectServer,
   forgetStatus,
   mcpStatus,
   replaceStatus,
-  toolPrefix,
+  isToolOf,
 } from "../mcp/client.js";
 import { beginLogin, logout, pendingLogin } from "../mcp/login.js";
 import { loadAuth } from "../mcp/tokens.js";
@@ -208,8 +209,10 @@ async function removeServer(ctx: CommandContext, name: string | undefined): Prom
   }
 
   disconnectServer(name);
+  // Withdraw before forgetting: forgetStatus releases the server's tool names,
+  // after which isToolOf can no longer identify them.
+  const removed = ctx.agent.removeTools(isToolOf(name));
   forgetStatus(name);
-  const removed = ctx.agent.removeTools((t) => t.startsWith(toolPrefix(name)));
   ctx.addItem({
     kind: "info",
     text: `Removed "${name}" — ${removed} tool(s) withdrawn.${tokenNote}`,
@@ -238,6 +241,15 @@ async function loginServer(
       kind: "info",
       text: `"${name}" is a local (stdio) server — it runs as your own user and has nothing to log in to.`,
     });
+    return;
+  }
+  // A login never reaches connectServer, so the transport's own scheme check
+  // can't cover it — and this path is worse than a plain request, since it
+  // mints a durable token against the user's real account.
+  try {
+    assertSafeUrl(name, server.cfg.url);
+  } catch (err) {
+    ctx.addItem({ kind: "info", text: err instanceof Error ? err.message : String(err) });
     return;
   }
 
@@ -335,7 +347,7 @@ async function logoutServer(ctx: CommandContext, name: string | undefined): Prom
   }
 
   disconnectServer(name);
-  const removed = ctx.agent.removeTools((t) => t.startsWith(toolPrefix(name)));
+  const removed = ctx.agent.removeTools(isToolOf(name));
   replaceStatus({
     name,
     transport: "http",
@@ -366,10 +378,11 @@ async function connectAndAttach(
   cfg: McpServerConfig
 ): Promise<void> {
   disconnectServer(name);
-  ctx.agent.removeTools((t) => t.startsWith(toolPrefix(name)));
+  ctx.agent.removeTools(isToolOf(name));
   const { tools, status } = await connectServer(name, cfg, {
     tracer: ctx.agent.tracer,
     audit: ctx.agent.audit,
+    workspace: ctx.workspace,
   });
   replaceStatus(status);
   if (!status.ok) {

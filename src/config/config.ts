@@ -84,6 +84,15 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /**
+   * Working directory for a stdio server, relative to the workspace root (or
+   * absolute). Defaults to the workspace — NOT to kritya's launch directory,
+   * which is arbitrary: a server configured with a relative root (e.g.
+   * `server-filesystem .`) would otherwise scope itself to wherever the user
+   * happened to be standing, which for `cd ~ && kritya ~/projects/app` means
+   * the home directory rather than the project.
+   */
+  cwd?: string;
   /** Endpoint of a remote Streamable-HTTP server, e.g. https://mcp.linear.app/mcp */
   url?: string;
   /** Extra HTTP headers sent on every request (e.g. Authorization). */

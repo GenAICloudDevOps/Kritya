@@ -564,7 +564,8 @@ Streamable HTTP (`url`):
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "cwd": "./docs"
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp"
@@ -581,9 +582,19 @@ contain a literal secret. Because `.mcp.json` launches processes and contacts
 endpoints on your behalf, it's part of the workspace trust prompt, and trust
 is re-asked whenever the file changes.
 
-Their tools appear as `mcp_<server>_<tool>`, each call needs your approval,
-and output is treated as untrusted content. A server that fails to start is
-skipped with a warning; `/mcp` shows each server's status and tools.
+A stdio server runs in the workspace root by default — not in whatever
+directory you happened to launch `kritya` from — so a server configured with a
+relative root stays scoped to the project. `cwd` overrides that, resolved
+against the workspace so a checked-in `.mcp.json` stays portable. Remote
+servers must use `https://` (a `http://` loopback address is exempt), and a
+redirect to a different origin is refused rather than forwarding your
+credentials to it.
+
+Their tools appear as `mcp_<server>_<tool>`, and output is treated as
+untrusted content. Calls need your approval unless the server marks the tool
+`readOnlyHint` — those run without prompting and are also available to
+subagents. A server that fails to start is skipped with a warning; `/mcp`
+shows each server's status and tools.
 
 #### Signing in to hosted servers (OAuth)
 

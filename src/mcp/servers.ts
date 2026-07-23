@@ -45,6 +45,7 @@ export function missingVars(cfg: McpServerConfig): string[] {
   };
   scan(cfg.command);
   cfg.args?.forEach(scan);
+  scan(cfg.cwd);
   scan(cfg.url);
   for (const v of Object.values(cfg.env ?? {})) scan(v);
   for (const v of Object.values(cfg.headers ?? {})) scan(v);
@@ -63,6 +64,7 @@ export function expandServerConfig(cfg: McpServerConfig): McpServerConfig {
     command: cfg.command !== undefined ? expandVars(cfg.command) : undefined,
     args: cfg.args?.map(expandVars),
     env: expandRecord(cfg.env),
+    cwd: cfg.cwd !== undefined ? expandVars(cfg.cwd) : undefined,
     url: cfg.url !== undefined ? expandVars(cfg.url) : undefined,
     headers: expandRecord(cfg.headers),
   };
