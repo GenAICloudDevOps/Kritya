@@ -33,6 +33,9 @@ export const spawnAgentTool: ToolDef = {
     required: ["tasks"],
   },
   requiresPermission: false,
+  // Self-managed: each subagent has its own wall-clock cap and the batch runs
+  // several in sequence, so the total legitimately exceeds any per-tool limit.
+  timeoutMs: 0,
   async execute(args, ctx, signal) {
     const tasks = Array.isArray(args.tasks)
       ? args.tasks.map((t) => String(t).trim()).filter(Boolean)

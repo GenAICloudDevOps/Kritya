@@ -625,6 +625,10 @@ async function main() {
   );
   agent.contextWindow = contextWindowFor(modelRef.current, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
+  // Not gated on > 0: 0 is a meaningful setting here ("no cap"), unlike maxSteps.
+  if (config.toolTimeoutSeconds !== undefined) {
+    agent.toolTimeoutMs = config.toolTimeoutSeconds * 1000;
+  }
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
   agent.audit = sessionAudit;
   agent.tracer = sessionTracer;

@@ -41,6 +41,10 @@ export const shellTool: ToolDef = {
     required: ["command"],
   },
   requiresPermission: true,
+  // Self-managed: timeout_seconds (max 600) is enforced by exec below, and a
+  // background command returns immediately. A second, shorter cap from the
+  // agent loop would cut off commands the user explicitly asked to run longer.
+  timeoutMs: 0,
   summarize: (args) => `Run${args.background ? " in background" : ""}: ${args.command}`,
   async preview(args, ctx) {
     const command = String(args.command ?? "");

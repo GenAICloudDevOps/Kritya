@@ -36,6 +36,8 @@ export const spawnWriteAgentTool: ToolDef = {
     required: ["tasks"],
   },
   requiresPermission: true,
+  // Self-managed, same as spawn_agent: per-subagent timeout plus batching.
+  timeoutMs: 0,
   summarize: (args) => {
     const tasks = Array.isArray(args.tasks) ? args.tasks : [];
     if (tasks.length <= 1) return `Write subagent: ${String(tasks[0] ?? "").slice(0, 60)}`;

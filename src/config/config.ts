@@ -41,6 +41,13 @@ export interface CliConfig {
   maxSteps?: number;
   /** Session token budget (prompt + completion tokens combined, across all turns/models). Default 1,000,000. */
   tokenBudget?: number;
+  /**
+   * How long any one tool call may run before it's abandoned and reported as a
+   * failure to the model (default 120). Tools that enforce their own deadline
+   * — `shell`, subagents, MCP calls — are exempt and keep theirs. 0 or
+   * negative disables the cap entirely.
+   */
+  toolTimeoutSeconds?: number;
   /** MCP servers to launch/connect and expose as tools (stdio or Streamable HTTP). */
   mcpServers?: Record<string, McpServerConfig>;
   /**

@@ -1,6 +1,8 @@
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
 
+const SEARCH_TIMEOUT_MS = 30_000;
+
 export interface TavilyResult {
   title?: string;
   url?: string;
@@ -54,7 +56,11 @@ export async function tavilyRaw(
     body.topic = "news";
     body.days = Math.max(1, Math.floor(opts.days));
   }
+  // Bounded explicitly: a fetch with no signal waits on the socket forever, and
+  // this is also called outside the agent loop (the /web-search command), where
+  // the loop's per-tool deadline isn't there to catch it.
   const res = await fetch("https://api.tavily.com/search", {
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     method: "POST",
     headers: {
       "Content-Type": "application/json",

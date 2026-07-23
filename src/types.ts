@@ -73,6 +73,13 @@ export interface ToolDef {
   summarize(args: Record<string, unknown>): string;
   /** Optional diff/preview shown in the permission prompt. */
   preview?(args: Record<string, unknown>, ctx: ToolContext): Promise<string | null>;
+  /**
+   * Override the agent's per-tool time limit, in milliseconds. Set 0 for a
+   * tool that enforces its own deadline (`shell`, subagents, MCP calls) —
+   * wrapping those in a second, shorter limit would cut short work the tool
+   * had every right to still be doing.
+   */
+  timeoutMs?: number;
   /** `signal` aborts when the user cancels; long-running tools should honor it. */
   execute(args: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>;
 }

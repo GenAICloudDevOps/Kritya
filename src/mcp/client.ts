@@ -1186,6 +1186,9 @@ function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): Too
     description: `[MCP: ${server}] ${spec.description ?? spec.name}`,
     parameters: spec.inputSchema ?? { type: "object", properties: {} },
     requiresPermission: !isReadOnly(spec),
+    // Self-managed: every request already carries CALL_TIMEOUT_MS, and the
+    // connection rejects in-flight calls when the transport dies.
+    timeoutMs: 0,
     // Read-only or not, the output came from outside the workspace and is
     // wrapped as untrusted — a lookup tool is a prime injection vector.
     external: true,

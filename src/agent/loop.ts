@@ -40,6 +40,26 @@ const PREVIEW_CHARS = 4000;
 const COMPACT_THRESHOLD = 0.8;
 /** Below this, compaction has nothing to summarize away that isn't the live tail. */
 const MIN_HISTORY_TO_COMPACT = 12;
+/** Default ceiling on a single tool call; see Agent.toolTimeoutMs. */
+const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+
+/**
+ * A tool outlived its deadline and was abandoned. Carries the tool's name so
+ * the message handed back to the model names what to avoid retrying blindly.
+ */
+export class ToolTimeoutError extends Error {
+  constructor(
+    readonly toolName: string,
+    readonly timeoutMs: number
+  ) {
+    super(
+      `tool "${toolName}" timed out after ${Math.round(timeoutMs / 1000)}s and was abandoned. ` +
+        `It may still be running in the background. Do not simply retry it — try a narrower ` +
+        `request (a smaller file, a more specific path) or a different approach.`
+    );
+    this.name = "ToolTimeoutError";
+  }
+}
 
 /**
  * Tools "accept edits" mode auto-approves without prompting. Deliberately
@@ -69,6 +89,12 @@ export class Agent {
   contextWindow = 120_000;
   /** Max model round-trips per request before stopping to ask the user. */
   maxSteps = DEFAULT_MAX_STEPS;
+  /**
+   * How long one tool call may run before it's abandoned (config
+   * `toolTimeoutSeconds`). A tool with its own deadline opts out via
+   * `ToolDef.timeoutMs = 0`; 0 here disables the cap for every tool.
+   */
+  toolTimeoutMs = DEFAULT_TOOL_TIMEOUT_MS;
   /** When true, mutating tools are auto-denied (plan / read-only mode). */
   planMode = false;
   /** When true, file-edit tools auto-approve without prompting (see ACCEPT_EDITS_TOOL_NAMES). */
@@ -853,7 +879,7 @@ export class Agent {
     handlers.onToolStart(id, name, summary);
     execStartedAt = Date.now();
     try {
-      let output = await tool.execute(args, this.ctx, signal);
+      let output = await this.executeWithTimeout(tool, args, signal);
       if (tool.external) {
         output = fenceExternal(output);
       }
@@ -867,10 +893,53 @@ export class Agent {
       return output;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof ToolTimeoutError) span.setAttribute("kritya.timed_out", true);
       logToolOutcome("error");
       finishSpan("ERROR", msg);
       handlers.onToolEnd(id, name, summary, msg.slice(0, PREVIEW_CHARS), true);
       return `Error: ${msg}`;
+    }
+  }
+
+  /**
+   * Run a tool, abandoning it if it outlives its deadline.
+   *
+   * `ToolDef.execute` takes an abort signal, but almost no tool actually
+   * honors it — so a tool that hangs hangs the whole turn, and neither Esc nor
+   * the kill switch can free it, because both work by aborting a signal
+   * nothing is listening to. This is the single choke point every tool passes
+   * through, so one deadline here covers all of them, including tools added
+   * later.
+   *
+   * Two honest limits. It only rescues *asynchronous* hangs — waiting on a
+   * pipe, a socket, a subprocess. A tool spinning the CPU synchronously blocks
+   * the event loop, so this timer cannot even fire (which is why regex
+   * matching wants a worker thread, separately). And it abandons rather than
+   * cancels: a tool ignoring its signal keeps running in the background after
+   * we stop waiting for it. Abandoning is still strictly better than the turn
+   * never ending.
+   */
+  private async executeWithTimeout(
+    tool: ToolDef,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const limit = tool.timeoutMs ?? this.toolTimeoutMs;
+    const work = tool.execute(args, this.ctx, signal);
+    if (!Number.isFinite(limit) || limit <= 0) return work;
+
+    // Settling via the timer leaves this promise unobserved; a late rejection
+    // from an abandoned tool must not become an unhandled rejection.
+    work.catch(() => {});
+
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new ToolTimeoutError(tool.name, limit)), limit);
+    });
+    try {
+      return await Promise.race([work, deadline]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
