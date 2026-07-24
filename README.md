@@ -54,10 +54,12 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | --------------------- | ------------------------------------------------------------------------ |
 | `/model`              | interactive model picker (`/model <id>` sets any model ID directly)      |
 | `/provider`           | list providers, or `/provider <name>` to switch mid-session (see below)  |
-| `/brainstorm <idea>`  | start the staged new-project workflow (brainstorm → plan → spec → build) |
-| `/plan`               | toggle plan mode (read-only); on an active project, run the plan phase   |
-| `/spec`               | project workflow: write the spec from the approved plan                  |
-| `/build`              | project workflow: implement the project from the spec                    |
+| `/brainstorm <idea>`  | start the staged new-project workflow (see below)                        |
+| `/spec`               | project workflow: write the spec from the approved brainstorm            |
+| `/plan`               | project workflow: plan from the spec (`/plan on`/`off` toggles the mode) |
+| `/build`              | project workflow: implement the plan, with tests                         |
+| `/review`             | project workflow: spec-compliance and security review of the build       |
+| `/project`            | workflow status; `goto <phase>`, `rename <name>`, `clear` to end it      |
 | `/diff`               | show the cumulative git diff of this session's changes                   |
 | `/init`               | scan the repo and generate a `KRITYA.md` project-memory file             |
 | `/commit`             | have the agent review, stage, and commit the current git changes         |
@@ -83,16 +85,47 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 - **Staged new-project workflow** — ask kritya to build something new (a
   FastAPI backend, a Next.js frontend, a CLI) and it doesn't dive straight into
-  code. It runs four phases — **brainstorm → plan → spec → build** — writing a
-  durable artifact for each under `docs/<name>/` (`brainstorm.md`, `plan.md`,
-  `spec.md`, then the code) and stopping for your approval between phases. The
-  current phase lives in `.kritya/project.json`, so the flow resumes where you
-  left off across sessions. The agent walks the phases on its own, or you can
-  drive them by hand: `/brainstorm <idea>` starts one, `/plan` runs the
-  (read-only) plan phase, `/spec` writes the spec, `/build` implements it. In
-  the plan phase, plan mode's read-only guard is relaxed just enough to let the
-  agent write Markdown planning docs under `docs/` — application code and shell
-  stay blocked until you `/build`.
+  code. It runs five phases — **brainstorm → spec → plan → build → review** —
+  writing a durable artifact for each under `docs/<name>/` and stopping for your
+  approval between phases:
+
+  | Phase        | Produces                                                         |
+  | ------------ | ---------------------------------------------------------------- |
+  | `brainstorm` | `brainstorm.md` — problem, users, MVP features, stack            |
+  | `spec`       | `spec.md` — contracts, data schema, numbered acceptance criteria |
+  | `plan`       | `plan.md` — architecture and ordered milestones                  |
+  | `build`      | the code, plus tests for each acceptance criterion               |
+  | `review`     | `review.md` — spec-compliance and security findings              |
+
+  Spec comes before plan on purpose: the spec settles _what_ (and pins the
+  numbered acceptance criteria everything downstream is held to), the plan
+  settles _how_ and sequences milestones against those criteria. Each phase
+  reads only the artifact immediately before it, so nothing gets re-derived.
+  The current phase lives in `.kritya/project.json`, so the flow resumes across
+  sessions. While a workflow is active the statusline carries a `⚑ name:phase`
+  flag, and the spinner names the running phase; `/project` shows the full
+  picture and `/project clear` ends it. A phase
+  refuses to run if the artifact it reads was never written (`--force`
+  overrides). The agent walks the phases on its own, or you drive them by hand
+  with `/brainstorm <idea>`, `/spec`, `/plan`, `/build`, `/review` — and after
+  each one kritya tells you which command comes next, so the handoff doesn't
+  depend on the model remembering to say it.
+
+  The project is named from your idea unless you name it yourself with a short
+  prefix — `/brainstorm reverser: a script that reverses a string` gives you
+  `docs/reverser/`. `/project rename <name>` moves an existing one.
+
+  Cost matters here — five phases in one session adds up — so kritya compacts
+  the conversation at each phase boundary (the artifact is on disk, so the
+  transcript that produced it is redundant), caps artifact length, and in the
+  build phase dispatches independent milestones to isolated write subagents
+  rather than pulling every file into the main context. The review phase runs
+  its two reviewers as read-only subagents, so only their findings come back.
+
+  In the plan phase, plan mode's read-only guard is relaxed just enough to let
+  the agent write Markdown under that project's own `docs/<name>/` folder —
+  other docs, application code, and shell stay blocked until you `/build`.
+
 - **Trust levels** — `Shift+Tab` cycles **normal** (every write/edit asks
   first) → **accept-edits** (file writes/edits auto-approve, no prompt) →
   **plan** (read-only, nothing executes) → back to normal. The statusline
@@ -101,8 +134,9 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   `/diff`. Destructive shell commands (`rm -rf`, force-push, etc.) always
   still prompt, in every mode — that guard never turns off. The first time you
   switch into accept-edits mode each session, kritya asks you to confirm first
-  so it's a deliberate choice, not an accidental keypress. `/plan` still works
-  as its own command and is equivalent to cycling into plan mode.
+  so it's a deliberate choice, not an accidental keypress. `/plan on` and
+  `/plan off` set the mode explicitly; a bare `/plan` runs the workflow's plan
+  phase when a project is active, and toggles the mode when none is.
 - **Kill switch** — `Ctrl+K` (or `/kill [reason]`) is a hard stop for the whole
   session. It aborts the in-flight model stream, any running tool, and every
   subagent at once, then refuses everything afterwards: new messages, tool

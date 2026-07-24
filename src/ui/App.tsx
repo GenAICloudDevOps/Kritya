@@ -182,6 +182,10 @@ export function App({
     thinking,
     activity,
     setActivity,
+    runningPhase,
+    setRunningPhase,
+    workflow,
+    refreshWorkflow,
     permission,
     inFlight,
     model,
@@ -372,6 +376,8 @@ export function App({
       addItem,
       setPhase,
       setActivity,
+      setRunningPhase,
+      refreshWorkflow,
       setCtxPct,
       setTasks,
       setPlanMode,
@@ -566,7 +572,11 @@ export function App({
         <Box flexDirection="column">
           <Spinner
             label={
-              inFlight.length > 1
+              // The workflow prefix rides on every branch, not just "thinking":
+              // during a phase you want to know which phase a tool call belongs
+              // to just as much as which phase is being reasoned about.
+              (runningPhase ? `${workflow?.name ?? ""} · ${runningPhase} phase · ` : "") +
+              (inFlight.length > 1
                 ? `${inFlight.length} tools running (Esc to cancel)`
                 : inFlight.length === 1
                   ? `${inFlight[0].summary} (Esc to cancel)`
@@ -574,7 +584,7 @@ export function App({
                     ? activity
                     : thinking
                       ? "thinking… (Esc to cancel)"
-                      : "working… (Esc to cancel)"
+                      : "working… (Esc to cancel)")
             }
           />
           {inFlight.length > 1 && (
@@ -738,6 +748,14 @@ export function App({
             ""
           )}
           {model}
+          {workflow ? (
+            <Text color="magenta">
+              {" "}
+              · ⚑ {workflow.name}:{workflow.phase}
+            </Text>
+          ) : (
+            ""
+          )}
           {branch ? ` · ⎇ ${branch}` : ""}
           {tasks.length > 0
             ? ` · tasks ${tasks.filter((t) => t.status === "done").length}/${tasks.length}`

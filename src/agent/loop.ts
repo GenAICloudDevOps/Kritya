@@ -14,7 +14,7 @@ import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js"
 import { NOOP_TRACER, type AttrValue, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
-import { isPlanningDocWrite } from "./workflow.js";
+import { isPlanningDocWrite, loadProjectState } from "./workflow.js";
 import { KillSwitch, KillSwitchError, linkAbort } from "./killSwitch.js";
 
 const DEFAULT_MAX_STEPS = 40;
@@ -776,7 +776,19 @@ export class Agent {
 
     if (this.kill.active) return killBlocked();
 
-    if (this.planMode && tool.requiresPermission && !isPlanningDocWrite(name, args)) {
+    // The planning-doc exemption is scoped to the active project's own
+    // docs/<slug>/ folder, so plan mode can persist its artifact without
+    // becoming a way to edit unrelated documentation.
+    if (
+      this.planMode &&
+      tool.requiresPermission &&
+      !isPlanningDocWrite(
+        this.ctx.workspace,
+        name,
+        args,
+        loadProjectState(this.ctx.workspace)?.name
+      )
+    ) {
       this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "plan-mode" });
       logToolOutcome("blocked");
       finishSpan("ERROR", "blocked: plan mode");
@@ -784,8 +796,9 @@ export class Agent {
       return (
         "Plan mode is ON (read-only). This mutating action was blocked. " +
         "Keep exploring with read-only tools and present a concrete plan to the user. " +
-        "Writing Markdown planning docs under docs/ is allowed; application code and shell " +
-        "are not. Do not attempt other writes or shell commands until plan mode is turned off."
+        "In an active project workflow, writing Markdown under that project's docs/<name>/ " +
+        "folder is allowed; everything else — other docs, application code, shell — is not. " +
+        "Do not attempt other writes or shell commands until plan mode is turned off."
       );
     }
 

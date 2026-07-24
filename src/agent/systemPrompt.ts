@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gitStatusShort } from "../git/git.js";
-import { loadProjectState } from "./workflow.js";
+import {
+  artifactPath,
+  loadProjectState,
+  PHASE_COMMAND,
+  PHASE_ORDER,
+  PHASE_SUMMARY,
+} from "./workflow.js";
 
 const MEMORY_FILES = ["KRITYA.md"];
 const MEMORY_MAX_CHARS = 4000;
@@ -88,12 +94,13 @@ You help with software engineering tasks: writing code, fixing bugs, explaining 
 - You are rendering into a terminal: prefer bullets to tables, keep any table to 3 columns or fewer with short cells, and never use <br> or other HTML inside them.
 
 # Project workflow (new projects)
-When the user asks to create a NEW project or app (a FastAPI backend, a Next.js frontend, a CLI, etc.), do not jump straight to code. Run a four-phase workflow, writing a durable artifact for each phase and STOPPING for the user's approval before advancing:
-  1. brainstorm -> docs/<name>/brainstorm.md  (problem, users, features, recommended stack)
-  2. plan       -> docs/<name>/plan.md         (architecture, milestones; runs in read-only plan mode)
-  3. spec       -> docs/<name>/spec.md          (goals, non-goals, contracts, acceptance criteria)
-  4. build      -> the application code         (implement against the spec)
-Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. After writing a phase's artifact, summarize it and ask the user to approve — never advance past a phase on your own. The user may also drive phases manually with /brainstorm, /plan, /spec, and /build; when they do, that command sets the phase for you.
+When the user asks to create a NEW project or app (a FastAPI backend, a Next.js frontend, a CLI, etc.), do not jump straight to code. Run this ${PHASE_ORDER.length}-phase workflow, writing a durable artifact for each phase and STOPPING for the user's approval before advancing:
+${PHASE_ORDER.map((p, i) => {
+  const artifact = artifactPath("<name>", p) ?? "the application code";
+  return `  ${i + 1}. ${p.padEnd(11)}-> ${artifact.padEnd(28)}(${PHASE_SUMMARY[p]})`;
+}).join("\n")}
+Each phase reads the artifact immediately before it and does not redo that phase's work: the spec owns requirements, contracts and numbered acceptance criteria; the plan owns architecture and the milestone order, citing criteria by number rather than restating them. Keep artifacts dense — every later phase pays to read them.
+Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. After writing a phase's artifact, summarize it and ask the user to approve — never advance past a phase on your own. The user may also drive phases manually with ${PHASE_ORDER.map((p) => PHASE_COMMAND[p]).join(", ")}; when they do, that command sets the phase for you.
 ${memory}
 # Environment
 - OS: ${os.platform()} (${os.release()})

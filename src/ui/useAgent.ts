@@ -13,6 +13,13 @@ import {
   tokenBudgetFor,
 } from "../agent/budget.js";
 import { KillSwitchError } from "../agent/killSwitch.js";
+import {
+  loadProjectState,
+  nextPhase,
+  PHASE_COMMAND,
+  type ProjectState,
+  type WorkflowPhase,
+} from "../agent/workflow.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge, Usage } from "../types.js";
@@ -86,6 +93,21 @@ export function useAgent({
   const [stream, setStream] = useState("");
   const [thinking, setThinking] = useState(false);
   const [activity, setActivity] = useState<string | null>(null);
+  /**
+   * Which workflow phase the *current turn* is running. Turn-scoped and cleared
+   * when the turn ends, unlike `workflow` below — `activity` can't carry this,
+   * since retries and permission prompts overwrite it mid-turn. The ref is what
+   * the turn's teardown reads: a command sets this and calls runAgent in the
+   * same tick, so the state value inside runAgent's closure is still stale.
+   */
+  const runningPhaseRef = useRef<WorkflowPhase | null>(null);
+  const [runningPhase, setRunningPhaseState] = useState<WorkflowPhase | null>(null);
+  const setRunningPhase = useCallback((p: WorkflowPhase | null) => {
+    runningPhaseRef.current = p;
+    setRunningPhaseState(p);
+  }, []);
+  /** The active project workflow, for the statusline. Persists between turns. */
+  const [workflow, setWorkflow] = useState<ProjectState | null>(() => loadProjectState(workspace));
   const [permission, setPermission] = useState<PendingPermission | null>(null);
   const [model, setModel] = useState(modelRef.current);
   const [provider, setProvider] = useState(providerRef.current);
@@ -344,6 +366,35 @@ export function useAgent({
     return `Usage this session:\n${lines.join("\n")}${total}${ctxNote}${budgetNote}${hint}`;
   };
 
+  /** Re-read the workflow pointer from disk after anything that may have moved it. */
+  const refreshWorkflow = useCallback(() => {
+    setWorkflow(loadProjectState(workspace));
+  }, [workspace]);
+
+  /**
+   * Say what to run next, once a phase turn has finished.
+   *
+   * The phase prompts also ask the model to name the next command, but a model
+   * paraphrasing its instructions drops it often enough that the handoff can't
+   * depend on that — the user is left at a prompt with no idea what comes next.
+   * Printing it here makes it deterministic.
+   */
+  const announceNextPhase = useCallback(() => {
+    const ran = runningPhaseRef.current;
+    setRunningPhase(null);
+    if (!ran) return;
+    // Prefer the phase on disk: an autonomous turn may have advanced it past
+    // whatever the command started.
+    const current = loadProjectState(workspace)?.phase ?? ran;
+    const next = nextPhase(current);
+    addItem({
+      kind: "info",
+      text: next
+        ? `✓ ${current} phase done — next: ${PHASE_COMMAND[next]} (or /project to review where you are)`
+        : `✓ ${current} phase done — the workflow is complete. /project clear ends it.`,
+    });
+  }, [workspace, addItem, setRunningPhase]);
+
   const resetBudget = () => {
     totalTokensRef.current = 0;
     budgetPctRef.current = 0;
@@ -559,6 +610,10 @@ export function useAgent({
       setPhase("input");
       refreshFileList();
       setBranch(gitBranch(workspace));
+      // A phase can advance itself by writing .kritya/project.json, so re-read
+      // it rather than trusting the command that started the turn.
+      refreshWorkflow();
+      announceNextPhase();
       process.stdout.write("\x07"); // bell: the turn is done
     }
   };
@@ -618,6 +673,10 @@ export function useAgent({
     thinking,
     activity,
     setActivity,
+    runningPhase,
+    setRunningPhase,
+    workflow,
+    refreshWorkflow,
     permission,
     inFlight,
     model,
