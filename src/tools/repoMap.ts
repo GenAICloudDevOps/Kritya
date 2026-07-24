@@ -1,3 +1,4 @@
+import { countLines } from "./common.js";
 import type { ToolDef } from "../types.js";
 import { buildRepoMap } from "../repomap/repoMap.js";
 
@@ -22,6 +23,7 @@ export const repoMapTool: ToolDef = {
   },
   requiresPermission: false,
   summarize: (args) => (args.path ? `Repo map: ${args.path}` : "Repo map (whole workspace)"),
+  resultSummary: (output) => countLines(output, "line", "lines"),
   async execute(args, ctx) {
     return buildRepoMap(ctx.workspace, String(args.path ?? "."));
   },

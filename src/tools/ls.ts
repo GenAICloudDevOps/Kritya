@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import type { ToolDef } from "../types.js";
-import { resolveSafe, truncateResult } from "./common.js";
+import { resolveSafe, truncateResult, countLines } from "./common.js";
 
 export const listDirTool: ToolDef = {
   name: "list_dir",
@@ -16,6 +16,7 @@ export const listDirTool: ToolDef = {
   },
   requiresPermission: false,
   summarize: (args) => `List ${args.path ?? "."}`,
+  resultSummary: (output) => countLines(output, "entry", "entries"),
   async execute(args, ctx) {
     const abs = resolveSafe(ctx.workspace, String(args.path ?? "."));
     const entries = await fs.readdir(abs, { withFileTypes: true });

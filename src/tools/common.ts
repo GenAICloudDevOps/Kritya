@@ -116,3 +116,22 @@ export function safeCompileRegex(pattern: string, flags?: string): RegExp {
   }
   return new RegExp(pattern, flags);
 }
+
+/**
+ * Lines of a tool's output that carry information — no leading banner, no
+ * "(empty)" placeholder, no trailing truncation note. What's left is what a
+ * result summary should count.
+ */
+export function meaningfulLines(output: string): string[] | null {
+  const lines = output
+    .split("\n")
+    .filter((l) => l.trim() && !/^\((no |empty)/i.test(l.trim()) && !/^\[?\.\.\. /.test(l.trim()));
+  return lines.length ? lines : null;
+}
+
+/** "10 entries", "1 line" — the shape of a result, for the tool-call line. */
+export function countLines(output: string, one: string, many: string): string {
+  const lines = meaningfulLines(output);
+  const n = lines?.length ?? 0;
+  return `${n} ${n === 1 ? one : many}`;
+}

@@ -14,11 +14,13 @@ import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { TaskItem, UiBridge } from "../types.js";
 import { Banner } from "./Banner.js";
+import { truncateToWidth } from "./inline.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
+import { tailForViewport } from "./viewport.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
 import { mcpPrompts, mcpResources } from "../mcp/client.js";
@@ -44,12 +46,40 @@ export interface AppProps {
   mcpToolCount?: number;
 }
 
-/** Preview of tool output: a few lines by default, everything when verbose. */
-function toolOutputPreview(output: string, verbose: boolean): string {
-  const lines = output.replace(/\s+$/, "").split("\n");
+/**
+ * Preview of tool output: a few lines by default, everything when verbose.
+ * Tabs are expanded first — `read` emits a padded line number and a tab, which
+ * the terminal takes to the next 8-column stop, leaving a ragged gap that made
+ * previews look broken. Lines are clipped rather than wrapped, so a preview
+ * stays the size it claims to be.
+ */
+function toolOutputPreview(
+  output: string,
+  verbose: boolean,
+  width: number,
+  isError = false
+): string {
+  const lines = output
+    .replace(/\s+$/, "")
+    .split("\n")
+    .map((l) => l.replace(/^(\s*\d+)\t/, "$1 ").replace(/\t/g, "  "));
+  while (lines.length && !lines[0].trim()) lines.shift();
+  // Drop indentation every line shares — `read` pads its line numbers to five
+  // columns, which is dead space in a preview that is already indented.
+  const common = Math.min(
+    ...lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)![0].length),
+    Infinity
+  );
+  if (common > 0 && common < Infinity) {
+    for (let i = 0; i < lines.length; i++) lines[i] = lines[i].slice(common);
+  }
   if (verbose) return lines.join("\n");
-  const head = lines.slice(0, 3).join("\n");
-  return lines.length > 3 ? `${head}\n… (+${lines.length - 3} lines · Ctrl+O)` : head;
+  // A failure is exactly when the detail is worth the rows.
+  const keep = isError ? 8 : 3;
+  const head = lines.slice(0, keep).map((l) => truncateToWidth(l, width));
+  return lines.length > keep
+    ? `${head.join("\n")}\n… (+${lines.length - keep} lines · Ctrl+O)`
+    : head.join("\n");
 }
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
@@ -469,10 +499,16 @@ export function App({
                 <Text dimColor>
                   {item.error ? <Text color="red">✗</Text> : <Text color="green">✓</Text>}{" "}
                   {item.summary}
+                  {item.resultSummary && !verbose ? ` — ${item.resultSummary}` : ""}
                 </Text>
-                {item.output && item.output.trim() && (
+                {item.output && item.output.trim() && (!item.resultSummary || verbose) && (
                   <Text dimColor>
-                    {toolOutputPreview(item.output, verbose)
+                    {toolOutputPreview(
+                      item.output,
+                      verbose,
+                      Math.max(20, (stdout?.columns ?? 80) - 6),
+                      item.error
+                    )
                       .split("\n")
                       .map((l) => `    ${l}`)
                       .join("\n")}
@@ -488,7 +524,10 @@ export function App({
 
       {stream ? (
         <Box marginBottom={1}>
-          <Markdown text={stream} streaming />
+          <Markdown
+            text={tailForViewport(stream, stdout?.columns ?? 80, stdout?.rows ?? 24)}
+            streaming
+          />
         </Box>
       ) : null}
 

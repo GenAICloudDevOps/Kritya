@@ -11,7 +11,15 @@ export interface TaskItem {
 export type ItemBody =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
-  | { kind: "tool"; name: string; summary: string; error: boolean; output?: string }
+  | {
+      kind: "tool";
+      name: string;
+      summary: string;
+      error: boolean;
+      output?: string;
+      /** One-line description of the result; when present it replaces the preview. */
+      resultSummary?: string;
+    }
   | { kind: "info"; text: string }
   | { kind: "banner"; subtitle: string };
 
@@ -80,6 +88,20 @@ export interface ToolDef {
    * had every right to still be doing.
    */
   timeoutMs?: number;
+  /**
+   * One line describing what the call produced — "10 files", "79 lines". The
+   * UI shows this instead of the first few lines of output, which for a
+   * listing or a search are noise: the shape of the result is what a human
+   * wants, and Ctrl+O still expands the real thing.
+   */
+  resultSummary?(output: string, args: Record<string, unknown>): string | null;
+  /**
+   * Whether output the tool returned normally still represents a failure.
+   * `shell` resolves on a nonzero exit rather than throwing — the model needs
+   * the output either way — but the user shouldn't see a green check on a
+   * command that failed.
+   */
+  failed?(output: string): boolean;
   /** `signal` aborts when the user cancels; long-running tools should honor it. */
   execute(args: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>;
 }
@@ -113,7 +135,8 @@ export interface AgentHandlers {
     name: string,
     summary: string,
     resultPreview: string,
-    isError: boolean
+    isError: boolean,
+    resultSummary?: string
   ): void;
   requestPermission(
     name: string,

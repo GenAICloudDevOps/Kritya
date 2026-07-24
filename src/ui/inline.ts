@@ -19,7 +19,7 @@ export function parseInline(s: string): InlineToken[] {
   let plain = "";
   const flush = () => {
     if (plain) {
-      out.push({ text: plain });
+      out.push({ text: decodeEntities(plain) });
       plain = "";
     }
   };
@@ -78,6 +78,47 @@ export function parseInline(s: string): InlineToken[] {
   return mergeTokens(out);
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  hellip: "…",
+  mdash: "—",
+  ndash: "–",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  times: "×",
+  bull: "•",
+  deg: "°",
+  check: "✓",
+};
+
+/**
+ * Models escape markdown-significant characters as HTML entities — `&#124;`
+ * for a pipe inside a table cell above all — and a terminal has no HTML layer
+ * to undo that. Decoded after the markup is parsed, so `&#42;` can't turn
+ * itself into emphasis, and never inside a code span.
+ */
+export function decodeEntities(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, body: string) => {
+    if (body[0] === "#") {
+      const code = Number(
+        body[1] === "x" || body[1] === "X" ? `0x${body.slice(2)}` : body.slice(1)
+      );
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : match;
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? match;
+  });
+}
+
 function mergeTokens(tokens: InlineToken[]): InlineToken[] {
   const merged: InlineToken[] = [];
   for (const t of tokens) {
@@ -99,6 +140,21 @@ function sameStyle(a: InlineToken, b: InlineToken): boolean {
 
 export function tokensWidth(tokens: InlineToken[]): number {
   return tokens.reduce((n, t) => n + stringWidth(t.text), 0);
+}
+
+/** Cut a line to `width` display columns, marking it when something was lost. */
+export function truncateToWidth(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (stringWidth(text) <= width) return text;
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const w = stringWidth(ch);
+    if (used + w > width - 1) break;
+    out += ch;
+    used += w;
+  }
+  return `${out}…`;
 }
 
 /** Display width of one line of markdown, ignoring the markup itself. */
@@ -164,21 +220,31 @@ function toWords(tokens: InlineToken[]): InlineToken[] {
   return words;
 }
 
-/** Hard-split a word too long to fit (a URL, a path) at a display-width boundary. */
+/**
+ * Hard-split a word too long to fit (a URL, a path) at a display-width
+ * boundary, preferring a separator near the end of the piece so a long URL
+ * breaks after a "/" instead of mid-segment.
+ */
 function splitToWidth(text: string, width: number): string[] {
   if (stringWidth(text) <= width) return [text];
   const pieces: string[] = [];
   let cur = "";
   let curWidth = 0;
+  let lastBreak = -1;
   for (const ch of text) {
     const w = stringWidth(ch);
     if (curWidth + w > width && cur) {
-      pieces.push(cur);
-      cur = "";
-      curWidth = 0;
+      // Only rewind to a separator if it doesn't waste much of the line.
+      const cut =
+        lastBreak >= 0 && lastBreak >= Math.floor(cur.length * 0.6) ? lastBreak + 1 : cur.length;
+      pieces.push(cur.slice(0, cut));
+      cur = cur.slice(cut);
+      curWidth = stringWidth(cur);
+      lastBreak = -1;
     }
     cur += ch;
     curWidth += w;
+    if (/[/\\?&=_.-]/.test(ch)) lastBreak = cur.length - 1;
   }
   if (cur) pieces.push(cur);
   return pieces;

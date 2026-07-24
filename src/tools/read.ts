@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import type { ToolDef } from "../types.js";
-import { resolveSafe, truncateResult } from "./common.js";
+import { resolveSafe, truncateResult, countLines } from "./common.js";
 
 export const readFileTool: ToolDef = {
   name: "read_file",
@@ -18,6 +18,7 @@ export const readFileTool: ToolDef = {
   },
   requiresPermission: false,
   summarize: (args) => `Read ${args.path}`,
+  resultSummary: (output) => countLines(output, "line", "lines"),
   async execute(args, ctx) {
     const abs = resolveSafe(ctx.workspace, String(args.path));
     const content = await fs.readFile(abs, "utf8");

@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import fg from "fast-glob";
 import type { ToolDef } from "../types.js";
-import { isPathSafe, resolveSafe, safeCompileRegex, truncateResult } from "./common.js";
+import {
+  isPathSafe,
+  resolveSafe,
+  safeCompileRegex,
+  truncateResult,
+  meaningfulLines,
+} from "./common.js";
 import { loadIgnorePatterns } from "./ignore.js";
 
 const MAX_MATCHES = 200;
@@ -28,6 +34,12 @@ export const grepTool: ToolDef = {
   },
   requiresPermission: false,
   summarize: (args) => `Grep /${args.pattern}/ in ${args.path ?? "."}`,
+  resultSummary(output) {
+    const lines = meaningfulLines(output);
+    if (!lines) return "no matches";
+    const files = new Set(lines.map((l) => l.split(":")[0])).size;
+    return `${lines.length} match${lines.length === 1 ? "" : "es"} in ${files} file${files === 1 ? "" : "s"}`;
+  },
   async execute(args, ctx) {
     const regex = safeCompileRegex(String(args.pattern));
     const searchRoot = resolveSafe(ctx.workspace, String(args.path ?? "."));

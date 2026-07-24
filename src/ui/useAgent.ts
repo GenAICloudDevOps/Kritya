@@ -112,7 +112,21 @@ export function useAgent({
   const [inFlight, setInFlight] = useState<{ id: string; name: string; summary: string }[]>([]);
 
   const addItem = useCallback((item: ItemBody) => {
-    setItems((prev) => [...prev, { ...item, id: nextId.current++ }]);
+    setItems((prev) => {
+      // A model that calls the same tool with the same arguments several times
+      // in a row still gets a line each — hiding the calls would misreport what
+      // it did — but repeating the identical preview under every one buries the
+      // rest of the turn. Show the output once.
+      const last = prev[prev.length - 1];
+      const repeat =
+        item.kind === "tool" &&
+        last?.kind === "tool" &&
+        last.summary === item.summary &&
+        last.output === item.output &&
+        !!item.output;
+      const next = repeat ? { ...item, output: "" } : item;
+      return [...prev, { ...next, id: nextId.current++ }];
+    });
   }, []);
 
   useEffect(() => {
@@ -410,10 +424,17 @@ export function useAgent({
             setStream("");
             setInFlight((prev) => [...prev, { id, name, summary }]);
           },
-          onToolEnd: (id, name, summary, preview, isError) => {
+          onToolEnd: (id, name, summary, preview, isError, resultSummary) => {
             setInFlight((prev) => prev.filter((t) => t.id !== id));
             if (name !== "update_tasks")
-              addItem({ kind: "tool", name, summary, error: isError, output: preview });
+              addItem({
+                kind: "tool",
+                name,
+                summary,
+                error: isError,
+                output: preview,
+                resultSummary,
+              });
           },
           requestPermission: (toolName, summary, diff, warning) =>
             new Promise<PermissionDecision>((resolve) => {

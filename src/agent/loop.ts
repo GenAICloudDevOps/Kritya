@@ -887,9 +887,17 @@ export class Agent {
         const post = await this.hooks.runToolHooks("postToolUse", name, args, span);
         if (post.output.trim()) output += `\n[postToolUse hook]: ${post.output.trim()}`;
       }
-      logToolOutcome("ok");
-      finishSpan("OK");
-      handlers.onToolEnd(id, name, summary, output.slice(0, PREVIEW_CHARS), false);
+      const failed = tool.failed?.(output) ?? false;
+      logToolOutcome(failed ? "error" : "ok");
+      finishSpan(failed ? "ERROR" : "OK");
+      handlers.onToolEnd(
+        id,
+        name,
+        summary,
+        output.slice(0, PREVIEW_CHARS),
+        failed,
+        failed ? undefined : (tool.resultSummary?.(output, args) ?? undefined)
+      );
       return output;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

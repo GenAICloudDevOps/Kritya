@@ -6,7 +6,9 @@ import { test } from "node:test";
 import { resolveSafe, truncateResult } from "../tools/common.js";
 import { editFileTool } from "../tools/edit.js";
 import { grepTool } from "../tools/grep.js";
+import { listDirTool } from "../tools/ls.js";
 import { readFileTool } from "../tools/read.js";
+import { shellTool } from "../tools/shell.js";
 import { writeFileTool } from "../tools/write.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { parseDotEnv } from "../config/config.js";
@@ -397,4 +399,39 @@ test("permission manager: reads never prompt, writes prompt until always", () =>
   assert.equal(pm.needsPrompt(write), true);
   pm.record("write_file", "always");
   assert.equal(pm.needsPrompt(write), false);
+});
+
+test("shell marks a nonzero exit as a failure, so the UI can't show a green check", async () => {
+  const ws = await makeWorkspace();
+  const out = await shellTool.execute({ command: "exit 3" }, { workspace: ws });
+  assert.match(out, /\[exit code: 3\]/);
+  assert.equal(shellTool.failed?.(out), true);
+});
+
+test("shell leaves a successful command marked as success", async () => {
+  const ws = await makeWorkspace();
+  const out = await shellTool.execute({ command: "echo hi" }, { workspace: ws });
+  assert.match(out, /hi/);
+  assert.equal(shellTool.failed?.(out), false);
+});
+
+test("read-only tools describe their result instead of dumping its head", async () => {
+  const ws = await makeWorkspace();
+  await writeFileTool.execute({ path: "a.txt", content: "x\ny\nz" }, { workspace: ws });
+  await writeFileTool.execute({ path: "b.txt", content: "x" }, { workspace: ws });
+
+  const listed = await listDirTool.execute({ path: "." }, { workspace: ws });
+  assert.equal(listDirTool.resultSummary?.(listed, {}), "2 entries");
+
+  const read = await readFileTool.execute({ path: "a.txt" }, { workspace: ws });
+  assert.equal(readFileTool.resultSummary?.(read, {}), "3 lines");
+
+  const found = await grepTool.execute({ pattern: "x", path: "." }, { workspace: ws });
+  assert.equal(grepTool.resultSummary?.(found, {}), "2 matches in 2 files");
+});
+
+test("a result summary reports emptiness rather than a misleading count", async () => {
+  const ws = await makeWorkspace();
+  const found = await grepTool.execute({ pattern: "nothing-here", path: "." }, { workspace: ws });
+  assert.equal(grepTool.resultSummary?.(found, {}), "no matches");
 });

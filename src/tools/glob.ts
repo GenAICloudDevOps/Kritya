@@ -1,7 +1,7 @@
 import path from "node:path";
 import fg from "fast-glob";
 import type { ToolDef } from "../types.js";
-import { isPathSafe, truncateResult } from "./common.js";
+import { isPathSafe, truncateResult, countLines } from "./common.js";
 import { loadIgnorePatterns } from "./ignore.js";
 
 export const globTool: ToolDef = {
@@ -18,6 +18,7 @@ export const globTool: ToolDef = {
   },
   requiresPermission: false,
   summarize: (args) => `Glob ${args.pattern}`,
+  resultSummary: (output) => countLines(output, "match", "matches"),
   async execute(args, ctx) {
     // Models on Windows sometimes emit backslash paths; fast-glob needs forward slashes.
     const files = await fg(String(args.pattern).replaceAll("\\", "/"), {

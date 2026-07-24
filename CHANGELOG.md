@@ -6,7 +6,57 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **A tool call reports its result instead of dumping the top of it** — every
+  call cost four or five lines: three lines of raw output plus a truncation
+  note, whether or not those lines told you anything. The first three
+  filenames of a listing don't; the count does. Read-only tools now describe
+  what they produced — `✓ List src/ui — 14 entries`,
+  `✓ Grep /stringWidth/ in src — 15 matches in 4 files` — and Ctrl+O still
+  expands the real output. `shell` keeps its preview, since there the output
+  is the answer, and a failed call now shows eight lines rather than three:
+  a failure is when the detail is worth the rows.
+
 ### Fixed
+
+- **A long answer no longer prints twice** — Ink erases its live region by
+  rewinding a line count, which can only reach what is still on screen. Once a
+  streaming answer grew taller than the terminal, the erase silently came up
+  short and stranded a partial copy in the scrollback; the finished message
+  then printed below it, so the reply appeared twice, spliced mid-sentence at
+  the seam. The live view now shows the tail that fits the viewport (reopening
+  a code fence it was cut inside of), and the whole answer prints once when the
+  turn ends.
+- **A failed command shows a red ✗** — `shell` resolves on a nonzero exit
+  instead of throwing, since the model needs the output either way, but that
+  also meant `cat missing-file` was reported to the user with a green check.
+  Tools can now declare that output they returned normally still represents a
+  failure.
+
+- **Tool output previews are readable again** — `read` numbers its lines with a
+  tab, which the terminal took to the next 8-column stop, so every preview of a
+  file opened with a ragged gap eating a quarter of the width. Tabs are now
+  expanded, indentation every line shares is dropped, and lines are clipped
+  with `…` rather than wrapped, so a three-line preview occupies three lines.
+- **A repeated tool call no longer repeats its output** — a model that reads
+  the same file six times still gets six lines (hiding calls would misreport
+  what it did), but the identical preview is printed once.
+- **Code blocks are the width of their code** — the frame stretched to the
+  terminal's full width, so a two-line snippet drew a box across the screen.
+
+- **HTML entities are decoded** — a model that wants to show a `|` inside a
+  table cell has to write `&#124;`, and the terminal printed that literally.
+  Numeric and common named entities are now decoded after the markup is parsed
+  (so `&#42;` can't turn itself into emphasis) and never inside a code span.
+  Anything unrecognised, `R&D` included, is left exactly as written.
+- **Long URLs break after a separator** — a URL too long for the terminal was
+  cut at whatever character landed on the boundary, mid-segment. It now prefers
+  the last `/`, `-`, or `?` on the line when one is close enough to the edge.
+- **Narrow terminals stop stacking tables that would have fit** — the grid was
+  abandoned below a fixed 60 columns, which threw away perfectly readable
+  two-column tables of short cells. The decision now weighs what the table
+  actually needs against the width available.
 
 - **Tables render as tables** — the markdown renderer knew about code fences,
   headers, bullets, and inline code, and passed everything else through as

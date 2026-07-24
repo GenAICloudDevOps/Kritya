@@ -37,6 +37,30 @@ test("emphasis markers that are not emphasis stay literal", () => {
   assert.deepEqual(parseInline("`a ** b`"), [{ text: "a ** b", code: true }]);
 });
 
+test("HTML entities are decoded, except inside code spans", () => {
+  // &#124; is how a model escapes a pipe it wants shown inside a table cell.
+  assert.deepEqual(parseInline("a &#124; b"), [{ text: "a | b" }]);
+  assert.deepEqual(parseInline("&amp; &lt;tag&gt; &quot;q&quot; &#x2713;"), [
+    { text: '& <tag> "q" ✓' },
+  ]);
+  assert.deepEqual(parseInline("`&amp;`"), [{ text: "&amp;", code: true }]);
+  // A decoded entity must not become markup: &#42; is a literal asterisk.
+  assert.deepEqual(parseInline("&#42;not italic&#42;"), [{ text: "*not italic*" }]);
+  // Anything unrecognised is left exactly as written.
+  assert.deepEqual(parseInline("R&D and &nope; stay"), [{ text: "R&D and &nope; stay" }]);
+});
+
+test("long URLs break after a separator rather than mid-segment", () => {
+  const lines = wrapInline("https://example.com/very/long/path/that/goes/on/and/on/forever", 24);
+  const text = lines.map((l) => l.map((t) => t.text).join(""));
+  for (const line of text) assert.ok(line.length <= 24);
+  assert.equal(text.join(""), "https://example.com/very/long/path/that/goes/on/and/on/forever");
+  assert.ok(
+    text.slice(0, -1).every((l) => /[/\-_.?&=]$/.test(l)),
+    `every break lands on a separator: ${JSON.stringify(text)}`
+  );
+});
+
 test("width is measured on what is displayed, not on the source", () => {
   assert.equal(inlineWidth("**Opus 5**"), "Opus 5".length);
   assert.equal(inlineWidth("`code`"), "code".length);
@@ -135,12 +159,17 @@ test("emoji cells still fit their column", () => {
   assert.deepEqual(widths, [stringWidth("🚀🚀 ship"), 4]);
 });
 
-test("narrow terminals and very wide tables fall back to stacked rows", () => {
+test("a grid is abandoned only when this table can't fit at this width", () => {
   const { table } = detectTable(REAL_TABLE, 0)!;
-  assert.equal(shouldStack(table, 40), true);
+  assert.equal(shouldStack(table, 40), true, "three wide columns can't fit 40");
   assert.equal(shouldStack(table, 80), false);
+
+  // Short cells read fine in a narrow terminal — don't stack them.
+  const small = detectTable(["| Left | Right |", "|---|---|", "| 42 | ok |"], 0)!.table;
+  assert.equal(shouldStack(small, 40), false);
+
   const wide = detectTable(["| a | b | c | d | e | f |", "|---|---|---|---|---|---|"], 0)!.table;
-  assert.equal(shouldStack(wide, 200), true);
+  assert.equal(shouldStack(wide, 200), true, "six columns never read as a grid");
 });
 
 test("a half-arrived table is held back while streaming, then rendered", () => {

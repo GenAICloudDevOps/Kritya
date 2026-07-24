@@ -1,3 +1,4 @@
+// Render and format GitHub-flavored markdown tables in the terminal.
 import { inlineWidth } from "./inline.js";
 
 export type Align = "left" | "right" | "center";
@@ -10,8 +11,8 @@ export interface Table {
 
 /** Gap between columns, in spaces. */
 export const COLUMN_GAP = 2;
-/** Narrower than this and a grid is unreadable — fall back to stacked rows. */
-export const MIN_GRID_WIDTH = 60;
+/** A column squeezed below this is unreadable — stack the table instead. */
+export const MIN_READABLE_COLUMN = 14;
 /** More columns than this and a grid is unreadable at any sane terminal width. */
 export const MAX_GRID_COLUMNS = 5;
 
@@ -103,6 +104,13 @@ function fit(cells: string[], n: number): string[] {
   return [...cells, ...Array(n - cells.length).fill("")];
 }
 
+/** What each column would take if nothing had to give. */
+function naturalWidths(table: Table): number[] {
+  return table.header.map((cell, c) =>
+    Math.max(inlineWidth(cell), ...table.rows.map((r) => inlineWidth(r[c] ?? "")), 1)
+  );
+}
+
 /**
  * Column widths that fit `maxWidth` display columns. Over budget, the widest
  * columns give ground first; their cells then wrap internally, which is what
@@ -110,9 +118,7 @@ function fit(cells: string[], n: number): string[] {
  */
 export function columnWidths(table: Table, maxWidth: number): number[] {
   const n = table.header.length;
-  const widths = table.header.map((cell, c) =>
-    Math.max(inlineWidth(cell), ...table.rows.map((r) => inlineWidth(r[c] ?? "")), 1)
-  );
+  const widths = naturalWidths(table);
 
   const gaps = COLUMN_GAP * (n - 1);
   const budget = Math.max(n, maxWidth - gaps);
@@ -132,8 +138,18 @@ export function columnWidths(table: Table, maxWidth: number): number[] {
   return widths;
 }
 
+/**
+ * Whether a grid is hopeless at this width. Judged against what the table
+ * actually needs, not a fixed terminal width — a two-column table of short
+ * cells reads fine in a narrow terminal, and a six-column one never does.
+ */
 export function shouldStack(table: Table, maxWidth: number): boolean {
-  return maxWidth < MIN_GRID_WIDTH || table.header.length > MAX_GRID_COLUMNS;
+  if (table.header.length > MAX_GRID_COLUMNS) return true;
+  const needed = naturalWidths(table).reduce(
+    (total, w) => total + Math.min(w, MIN_READABLE_COLUMN),
+    COLUMN_GAP * (table.header.length - 1)
+  );
+  return needed > maxWidth;
 }
 
 /**

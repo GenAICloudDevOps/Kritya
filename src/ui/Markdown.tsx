@@ -111,8 +111,18 @@ function renderBlocks(text: string, width: number, streaming: boolean): React.Re
 
   const flushCode = () => {
     if (codeLines.length) {
+      // Size the frame to the code, not to the terminal — a two-line snippet
+      // in a wide terminal was drawing a box the full width of the screen.
+      const longest = Math.max(...codeLines.map((l) => stringWidth(l)));
       blocks.push(
-        <Box key={key++} flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+        <Box
+          key={key++}
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+          width={Math.min(width, longest + 4)}
+        >
           {codeLines.map((l, i) => (
             <CodeLine key={i} line={l} />
           ))}
