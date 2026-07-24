@@ -164,19 +164,30 @@ function renderBlocks(text: string, width: number, streaming: boolean): React.Re
           dimColor
         />
       );
-    } else if (/^(\s*)[-*]\s/.test(line)) {
-      const pad = /^(\s*)/.exec(line)![1];
+    } else if (/^\s*[-*]\s/.test(line)) {
+      const [, pad, rest] = /^(\s*)[-*]\s+([\s\S]*)$/.exec(line)!;
+      blocks.push(
+        <Marked key={key++} text={rest} width={width} marker={`${pad}• `} indent={`${pad}  `} />
+      );
+    } else if (/^\s*\d{1,3}[.)]\s/.test(line)) {
+      const [, pad, number, rest] = /^(\s*)(\d{1,3}[.)])\s+([\s\S]*)$/.exec(line)!;
       blocks.push(
         <Marked
           key={key++}
-          text={line.replace(/^\s*[-*]\s/, "")}
+          text={rest}
           width={width}
-          marker={`${pad}• `}
-          indent={`${pad}  `}
+          marker={`${pad}${number} `}
+          indent={`${pad}${" ".repeat(number.length + 1)}`}
         />
       );
     } else {
-      blocks.push(<InlineText key={key++} text={line || " "} />);
+      // Paragraphs wrap through the same path as everything else: Ink's own
+      // wrapping carries the break's space onto the next line, which shows up
+      // as a stray leading space at column zero.
+      const [, pad, rest] = /^(\s*)([\s\S]*)$/.exec(line)!;
+      blocks.push(
+        <Marked key={key++} text={rest || " "} width={width} marker={pad} indent={pad} />
+      );
     }
   }
   if (inCode) flushCode();

@@ -25,10 +25,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   by one shared inline pass, which is also what measures table columns against
   what is displayed rather than the source. `2 * 3`, `a*b`, and glob patterns
   like `**/*.ts` stay literal.
-- **Quotes, rules, and wrapped bullets** — `>` quotes render dimmed with a
-  gutter that survives wrapping, `---` draws a rule across the terminal, and a
-  bullet that wraps now indents its continuation under the text instead of
-  falling back to column zero.
+- **Quotes, rules, and wrapped lists** — `>` quotes render dimmed with a gutter
+  that survives wrapping, `---` draws a rule across the terminal, and a list
+  item that wraps now indents its continuation under the text instead of
+  falling back to column zero. Numbered lists get the same treatment as
+  bullets, which they previously had none of.
+- **No more stray space at the start of a wrapped line** — every block now
+  wraps through kritya's own pass rather than Ink's, which carried the space it
+  broke on to the front of the next line. It showed up on any paragraph long
+  enough to wrap.
 
 ## [0.5.0] — 2026-07-22
 
