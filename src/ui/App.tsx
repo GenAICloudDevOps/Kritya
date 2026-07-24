@@ -488,7 +488,7 @@ export function App({
 
       {stream ? (
         <Box marginBottom={1}>
-          <Markdown text={stream} />
+          <Markdown text={stream} streaming />
         </Box>
       ) : null}
 

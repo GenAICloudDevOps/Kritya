@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tables render as tables** — the markdown renderer knew about code fences,
+  headers, bullets, and inline code, and passed everything else through as
+  plain text. A table was just a long string, so Ink wrapped it at the
+  terminal's width and the columns dissolved into pipe soup. Tables are now
+  parsed (a delimiter row is required, so prose containing a pipe is left
+  alone) and laid out to fit the terminal: cells wrap _inside_ their column,
+  which is what keeps the row from wrapping. Column alignment comes from the
+  delimiter row, `<br>` inside a cell becomes a line break, widths are measured
+  in display columns so emoji and CJK line up, and under 60 columns — or past
+  five columns — each row degrades to a labelled block instead of an
+  unreadable grid. While streaming, a table whose delimiter row hasn't arrived
+  yet is held back rather than shown as raw pipes for a moment.
+- **Emphasis is no longer printed as asterisks** — `**bold**`, `*italic*`, and
+  `[text](url)` are parsed everywhere (headers, bullets, quotes, table cells)
+  by one shared inline pass, which is also what measures table columns against
+  what is displayed rather than the source. `2 * 3`, `a*b`, and glob patterns
+  like `**/*.ts` stay literal.
+- **Quotes, rules, and wrapped bullets** — `>` quotes render dimmed with a
+  gutter that survives wrapping, `---` draws a rule across the terminal, and a
+  bullet that wraps now indents its continuation under the text instead of
+  falling back to column zero.
+
 ## [0.5.0] — 2026-07-22
 
 ### Added
