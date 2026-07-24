@@ -1,13 +1,29 @@
-import stringWidth from "string-width";
+import { wrapInline } from "./inline.js";
 
 /** Rows below the streaming region: prompt, status line, spinner, breathing room. */
 const RESERVED_ROWS = 8;
 /** Never collapse the live view to nothing, however short the terminal. */
 const MIN_ROWS = 4;
+/**
+ * Rows held back against an estimate that comes in low. Underestimating by
+ * even one row brings back the bug this file exists to prevent, and the only
+ * cost of overestimating is showing slightly less of the live text.
+ */
+const SAFETY_ROWS = 4;
+/** Columns the renderer itself works in: the terminal, less its padding. */
+const RENDER_INSET = 2;
+/** A table row wraps its cells; assume the worst rather than guess low. */
+const TABLE_ROW_HEIGHT = 3;
 
-/** Terminal rows a line will occupy once wrapped to `columns`. */
+/**
+ * Terminal rows a line will occupy once rendered. Measured with the same
+ * word-wrapping the renderer uses — dividing width by columns assumes words
+ * can be split mid-word, which under-counts every wrapped paragraph.
+ */
 function rowsFor(line: string, columns: number): number {
-  return Math.max(1, Math.ceil(stringWidth(line) / Math.max(1, columns)));
+  const width = Math.max(1, columns - RENDER_INSET);
+  const wrapped = wrapInline(line, width).length;
+  return line.includes("|") ? Math.max(wrapped, TABLE_ROW_HEIGHT) : Math.max(1, wrapped);
 }
 
 /**
@@ -21,7 +37,7 @@ function rowsFor(line: string, columns: number): number {
  * answer is printed once when the turn ends.
  */
 export function tailForViewport(text: string, columns: number, rows: number): string {
-  const budget = Math.max(MIN_ROWS, rows - RESERVED_ROWS);
+  const budget = Math.max(MIN_ROWS, rows - RESERVED_ROWS - SAFETY_ROWS);
   const lines = text.split("\n");
 
   let used = 0;

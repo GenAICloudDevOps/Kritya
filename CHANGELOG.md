@@ -16,7 +16,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `✓ Grep /stringWidth/ in src — 15 matches in 4 files` — and Ctrl+O still
   expands the real output. `shell` keeps its preview, since there the output
   is the answer, and a failed call now shows eight lines rather than three:
-  a failure is when the detail is worth the rows.
+  a failure is when the detail is worth the rows. `write` says nothing under
+  its own line any more (`✓ Write scratch.txt (20 bytes)` followed by "Wrote
+  scratch.txt" was the same sentence twice); `edit` reports its replacement
+  count inline.
+- **Model-facing scaffolding stays out of the preview** — the
+  `<<<external_untrusted_content>>>` fence around web and MCP results is an
+  instruction about how the _model_ should treat what follows, and it was
+  taking the first line of every search preview. Provider citation markers
+  like `【1†L1-L4】` now render as `[1]`.
+- **The task checklist is the width of its tasks**, not of the terminal.
+- **A silent command says so on its own line** — `✓ Run: … — no output` rather
+  than a preview line reading `(no output)`.
 
 ### Fixed
 
@@ -27,7 +38,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   then printed below it, so the reply appeared twice, spliced mid-sentence at
   the seam. The live view now shows the tail that fits the viewport (reopening
   a code fence it was cut inside of), and the whole answer prints once when the
-  turn ends.
+  turn ends. The height of that tail is measured with the same word-wrapping
+  the renderer uses: dividing character count by column count assumes words can
+  break mid-word, which under-counts every wrapped paragraph by a row and left
+  exactly one stranded line behind — the same bug, shrunk from pages to a
+  sentence fragment.
 - **A failed command shows a red ✗** — `shell` resolves on a nonzero exit
   instead of throwing, since the model needs the output either way, but that
   also meant `cat missing-file` was reported to the user with a green check.

@@ -20,6 +20,9 @@ export const writeFileTool: ToolDef = {
     required: ["path", "content"],
   },
   requiresPermission: true,
+  // The summary line already names the file and its size; "Wrote <path>" under
+  // it is the same sentence twice.
+  resultSummary: () => "",
   summarize: (args) =>
     `Write ${args.path} (${Buffer.byteLength(String(args.content ?? ""), "utf8")} bytes)`,
   async preview(args, ctx) {

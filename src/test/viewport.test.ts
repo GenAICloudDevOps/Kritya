@@ -46,3 +46,18 @@ test("a very short terminal still shows something", () => {
   const out = tailForViewport(lines.join("\n"), 80, 4).split("\n");
   assert.ok(out.length >= 4);
 });
+
+test("row counting matches how the text actually wraps, not width/columns", () => {
+  // Twelve 9-column words: character math says 108/40 = 3 rows, but word
+  // wrapping needs 4. Counting low is what left a stray line on screen.
+  const line = Array.from({ length: 12 }, () => "wordwords").join(" ");
+  const kept = tailForViewport([line, line, line, line, line].join("\n"), 40, 24).split("\n");
+  const rows = kept.reduce((n, l) => n + Math.ceil(l.length / 40), 0);
+  assert.ok(rows <= 24, `estimated ${rows} rows for a 24-row terminal`);
+});
+
+test("table rows are budgeted for their wrapped height", () => {
+  const table = Array.from({ length: 20 }, (_, i) => `| cell ${i} | second column | third |`);
+  const kept = tailForViewport(table.join("\n"), 80, 24).split("\n");
+  assert.ok(kept.length <= 5, `kept ${kept.length} table rows, each up to 3 tall`);
+});

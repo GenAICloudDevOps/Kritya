@@ -26,6 +26,7 @@ export const editFileTool: ToolDef = {
     required: ["path", "old_string", "new_string"],
   },
   requiresPermission: true,
+  resultSummary: (output) => output.split("\n")[0].replace(/ in \S+$/, ""),
   summarize: (args) => `Edit ${args.path}`,
   async preview(args) {
     return diffLines(String(args.old_string ?? ""), String(args.new_string ?? ""));

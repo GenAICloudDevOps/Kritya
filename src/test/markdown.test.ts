@@ -35,6 +35,12 @@ test("emphasis markers that are not emphasis stay literal", () => {
   assert.deepEqual(parseInline("2 * 3 * 4"), [{ text: "2 * 3 * 4" }]);
   assert.deepEqual(parseInline("glob **/*.ts here"), [{ text: "glob **/*.ts here" }]);
   assert.deepEqual(parseInline("`a ** b`"), [{ text: "a ** b", code: true }]);
+  // ...but punctuation between tight delimiters is still emphasis.
+  assert.deepEqual(parseInline("shows **+ / –** buttons"), [
+    { text: "shows " },
+    { text: "+ / –", bold: true },
+    { text: " buttons" },
+  ]);
 });
 
 test("HTML entities are decoded, except inside code spans", () => {
@@ -181,4 +187,14 @@ test("a half-arrived table is held back while streaming, then rendered", () => {
 
   const noTable = ["just prose", "more prose"];
   assert.deepEqual(dropPartialTrailingTable(noTable), noTable);
+});
+
+test("provider citation markers become a plain reference", () => {
+  assert.deepEqual(parseInline("V8 13.6【1†L1-L4】."), [
+    { text: "V8 13.6" },
+    { text: "[1]", dim: true },
+    { text: "." },
+  ]);
+  // Anything that isn't a citation is left alone.
+  assert.deepEqual(parseInline("【note】"), [{ text: "【note】" }]);
 });

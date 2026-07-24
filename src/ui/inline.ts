@@ -43,23 +43,34 @@ export function parseInline(s: string): InlineToken[] {
       }
     }
 
-    // An emphasis run can't open right after a word or another marker, and its
-    // content must hold a word character — that keeps "2 * 3", "a*b", and glob
-    // patterns like **/*.ts from turning into stray italics.
+    // An emphasis run can't open right after a word or another marker, and
+    // can't be followed by a space — between them that keeps "2 * 3", "a*b",
+    // and glob patterns like **/*.ts from turning into stray italics, while
+    // still emphasising content that happens to be punctuation, like **+ / –**.
     if (!/[*_\w]/.test(s[i - 1] ?? "")) {
       const strong = rest.match(/^(\*\*|__)(?=\S)([\s\S]*?\S)\1/);
-      if (strong && /\w/.test(strong[2])) {
+      if (strong) {
         push(parseInline(strong[2]), { bold: true });
         i += strong[0].length;
         continue;
       }
 
       const em = rest.match(/^\*(?=\S)([^*]*\S)\*/);
-      if (em && /\w/.test(em[1])) {
+      if (em) {
         push(parseInline(em[1]), { italic: true });
         i += em[0].length;
         continue;
       }
+    }
+
+    // Some providers cite sources as 【3†L1-L4】. Keep the reference, drop the
+    // internal span bookkeeping, which is unreadable and means nothing here.
+    const citation = rest.match(/^【(\d+)[†:][^】]*】/);
+    if (citation) {
+      flush();
+      out.push({ text: `[${citation[1]}]`, dim: true });
+      i += citation[0].length;
+      continue;
     }
 
     // Links keep their URL, dimmed — a terminal can't hide it behind the text.

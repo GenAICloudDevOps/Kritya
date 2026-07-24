@@ -4,6 +4,7 @@ import TextInput from "ink-text-input";
 import fs from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
+import stringWidth from "string-width";
 import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
@@ -62,6 +63,9 @@ function toolOutputPreview(
   const lines = output
     .replace(/\s+$/, "")
     .split("\n")
+    // The untrusted-content fence is an instruction to the model about how to
+    // treat what follows. It says nothing to the person reading the screen.
+    .filter((l) => !/^<<<(end_)?external_untrusted_content/i.test(l.trim()))
     .map((l) => l.replace(/^(\s*\d+)\t/, "$1 ").replace(/\t/g, "  "));
   while (lines.length && !lines[0].trim()) lines.shift();
   // Drop indentation every line shares — `read` pads its line numbers to five
@@ -501,19 +505,21 @@ export function App({
                   {item.summary}
                   {item.resultSummary && !verbose ? ` — ${item.resultSummary}` : ""}
                 </Text>
-                {item.output && item.output.trim() && (!item.resultSummary || verbose) && (
-                  <Text dimColor>
-                    {toolOutputPreview(
-                      item.output,
-                      verbose,
-                      Math.max(20, (stdout?.columns ?? 80) - 6),
-                      item.error
-                    )
-                      .split("\n")
-                      .map((l) => `    ${l}`)
-                      .join("\n")}
-                  </Text>
-                )}
+                {item.output &&
+                  item.output.trim() &&
+                  (item.resultSummary === undefined || verbose) && (
+                    <Text dimColor>
+                      {toolOutputPreview(
+                        item.output,
+                        verbose,
+                        Math.max(20, (stdout?.columns ?? 80) - 6),
+                        item.error
+                      )
+                        .split("\n")
+                        .map((l) => `    ${l}`)
+                        .join("\n")}
+                    </Text>
+                  )}
               </Box>
             )}
             {item.kind === "info" && <Text dimColor>{item.text}</Text>}
@@ -532,7 +538,16 @@ export function App({
       ) : null}
 
       {tasks.length > 0 && (
-        <Box flexDirection="column" borderStyle="round" borderColor="blue" paddingX={1}>
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="blue"
+          paddingX={1}
+          width={Math.min(
+            (stdout?.columns ?? 80) - 2,
+            Math.max(...tasks.map((t) => stringWidth(t.text))) + 6
+          )}
+        >
           {tasks.map((t, i) => (
             <Text
               key={i}
