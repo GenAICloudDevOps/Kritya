@@ -54,7 +54,7 @@ export interface AppProps {
  * previews look broken. Lines are clipped rather than wrapped, so a preview
  * stays the size it claims to be.
  */
-function toolOutputPreview(
+export function toolOutputPreview(
   output: string,
   verbose: boolean,
   width: number,
