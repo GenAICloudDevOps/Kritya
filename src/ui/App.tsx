@@ -21,7 +21,7 @@ import { ModelPicker } from "./ModelPicker.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
-import { tailForViewport } from "./viewport.js";
+import { tailForViewport, terminalColumns, terminalRows } from "./viewport.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
 import { mcpPrompts, mcpResources } from "../mcp/client.js";
@@ -124,6 +124,42 @@ export function App({
   const [staticKey, setStaticKey] = useState(0);
   const inputHistory = useRef<string[]>([]);
   const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
+
+  /**
+   * Ctrl-chord bookkeeping for the text inputs.
+   *
+   * Ink delivers a keypress to every `useInput` hook, and ink-text-input
+   * ignores only Ctrl+C — so Ctrl+K and Ctrl+O run their shortcut *and* get
+   * typed into the box as a bare "k"/"o". Hitting the kill switch left junk on
+   * the prompt line, which the next Enter would have sent as a message.
+   *
+   * The two hooks can fire in either order, so both directions are covered:
+   * `ctrlChord` makes onChange drop the echoed letter when the shortcut ran
+   * first, and re-setting the value from `inputRef` undoes it when the input
+   * ran first. `inputRef` tracks committed state, so it always holds the value
+   * from before this keypress.
+   */
+  const ctrlChord = useRef<string | null>(null);
+  const inputRef = useRef("");
+  const steerInputRef = useRef("");
+  useEffect(() => {
+    inputRef.current = input;
+  }, [input]);
+  useEffect(() => {
+    steerInputRef.current = steerInput;
+  }, [steerInput]);
+
+  const noteCtrlChord = (letter: string) => {
+    ctrlChord.current = letter;
+    setInput(inputRef.current);
+    setSteerInput(steerInputRef.current);
+    setTimeout(() => {
+      ctrlChord.current = null;
+    }, 0);
+  };
+  /** The change a Ctrl chord echoed into the box, rather than a real keystroke. */
+  const isCtrlEcho = (prev: string, next: string): boolean =>
+    ctrlChord.current !== null && next === prev + ctrlChord.current;
 
   // Terminals that reflow their buffer on resize (e.g. VS Code's xterm.js)
   // rewrap already-printed full-width lines (banner art, box borders) to the
@@ -286,6 +322,7 @@ export function App({
     // input line is not a panic button. It fires mid-stream, mid-tool, and
     // while a permission prompt is on screen.
     if (key.ctrl && _input === "k") {
+      noteCtrlChord(_input);
       if (killed) return; // already stopped; /kill off is the way back
       engageKill("Ctrl+K");
       return;
@@ -295,6 +332,7 @@ export function App({
     }
     // Ctrl+O toggles showing full tool output.
     if (key.ctrl && _input === "o") {
+      noteCtrlChord(_input);
       setVerbose((v) => !v);
       return;
     }
@@ -518,7 +556,7 @@ export function App({
                       {toolOutputPreview(
                         item.output,
                         verbose,
-                        Math.max(20, (stdout?.columns ?? 80) - 6),
+                        Math.max(20, terminalColumns(stdout) - 6),
                         item.error
                       )
                         .split("\n")
@@ -537,7 +575,7 @@ export function App({
       {stream ? (
         <Box marginBottom={1}>
           <Markdown
-            text={tailForViewport(stream, stdout?.columns ?? 80, stdout?.rows ?? 24)}
+            text={tailForViewport(stream, terminalColumns(stdout), terminalRows(stdout))}
             streaming
           />
         </Box>
@@ -550,7 +588,7 @@ export function App({
           borderColor="blue"
           paddingX={1}
           width={Math.min(
-            (stdout?.columns ?? 80) - 2,
+            terminalColumns(stdout) - 2,
             Math.max(...tasks.map((t) => stringWidth(t.text))) + 6
           )}
         >
@@ -600,7 +638,7 @@ export function App({
             <Text color="yellow">↳ </Text>
             <TextInput
               value={steerInput}
-              onChange={setSteerInput}
+              onChange={(v) => setSteerInput((prev) => (isCtrlEcho(prev, v) ? prev : v))}
               onSubmit={(value) => {
                 const text = value.trim();
                 setSteerInput("");
@@ -698,7 +736,7 @@ export function App({
               key={inputKey}
               value={input}
               onChange={(v) => {
-                setInput(v.replace(/\t/g, ""));
+                setInput((prev) => (isCtrlEcho(prev, v) ? prev : v.replace(/\t/g, "")));
                 setCmdIndex(0);
                 setFileIndex(0);
               }}

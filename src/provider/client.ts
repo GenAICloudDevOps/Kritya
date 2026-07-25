@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { NVIDIA_BASE_URL } from "../config/config.js";
 import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { ChatMessage, ToolDef, Usage } from "../types.js";
+import { recoverToolCalls } from "./textToolCalls.js";
 
 export interface ParsedToolCall {
   id: string;
@@ -393,7 +394,7 @@ export class ProviderClient {
       }
     }
 
-    const toolCalls: ParsedToolCall[] = [...calls.entries()]
+    let toolCalls: ParsedToolCall[] = [...calls.entries()]
       .sort(([a], [b]) => a - b)
       .map(([i, c]) => ({
         id: c.id || `call_${i}`,
@@ -401,9 +402,23 @@ export class ProviderClient {
         argsJson: c.argsJson || "{}",
       }));
 
+    // A model that writes its tool call into the text channel instead would
+    // otherwise end the turn here: no tool call, so the loop treats the JSON as
+    // the final answer, prints it, and the action never runs. Recovering it is
+    // narrow enough to be safe (see textToolCalls.ts) — and when it fires, the
+    // text *was* the call, so it must not also be shown as an answer.
+    let visibleText = text;
+    if (toolCalls.length === 0 && text.trim()) {
+      const recovered = recoverToolCalls(text, new Set(tools.map((t) => t.name)));
+      if (recovered.length) {
+        toolCalls = recovered;
+        visibleText = "";
+      }
+    }
+
     const message = {
       role: "assistant",
-      content: text || null,
+      content: visibleText || null,
       ...(toolCalls.length
         ? {
             tool_calls: toolCalls.map((c) => ({
@@ -415,7 +430,7 @@ export class ProviderClient {
         : {}),
     } as ChatMessage;
 
-    return { message, text, toolCalls, usage };
+    return { message, text: visibleText, toolCalls, usage };
   }
 
   /**

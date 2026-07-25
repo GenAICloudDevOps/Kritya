@@ -36,6 +36,25 @@ function rowsFor(line: string, columns: number): number {
  * appears twice. Showing only what fits keeps the erase exact; the whole
  * answer is printed once when the turn ends.
  */
+/**
+ * The terminal's size, falling back to 80x24 when it isn't known.
+ *
+ * `columns` is 0 — not undefined — whenever Node can't get a window size from
+ * the tty (a pty opened without one, some CI runners, a few terminal
+ * emulators mid-resize). `?? 80` sails straight past that and hands the
+ * callers a 0, which after subtracting a margin clamps to the 20-column floor:
+ * Ink still draws its frames 80 wide (it uses `|| 80`), so the prose inside
+ * them wrapped into a narrow ribbon. Matching Ink's own fallback keeps the two
+ * in agreement.
+ */
+export function terminalColumns(stdout?: { columns?: number }): number {
+  return stdout?.columns || 80;
+}
+
+export function terminalRows(stdout?: { rows?: number }): number {
+  return stdout?.rows || 24;
+}
+
 export function tailForViewport(text: string, columns: number, rows: number): string {
   const budget = Math.max(MIN_ROWS, rows - RESERVED_ROWS - SAFETY_ROWS);
   const lines = text.split("\n");

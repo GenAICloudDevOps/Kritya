@@ -224,16 +224,32 @@ export class UndoStack {
     const turn = last.turn;
     const group: UndoEntry[] = [];
     while (this.entries.length && this.entries[this.entries.length - 1].turn === turn) {
-      group.push(this.entries.pop()!);
+      // unshift so the group reads in the order the writes happened.
+      group.unshift(this.entries.pop()!);
     }
-    const redoGroup: FileState[] = [];
-    const results: string[] = [];
+
+    // One restore per file, however many times the turn wrote it. A turn that
+    // edits a file twice (an edit, then a fix-up) snapshots it twice, and only
+    // the *first* snapshot holds the state the turn started from — the rest are
+    // intermediate. Walking them all restored an intermediate state as if it
+    // were the original, and captured those same intermediates as the redo
+    // state, so a redo reinstated a half-finished file.
+    const originals = new Map<string, UndoEntry>();
     for (const entry of group) {
-      redoGroup.push({
-        relPath: entry.relPath,
-        absPath: entry.absPath,
-        content: readOrNull(entry.absPath),
-      });
+      if (!originals.has(entry.absPath)) originals.set(entry.absPath, entry);
+    }
+
+    // Read every current state before restoring any of it, so redo reapplies
+    // what the turn actually produced rather than what an earlier restore in
+    // this same loop left behind.
+    const redoGroup: FileState[] = [...originals.values()].map((entry) => ({
+      relPath: entry.relPath,
+      absPath: entry.absPath,
+      content: readOrNull(entry.absPath),
+    }));
+
+    const results: string[] = [];
+    for (const entry of originals.values()) {
       // undo/redo's own restores must not be mistaken for external edits by
       // the file watcher — mark them the same way snapshot() marks a write.
       this.lastOwnWriteAt.set(entry.absPath, Date.now());
@@ -249,9 +265,12 @@ export class UndoStack {
     const group = this.redoStack.pop();
     if (!group) return null;
     this.turn++;
+    // Same ordering care as undo(): capture what is on disk now, before any of
+    // this group's restores overwrite it, so the turn stays undoable.
+    const current = group.map((state) => readOrNull(state.absPath));
     const results: string[] = [];
-    for (const state of group) {
-      this.entries.push({ ...state, content: readOrNull(state.absPath), turn: this.turn });
+    for (const [i, state] of group.entries()) {
+      this.entries.push({ ...state, content: current[i], turn: this.turn });
       this.lastOwnWriteAt.set(state.absPath, Date.now());
       results.push(restore(state));
       this.lastKnownContent.set(state.absPath, state.content);

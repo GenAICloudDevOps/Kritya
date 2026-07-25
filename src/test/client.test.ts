@@ -199,3 +199,41 @@ test("chatOnce forwards text and reasoning deltas via callbacks", async () => {
   assert.equal(result.text, "hello world");
   assert.equal((result.message as ChatMessage & { content: string }).content, "hello world");
 });
+
+const FAKE_TOOL = {
+  name: "edit_file",
+  description: "",
+  parameters: {},
+  requiresPermission: true,
+  summarize: () => "",
+  execute: async () => "",
+} as unknown as import("../types.js").ToolDef;
+
+test("a tool call written into the text channel becomes a real tool call", async () => {
+  // Models sometimes answer with the call as prose. Without recovery the turn
+  // ends here: nothing runs, and the JSON is printed at the user as the answer.
+  const text = '{"edit_file": {"path": "a.ts", "old_string": "x", "new_string": "y"}}';
+  const client = clientWithStream([{ choices: [{ delta: { content: text } }] }]);
+
+  const result = await client.chat("m", [], [FAKE_TOOL], noopCallbacks);
+
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].name, "edit_file");
+  assert.deepEqual(JSON.parse(result.toolCalls[0].argsJson), {
+    path: "a.ts",
+    old_string: "x",
+    new_string: "y",
+  });
+  // The text was the call, so it must not also surface as an answer.
+  assert.equal(result.text, "");
+  assert.equal((result.message as { content: string | null }).content, null);
+});
+
+test("a plain text answer is left exactly as the model wrote it", async () => {
+  const client = clientWithStream([
+    { choices: [{ delta: { content: "Done — the tests pass." } }] },
+  ]);
+  const result = await client.chat("m", [], [FAKE_TOOL], noopCallbacks);
+  assert.equal(result.toolCalls.length, 0);
+  assert.equal(result.text, "Done — the tests pass.");
+});

@@ -3,6 +3,7 @@ import { Box, Text, useStdout } from "ink";
 import stringWidth from "string-width";
 import { tokenizeLine, type TokenKind } from "./highlight.js";
 import { parseInline, tokensWidth, wrapInline, type InlineToken } from "./inline.js";
+import { terminalColumns } from "./viewport.js";
 import {
   COLUMN_GAP,
   columnWidths,
@@ -92,7 +93,7 @@ function Marked({
  */
 export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const { stdout } = useStdout();
-  const width = Math.max(20, (stdout?.columns ?? 80) - 2);
+  const width = Math.max(20, terminalColumns(stdout) - 2);
   const blocks = React.useMemo(
     () => renderBlocks(text, width, streaming),
     [text, width, streaming]

@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { terminalColumns } from "./viewport.js";
 
 // Dot-matrix glyphs (7 rows). "#" is an on pixel, "." is off.
 const GLYPHS: Record<string, string[]> = {
@@ -42,7 +43,7 @@ function rowColor(row: number): string {
 }
 
 export function Banner({ subtitle }: { subtitle?: string }) {
-  const columns = process.stdout.columns ?? 80;
+  const columns = terminalColumns(process.stdout);
   const wide = bannerLines("KRITYA", "░░");
   const narrow = bannerLines("KRITYA", "░");
   const lines = wide[0].length <= columns ? wide : narrow[0].length <= columns ? narrow : null;

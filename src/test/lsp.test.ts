@@ -5,8 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { LspClient } from "../lsp/client.js";
-import { serverForFile, languageIdForFile } from "../lsp/registry.js";
+import { serverForFile, languageIdForFile, type LspServerConfig } from "../lsp/registry.js";
 import { lspDiagnosticsTool } from "../tools/lsp.js";
+import { lspManager } from "../lsp/manager.js";
 
 test("serverForFile maps extensions to the right server", () => {
   assert.equal(serverForFile("src/app.ts")?.id, "typescript");
@@ -210,4 +211,42 @@ test("LspClient surfaces server death instead of hanging", async () => {
   client.dispose();
   await assert.rejects(() => client.definition(file, { line: 0, character: 0 }));
   assert.equal(client.dead, true);
+});
+
+test("a server that will not start is not respawned on every call", async () => {
+  // A failing lsp_* call used to look like a fixable setup problem, so the
+  // model retried it — spawning the server again each time — instead of
+  // falling back to grep.
+  const ws = await fs.mkdtemp(path.join(os.tmpdir(), "lsp-test-"));
+  await fs.writeFile(path.join(ws, "main.rs"), "fn main() {}");
+  const config = {
+    ...serverForFile("main.rs")!,
+    id: `broken-${Math.random().toString(36).slice(2)}`,
+    command: "definitely-not-a-real-lsp-binary",
+  };
+
+  const manager = lspManager as unknown as {
+    clientForConfig(ws: string, cfg: LspServerConfig): Promise<unknown>;
+  };
+
+  const first = await manager.clientForConfig(ws, config).then(
+    () => null,
+    (e: Error) => e
+  );
+  assert.ok(first, "first call should fail");
+  assert.match(first.message, /Do not retry/);
+  assert.match(first.message, /grep/);
+  assert.match(first.message, /rustup/);
+
+  const startedAt = Date.now();
+  const second = await manager.clientForConfig(ws, config).then(
+    () => null,
+    (e: Error) => e
+  );
+  assert.ok(second, "second call should fail too");
+  assert.equal(second.message, first.message, "the remembered failure should be reused");
+  assert.ok(
+    Date.now() - startedAt < 200,
+    "a remembered failure must not pay for another spawn attempt"
+  );
 });
