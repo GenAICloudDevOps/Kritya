@@ -54,4 +54,9 @@ jobs:
       # Kept per-OS rather than moved above: Windows checkouts can differ in
       # line endings, so this isn't purely a repeat of the Linux run.
       - run: npm run format:check
+      # Coverage thresholds only need checking once; running c8 on every
+      # OS/Node combination would just repeat the same numbers three times.
       - run: npm test
+        if: matrix.os != 'ubuntu-latest' || matrix.node-version != '20.x'
+      - run: npm run test:coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '20.x'

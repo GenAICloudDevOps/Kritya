@@ -1,0 +1,11 @@
+{
+  "all": true,
+  "include": ["dist/**/*.js"],
+  "exclude": ["dist/test/**", "dist/index.js"],
+  "reporter": ["text", "html"],
+  "reports-dir": "coverage",
+  "lines": 65,
+  "branches": 75,
+  "functions": 65,
+  "statements": 65
+}
