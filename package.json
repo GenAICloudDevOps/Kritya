@@ -10,7 +10,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc",
@@ -64,8 +64,10 @@
   "overrides": {
     "exceljs": {
       "uuid": "^11.1.1",
-      "archiver": "^8.0.0",
-      "unzipper": "^0.12.3"
+      "unzipper": "^0.12.3",
+      "archiver": "^7.0.1",
+      "readdir-glob": "^3.0.0",
+      "glob": "^11.0.0"
     }
   }
 }
