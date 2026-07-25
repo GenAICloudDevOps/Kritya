@@ -1,7 +1,37 @@
+export const BLOCK_TYPES = [
+  "heading1",
+  "heading2",
+  "heading3",
+  "paragraph",
+  "bullet",
+  "numbered",
+] as const;
+
 /** A flowed content block used by docx and pdf writers. */
 export interface DocBlock {
-  type: "heading1" | "heading2" | "heading3" | "paragraph" | "bullet" | "numbered";
+  type: (typeof BLOCK_TYPES)[number];
   text: string;
+}
+
+/**
+ * Check every block before any writer indexes a style table with `block.type`.
+ * Models do stray outside the schema enum, and without this the docx writer
+ * silently demotes the block to a plain paragraph while the pdf writer dies
+ * with an unrelated "cannot read properties of undefined".
+ */
+export function validateBlocks(blocks: DocBlock[]): DocBlock[] {
+  return blocks.map((block, i) => {
+    if (!block || typeof block !== "object") {
+      throw new Error(`write_document: block ${i + 1} is not an object`);
+    }
+    if (!(BLOCK_TYPES as readonly string[]).includes(block.type)) {
+      throw new Error(
+        `write_document: block ${i + 1} has unknown type "${block.type}". ` +
+          `Valid types: ${BLOCK_TYPES.join(", ")}`
+      );
+    }
+    return { type: block.type, text: block.text == null ? "" : String(block.text) };
+  });
 }
 
 export interface XlsxSheet {

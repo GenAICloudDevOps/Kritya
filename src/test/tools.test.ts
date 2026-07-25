@@ -341,6 +341,21 @@ test("system prompt includes KRITYA.md project memory", async () => {
   assert.ok(!buildSystemPrompt(wsEmpty).includes("Project instructions"));
 });
 
+test("system prompt tells the model that a deck or report means write_document", async () => {
+  // Without this, "create a ppt with the above" gets answered as chat text:
+  // every other tool family has an explicit rule, so documents need one too.
+  const prompt = buildSystemPrompt(await makeWorkspace());
+  assert.ok(prompt.includes("write_document"), "no write_document guidance");
+  for (const word of ["deck", "presentation", "slides", "spreadsheet", "report"]) {
+    assert.ok(prompt.includes(word), `prompt never mentions "${word}"`);
+  }
+  for (const ext of [".pptx", ".docx", ".xlsx", ".pdf"]) {
+    assert.ok(prompt.includes(ext), `prompt never mentions "${ext}"`);
+  }
+  // The rule must sit in the cache-stable prefix, above the volatile tail.
+  assert.ok(prompt.indexOf("write_document") < prompt.indexOf("# Environment"));
+});
+
 test("system prompt keeps a cache-stable prefix: volatile sections come last", async () => {
   const ws = await makeWorkspace();
   await fs.writeFile(path.join(ws, "KRITYA.md"), "Prefer tabs.");

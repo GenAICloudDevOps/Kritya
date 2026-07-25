@@ -58,7 +58,8 @@ export const readDocumentTool: ToolDef = {
         return truncateResult(await readPdf(buf));
       default:
         throw new Error(
-          `Unsupported extension "${ext}" for read_document. Supported: ${READABLE_EXTENSIONS.join(", ")}`
+          `Unsupported extension "${ext}" for read_document. Supported: ` +
+            `${READABLE_EXTENSIONS.join(", ")}. For text formats such as .md, .txt, or .csv, use read_file.`
         );
     }
   },
@@ -98,14 +99,26 @@ export const writeDocumentTool: ToolDef = {
           },
           slides: {
             type: "array",
-            description: "Slides, for .pptx.",
+            description:
+              "Slides, for .pptx. Every slide needs its body text in `bullets` — a slide with " +
+              "only a `title` renders as a single line on an otherwise empty slide.",
             items: {
               type: "object",
               properties: {
-                title: { type: "string" },
-                bullets: { type: "array", items: { type: "string" } },
-                notes: { type: "string" },
+                title: { type: "string", description: "Slide heading, one short line." },
+                bullets: {
+                  type: "array",
+                  items: { type: "string" },
+                  description:
+                    "The slide's body, one string per bullet. Put all visible content here; " +
+                    "aim for 3-6 bullets of at most ~15 words each.",
+                },
+                notes: {
+                  type: "string",
+                  description: "Speaker notes; not shown on the slide itself.",
+                },
               },
+              required: ["title", "bullets"],
             },
           },
         },
@@ -116,7 +129,7 @@ export const writeDocumentTool: ToolDef = {
   requiresPermission: true,
   summarize: (args) => `Write ${args.path}`,
   async preview(args) {
-    const content = (args.content ?? {}) as DocumentContent;
+    const content = extractContent(args);
     if (content.blocks) return `${content.blocks.length} content block(s)`;
     if (content.sheets) return `${content.sheets.length} sheet(s)`;
     if (content.slides) return `${content.slides.length} slide(s)`;
@@ -126,25 +139,26 @@ export const writeDocumentTool: ToolDef = {
     const relPath = String(args.path);
     const abs = resolveSafe(ctx.workspace, relPath);
     const ext = path.extname(abs).toLowerCase();
-    const content = (args.content ?? {}) as DocumentContent;
+    const content = extractContent(args);
 
     let buf: Buffer;
     switch (ext) {
       case ".docx":
-        buf = await writeDocx(requireField(content.blocks, "content.blocks", ext));
+        buf = await writeDocx(requireField(content.blocks, "blocks", ext, args));
         break;
       case ".pdf":
-        buf = await writePdf(requireField(content.blocks, "content.blocks", ext));
+        buf = await writePdf(requireField(content.blocks, "blocks", ext, args));
         break;
       case ".xlsx":
-        buf = await writeXlsx(requireField(content.sheets, "content.sheets", ext));
+        buf = await writeXlsx(requireField(content.sheets, "sheets", ext, args));
         break;
       case ".pptx":
-        buf = await writePptx(requireField(content.slides, "content.slides", ext));
+        buf = await writePptx(requireField(content.slides, "slides", ext, args));
         break;
       default:
         throw new Error(
-          `Unsupported extension "${ext}" for write_document. Supported: ${READABLE_EXTENSIONS.join(", ")}`
+          `Unsupported extension "${ext}" for write_document. Supported: ` +
+            `${READABLE_EXTENSIONS.join(", ")}. For text formats such as .md, .txt, or .csv, use write_file.`
         );
     }
 
@@ -337,10 +351,70 @@ export const editPdfTool: ToolDef = {
   },
 };
 
-function requireField<T>(value: T[] | undefined, fieldName: string, ext: string): T[] {
+/** The payload field each extension is written from. */
+const CONTENT_FIELD: Record<string, keyof DocumentContent> = {
+  ".docx": "blocks",
+  ".pdf": "blocks",
+  ".xlsx": "sheets",
+  ".pptx": "slides",
+};
+
+/**
+ * Pull blocks/sheets/slides out of the arguments however the model arranged
+ * them. The documented shape is `{path, content: {slides: [...]}}`, but models
+ * routinely flatten it to `{path, slides: [...]}` or send `content` as a JSON
+ * string. Rejecting those was a dead end for the caller: the payload was right
+ * there and the write failed anyway.
+ */
+function extractContent(args: Record<string, unknown>): DocumentContent {
+  let raw: unknown = args.content;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = undefined; // fall through to the top-level fields
+    }
+  }
+  const nested = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const pick = (key: keyof DocumentContent): unknown[] | undefined => {
+    for (const source of [nested, args]) {
+      const value = source[key];
+      if (Array.isArray(value) && value.length > 0) return value;
+    }
+    return undefined;
+  };
+  return {
+    blocks: pick("blocks") as DocumentContent["blocks"],
+    sheets: pick("sheets") as DocumentContent["sheets"],
+    slides: pick("slides") as DocumentContent["slides"],
+  };
+}
+
+function requireField<T>(
+  value: T[] | undefined,
+  fieldName: keyof DocumentContent,
+  ext: string,
+  args: Record<string, unknown>
+): T[] {
   if (!value || value.length === 0) {
+    // Name what did arrive: the usual cause is content for a different
+    // extension, e.g. `blocks` sent to a .pptx.
+    const present = (["blocks", "sheets", "slides"] as const).filter(
+      (k) => extractContent(args)[k]?.length
+    );
+    const mismatch = present.length
+      ? ` Received "${present.join('", "')}" instead — that content belongs to ` +
+        `${present
+          .map((k) =>
+            Object.keys(CONTENT_FIELD)
+              .filter((e) => CONTENT_FIELD[e] === k)
+              .join("/")
+          )
+          .join(", ")} files.`
+      : "";
     throw new Error(
-      `write_document: "${fieldName}" is required and must be non-empty for ${ext} files`
+      `write_document: ${ext} files are written from "${fieldName}", which is required and must be ` +
+        `non-empty. Pass it as content.${fieldName} (a top-level "${fieldName}" is also accepted).${mismatch}`
     );
   }
   return value;

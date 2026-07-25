@@ -1,6 +1,6 @@
 import mammoth from "mammoth";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
-import type { DocBlock } from "./types.js";
+import { validateBlocks, type DocBlock } from "./types.js";
 
 export async function readDocx(buf: Buffer): Promise<string> {
   const result = await mammoth.extractRawText({ buffer: buf });
@@ -13,8 +13,8 @@ const HEADING_LEVELS: Record<string, (typeof HeadingLevel)[keyof typeof HeadingL
   heading3: HeadingLevel.HEADING_3,
 };
 
-export async function writeDocx(blocks: DocBlock[]): Promise<Buffer> {
-  const children = blocks.map((block) => {
+export async function writeDocx(input: DocBlock[]): Promise<Buffer> {
+  const children = validateBlocks(input).map((block) => {
     if (block.type in HEADING_LEVELS) {
       return new Paragraph({
         heading: HEADING_LEVELS[block.type],

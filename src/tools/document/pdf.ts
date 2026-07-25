@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { PDFDocument, StandardFonts, degrees, type PDFFont } from "pdf-lib";
-import type { DocBlock, PdfEdit } from "./types.js";
+import { validateBlocks, type DocBlock, type PdfEdit } from "./types.js";
 import type { TextItem } from "pdfjs-dist/types/src/display/api.js";
 
 // Points pdfjs at its own bundled standard-font metrics so it doesn't warn
@@ -42,7 +42,37 @@ const BLOCK_STYLE: Record<DocBlock["type"], { size: number; bold: boolean; prefi
   numbered: { size: 11, bold: false, prefix: "" },
 };
 
-export async function writePdf(blocks: DocBlock[]): Promise<Buffer> {
+// The base-14 fonts are WinAnsi-encoded, so pdf-lib throws on anything outside
+// it (emoji, CJK, Greek, box drawing). Fold the characters that have an obvious
+// ASCII equivalent and mark the rest, rather than failing the whole document.
+const CHAR_FOLDS: Array<[RegExp, string]> = [
+  [/[‘’‚‛]/g, "'"],
+  [/[“”„‟]/g, '"'],
+  [/[‐‑‒–]/g, "-"],
+  [/[—―]/g, "—"],
+  [/[•‣◦●▪]/g, "•"],
+  [/…/g, "..."],
+  [/[→⇒]/g, "->"],
+  [/[←⇐]/g, "<-"],
+  [/[\u00A0\u2002\u2003\u2007\u2009\u202F]/g, " "], // non-breaking and typographic spaces
+  // Alternation, not a character class: ZWJ in a class trips no-misleading-character-class.
+  [/\u00AD|\u200B|\u200C|\u200D|\uFEFF/g, ""], // soft hyphen and zero-width marks
+  [/\t/g, "    "],
+];
+
+// WinAnsi: printable Latin-1 plus the named characters in the 0x80-0x9F block.
+const WINANSI_OK =
+  /[\u0020-\u007E\u00A1-\u00FF\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]/;
+
+/** Make one block of text safe for a WinAnsi-encoded standard font. */
+function toWinAnsi(text: string): string {
+  let out = text.normalize("NFC");
+  for (const [pattern, replacement] of CHAR_FOLDS) out = out.replace(pattern, replacement);
+  return [...out].map((ch) => (WINANSI_OK.test(ch) ? ch : "?")).join("");
+}
+
+export async function writePdf(input: DocBlock[]): Promise<Buffer> {
+  const blocks = validateBlocks(input);
   const doc = await PDFDocument.create();
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -57,7 +87,7 @@ export async function writePdf(blocks: DocBlock[]): Promise<Buffer> {
     const font = style.bold ? bold : regular;
     numberedIndex = block.type === "numbered" ? numberedIndex + 1 : 0;
     const prefix = block.type === "numbered" ? `${numberedIndex}. ` : style.prefix;
-    const lines = wrapText(prefix + block.text, font, style.size, maxWidth);
+    const lines = wrapText(toWinAnsi(prefix + block.text), font, style.size, maxWidth);
 
     for (const line of lines) {
       if (y - style.size < MARGIN) {
