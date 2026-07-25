@@ -72,9 +72,13 @@
       "unzipper": "^0.12.3",
       "archiver": "^7.0.1",
       "readdir-glob": "^3.0.0",
-      "glob": "^11.0.0"
+      "glob": "^13.0.0",
+      "fast-csv": "^5.0.7"
     },
-    "glob": "^11.0.0"
+    "glob": "^13.0.0",
+    "openai": {
+      "formdata-node": "^6.0.3"
+    }
   },
   "lint-staged": {
     "*.{ts,tsx}": [
