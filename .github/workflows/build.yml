@@ -1,0 +1,38 @@
+name: Build Desktop App
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+# Windows only for now — macOS/Linux legs are commented in, ready to
+# uncomment once we're ready to ship those installers too. The app code
+# itself is cross-platform (Electron); this matrix just controls which
+# installers actually get built and costs Actions minutes.
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest]
+        # - ubuntu-latest
+        # - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+      - run: npm run electron:build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa9 # v4.6.2
+        with:
+          name: kritya-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+          if-no-files-found: error

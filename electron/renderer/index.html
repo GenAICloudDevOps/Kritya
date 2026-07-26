@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Kritya</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="workspace-bar">
+      <span id="workspace-label">No workspace loaded</span>
+    </div>
+    <div id="messages"></div>
+    <div id="permission-prompt" class="hidden">
+      <div id="permission-box">
+        <p id="permission-text"></p>
+        <pre id="permission-diff"></pre>
+        <button id="permission-yes">Allow once</button>
+        <button id="permission-always">Always allow</button>
+        <button id="permission-no">Deny</button>
+      </div>
+    </div>
+    <form id="input-form">
+      <input id="prompt-input" placeholder="Ask kritya to do something..." autocomplete="off" />
+      <button type="submit">Send</button>
+    </form>
+    <script src="renderer.js"></script>
+  </body>
+</html>

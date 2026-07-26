@@ -3,6 +3,7 @@
   "version": "0.5.0",
   "description": "Kritya — a lean, provider-agnostic terminal coding agent (NVIDIA, OpenAI, OpenRouter, Groq, Ollama, and more)",
   "type": "module",
+  "main": "electron/main.mjs",
   "bin": {
     "kritya": "dist/index.js"
   },
@@ -24,7 +25,9 @@
     "check:install-scripts": "node scripts/check-install-scripts.mjs",
     "link": "npm run build && npm link",
     "prepublishOnly": "npm run build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "electron:dev": "npm run build && electron .",
+    "electron:build": "npm run build && electron-builder"
   },
   "keywords": [
     "cli",
@@ -57,6 +60,8 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "c8": "^12.0.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^10.8.0",
     "globals": "^14.0.0",
     "husky": "^9.1.7",
@@ -89,5 +94,28 @@
     "*.{js,mjs,json,md}": [
       "prettier --write"
     ]
+  },
+  "build": {
+    "appId": "com.kritya.desktop",
+    "productName": "Kritya",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!src/**/*",
+      "!scripts/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }

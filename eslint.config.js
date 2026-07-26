@@ -5,7 +5,7 @@ import globals from "globals";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**"],
+    ignores: ["dist/**", "node_modules/**", "release/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -15,6 +15,19 @@ export default tseslint.config(
     // explicitly or `console`/`process` trip no-undef.
     files: ["scripts/**/*.mjs"],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // Electron main/preload run under Node; the preload script is
+    // CommonJS on purpose (see its own comment) so require() is expected.
+    files: ["electron/main.mjs", "electron/preload.cjs"],
+    languageOptions: { globals: globals.node },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
+    // The renderer runs in a browser context (no Node globals), reached
+    // only through the `window.kritya` bridge exposed by preload.cjs.
+    files: ["electron/renderer/**/*.js"],
+    languageOptions: { globals: globals.browser },
   },
   {
     rules: {
