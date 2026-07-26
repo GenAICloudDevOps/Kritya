@@ -247,9 +247,15 @@ Rewrite `shouldSandbox`:
 /** Whether `command` should run sandboxed under the given mode. */
 export function shouldSandbox(mode: SandboxMode | undefined, command: string): boolean {
   if (!mode || mode === "off") return false;
-  // Windows has no sandbox binary at all — falling back to "only flagged
-  // commands" (today's behavior) avoids a spurious fallback note on every
-  // single shell call, which "sandbox everything" would otherwise cause.
+  // "always" means always, on every platform — including Windows, where
+  // there's no sandbox binary to back it, so every command falls back to
+  // the "[sandbox unavailable]" note. That's deliberate: it's the mode for
+  // someone who wants maximum enforcement/visibility even without a real
+  // sandbox backing it.
+  if (mode === "always") return true;
+  // "auto": Windows has no sandbox binary at all — falling back to "only
+  // flagged commands" (today's behavior) avoids a spurious fallback note on
+  // every single shell call, which "sandbox everything" would otherwise cause.
   if (os.platform() === "win32") return classifyDanger(command) !== null;
   return true;
 }
