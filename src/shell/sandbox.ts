@@ -54,12 +54,29 @@ export function sandboxUnavailableReason(): string {
 /** Whether `command` should run sandboxed under the given mode. */
 export function shouldSandbox(mode: SandboxMode | undefined, command: string): boolean {
   if (!mode || mode === "off") return false;
-  if (mode === "always") return true;
-  return classifyDanger(command) !== null;
+  // Windows has no sandbox binary at all — falling back to "only flagged
+  // commands" (today's behavior) avoids a spurious fallback note on every
+  // single shell call, which "sandbox everything" would otherwise cause.
+  if (os.platform() === "win32") return classifyDanger(command) !== null;
+  return true;
+}
+
+/**
+ * Common tool-cache / global-install directories outside the workspace that
+ * legitimate commands need to write to (package manager caches, toolchain
+ * installs) even though sandboxing now applies to every command by default.
+ * Kept short and explicit rather than trying to infer "safe" paths.
+ */
+function extraWritablePaths(): string[] {
+  const home = os.homedir();
+  return [".npm", ".cache", ".cargo", ".rustup", ".gem"].map((d) => path.join(home, d));
 }
 
 function macSandboxProfile(workspace: string): string {
   const esc = (p: string) => p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const extra = extraWritablePaths()
+    .map((p) => `(allow file-write* (subpath "${esc(p)}"))`)
+    .join("\n");
   // Reads and process exec/fork stay open (matches the Linux ro-bind-everything
   // posture below); writes are denied everywhere except the workspace and
   // system temp dirs, so a command can't damage anything outside the project.
@@ -70,6 +87,7 @@ function macSandboxProfile(workspace: string): string {
 (allow file-write* (subpath "/tmp"))
 (allow file-write* (subpath "/private/tmp"))
 (allow file-write* (subpath "/private/var/folders"))
+${extra}
 `;
 }
 
@@ -87,30 +105,23 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   if (!tool) return null;
 
   if (tool === "bwrap") {
-    return {
-      cmd: "bwrap",
-      args: [
-        "--ro-bind",
-        "/",
-        "/",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-        "--tmpfs",
-        "/tmp",
-        "--bind",
-        workspace,
-        workspace,
-        "--chdir",
-        workspace,
-        "--unshare-pid",
-        "--die-with-parent",
-        "sh",
-        "-c",
-        command,
-      ],
-    };
+    const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"];
+    for (const p of extraWritablePaths()) {
+      if (fs.existsSync(p)) args.push("--bind", p, p);
+    }
+    args.push(
+      "--bind",
+      workspace,
+      workspace,
+      "--chdir",
+      workspace,
+      "--unshare-pid",
+      "--die-with-parent",
+      "sh",
+      "-c",
+      command
+    );
+    return { cmd: "bwrap", args };
   }
 
   // sandbox-exec (macOS) takes its policy as a profile file, not inline args.

@@ -15,11 +15,17 @@ test("shouldSandbox: always sandboxes everything", () => {
   assert.equal(shouldSandbox("always", "rm -rf /tmp/x"), true);
 });
 
-test("shouldSandbox: auto only sandboxes destructive commands", () => {
-  assert.equal(shouldSandbox("auto", "npm test"), false);
-  assert.equal(shouldSandbox("auto", "git status"), false);
+test("shouldSandbox: auto sandboxes every command on platforms with a sandbox binary", () => {
+  if (os.platform() === "win32") {
+    // No sandbox binary exists on Windows — auto must not claim otherwise,
+    // or every command would show a spurious "[sandbox unavailable]" note.
+    assert.equal(shouldSandbox("auto", "npm test"), false);
+    assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true); // still flagged via classifyDanger fallback
+    return;
+  }
+  assert.equal(shouldSandbox("auto", "npm test"), true);
+  assert.equal(shouldSandbox("auto", "git status"), true);
   assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true);
-  assert.equal(shouldSandbox("auto", "git push --force origin main"), true);
 });
 
 test("buildSandboxedCommand returns null when unavailable, else a runnable wrapper", () => {
@@ -47,11 +53,35 @@ test("shell tool sandboxes destructive commands in auto mode when available, els
   }
 });
 
-test("shell tool leaves ordinary commands unsandboxed in auto mode", async () => {
-  const ctx: ToolContext = { workspace: os.tmpdir(), sandboxMode: "auto" };
-  const out = await shellTool.execute({ command: "echo plain-run" }, ctx);
-  assert.match(out, /plain-run/);
+test("sandboxed non-destructive command can still write inside the workspace", async () => {
+  if (!sandboxAvailable()) return;
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-sandbox-test-"));
+  const ctx: ToolContext = { workspace, sandboxMode: "auto" };
+  const out = await shellTool.execute({ command: "echo ok > inside.txt" }, ctx);
   assert.doesNotMatch(out, /sandbox unavailable/);
+  assert.ok(await fs.readFile(path.join(workspace, "inside.txt"), "utf8"));
+  await fs.rm(workspace, { recursive: true, force: true });
+});
+
+test("sandbox allows writes to known package-manager cache dirs outside the workspace", async () => {
+  if (!sandboxAvailable() || os.platform() === "win32") return;
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const cacheDir = path.join(os.homedir(), ".npm");
+  await fs.mkdir(cacheDir, { recursive: true });
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-sandbox-test-"));
+  const ctx: ToolContext = { workspace, sandboxMode: "auto" };
+  const target = path.join(cacheDir, `kritya-sandbox-cache-test-${Date.now()}.txt`);
+  try {
+    const out = await shellTool.execute({ command: `echo ok > "${target}"` }, ctx);
+    assert.doesNotMatch(out, /sandbox unavailable/);
+    assert.ok(await fs.readFile(target, "utf8"));
+  } finally {
+    await fs.rm(target, { force: true });
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("sandboxed command can write inside the workspace but is blocked outside it", async (t) => {
