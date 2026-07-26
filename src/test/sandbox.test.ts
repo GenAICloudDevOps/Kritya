@@ -21,6 +21,7 @@ test("shouldSandbox: auto sandboxes every command on platforms with a sandbox bi
     // or every command would show a spurious "[sandbox unavailable]" note.
     assert.equal(shouldSandbox("auto", "npm test"), false);
     assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true); // still flagged via classifyDanger fallback
+    assert.equal(shouldSandbox("always", "npm test"), true);
     return;
   }
   assert.equal(shouldSandbox("auto", "npm test"), true);
