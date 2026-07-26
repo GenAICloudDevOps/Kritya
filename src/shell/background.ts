@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import { scrubbedShellEnv } from "../config/config.js";
+import { buildSandboxedCommand, shouldSandbox, type SandboxMode } from "./sandbox.js";
 
 const MAX_BUFFER_CHARS = 50_000;
 
@@ -21,23 +22,39 @@ class BackgroundManager {
   private procs = new Map<string, BgProcess>();
   private counter = 0;
 
-  start(command: string, cwd: string): { id: string } {
+  start(command: string, cwd: string, sandboxMode?: SandboxMode): { id: string } {
     const id = `bg_${++this.counter}`;
     const isWindows = os.platform() === "win32";
-    // shell:true lets Node pick the right shell and quoting per OS from a
-    // single command string, same as the exec() used by the regular shell
-    // tool -- manually building a cmd.exe "/c" args array (the previous
-    // approach) mis-parses commands that themselves contain quotes.
     // detached on POSIX puts the command in its own process group, so kill()
     // can signal the whole tree (shell + whatever it spawned), not just it.
     // scrubbedShellEnv: background commands must not inherit provider API keys.
-    const proc = spawn(command, {
+    const spawnOpts = {
       cwd,
       env: scrubbedShellEnv(),
       windowsHide: true,
-      shell: true,
       detached: !isWindows,
-    });
+    };
+
+    let proc: ChildProcess;
+    let cleanup: (() => void) | undefined;
+    if (shouldSandbox(sandboxMode, command)) {
+      const wrapped = buildSandboxedCommand(command, cwd);
+      if (wrapped) {
+        proc = spawn(wrapped.cmd, wrapped.args, spawnOpts);
+        cleanup = wrapped.cleanup;
+      } else {
+        // Sandboxing was requested but no sandbox binary is available here —
+        // fall back to a plain run, same as the foreground shell tool does.
+        proc = spawn(command, { ...spawnOpts, shell: true });
+      }
+    } else {
+      // shell:true lets Node pick the right shell and quoting per OS from a
+      // single command string, same as the exec() used by the regular shell
+      // tool -- manually building a cmd.exe "/c" args array (the previous
+      // approach) mis-parses commands that themselves contain quotes.
+      proc = spawn(command, { ...spawnOpts, shell: true });
+    }
+
     const entry: BgProcess = { proc, command, buffer: "", exitCode: null, running: true };
 
     const append = (chunk: Buffer) => {
@@ -55,6 +72,7 @@ class BackgroundManager {
       entry.exitCode = code;
       proc.stdout?.destroy();
       proc.stderr?.destroy();
+      cleanup?.();
     });
     proc.on("error", (err) => {
       entry.running = false;

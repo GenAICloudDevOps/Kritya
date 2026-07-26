@@ -66,7 +66,7 @@ export const shellTool: ToolDef = {
     const command = String(args.command);
 
     if (args.background) {
-      const { id } = backgroundManager.start(command, ctx.workspace);
+      const { id } = backgroundManager.start(command, ctx.workspace, ctx.sandboxMode);
       return Promise.resolve(
         `Started background process ${id}: ${command}\nUse bg_output {"id":"${id}"} to read its output and bg_kill {"id":"${id}"} to stop it.`
       );

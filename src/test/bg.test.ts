@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import { test } from "node:test";
 import { backgroundManager } from "../shell/background.js";
+import { sandboxAvailable } from "../shell/sandbox.js";
 import { bgKillTool, bgOutputTool } from "../tools/bg.js";
 import type { ToolContext } from "../types.js";
 
@@ -65,4 +66,47 @@ test("summarize describes reading a specific process vs listing all", () => {
 
 test("bgKillTool.summarize names the process being killed", () => {
   assert.equal(bgKillTool.summarize({ id: "bg_9" }), "Kill background process bg_9");
+});
+
+test("background process is sandboxed when sandboxMode requests it and writes outside the workspace are blocked", async () => {
+  if (!sandboxAvailable() || os.platform() === "win32") return;
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-bg-sandbox-test-"));
+  const outsideTarget = path.join(os.homedir(), `kritya-bg-sandbox-outside-${Date.now()}.txt`);
+  const { id } = backgroundManager.start(
+    `echo bad > "${outsideTarget}" ; sleep 1`,
+    workspace,
+    "always"
+  );
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    await assert.rejects(fs.access(outsideTarget));
+  } finally {
+    backgroundManager.kill(id);
+    await fs.rm(outsideTarget, { force: true });
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("background process without a sandboxMode runs unsandboxed, unchanged from today", async () => {
+  const { id } = backgroundManager.start(`node -e "console.log('bg-plain')"`, os.tmpdir());
+  await new Promise((r) => setTimeout(r, 500));
+  const info = backgroundManager.read(id);
+  assert.match(info!.output, /bg-plain/);
+});
+
+test("bg_output redacts secrets from a background process's captured output", async () => {
+  const { id } = backgroundManager.start(
+    `node -e "console.log('AKIAABCDEFGHIJKLMNOP')"`,
+    os.tmpdir()
+  );
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    const out = await bgOutputTool.execute({ id }, ctx);
+    assert.doesNotMatch(out, /AKIAABCDEFGHIJKLMNOP/);
+    assert.match(out, /REDACTED/);
+  } finally {
+    backgroundManager.kill(id);
+  }
 });

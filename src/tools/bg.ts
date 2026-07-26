@@ -1,6 +1,7 @@
 import { backgroundManager } from "../shell/background.js";
 import type { ToolDef } from "../types.js";
 import { truncateTail } from "./common.js";
+import { redactSecrets } from "./secretScan.js";
 
 export const bgOutputTool: ToolDef = {
   name: "bg_output",
@@ -27,9 +28,13 @@ export const bgOutputTool: ToolDef = {
     const info = backgroundManager.read(String(args.id));
     if (!info) return Promise.resolve(`Error: no background process "${args.id}"`);
     const status = info.running ? "still running" : `exited with code ${info.exitCode}`;
-    return Promise.resolve(
-      `Process ${args.id} (${info.command}) — ${status}\n\n${truncateTail(info.output || "(no output yet)", 10_000)}`
-    );
+    const header = `Process ${args.id} (${info.command}) — ${status}`;
+    const { redacted, matches } = redactSecrets(`${header}\n\n${info.output || "(no output yet)"}`);
+    const note =
+      matches.length > 0
+        ? `[${matches.length} secret(s) redacted from output: ${matches.map((m) => m.kind).join(", ")}]\n`
+        : "";
+    return Promise.resolve(`${note}${truncateTail(redacted, 10_000)}`);
   },
 };
 
