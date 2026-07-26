@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildSandboxedCommand,
   sandboxAvailable,
+  sandboxPathVariants,
   sandboxSharedTmpDir,
   shouldSandbox,
 } from "../shell/sandbox.js";
@@ -365,6 +366,69 @@ test("the rest of /tmp stays isolated per invocation and hidden from the sandbox
   } finally {
     await fs.rm(stray, { force: true });
     await fs.rm(hostSecret, { force: true });
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("sandboxPathVariants covers both the symlinked and the real spelling of a path", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kritya-variants-")));
+  try {
+    // Mirrors macOS's /var -> /private/var: the path a caller hands us goes
+    // through a symlink, but the kernel (and sandbox-exec's `subpath` matcher)
+    // only ever sees the resolved spelling.
+    await fs.mkdir(path.join(base, "real", "deep"), { recursive: true });
+    await fs.symlink(path.join(base, "real"), path.join(base, "link"));
+
+    const existing = path.join(base, "link", "deep");
+    assert.deepEqual(
+      new Set(sandboxPathVariants(existing)),
+      new Set([existing, path.join(base, "real", "deep")])
+    );
+
+    // Not-yet-created paths matter too: ~/.ssh/known_hosts and per-run scratch
+    // dirs are named before they exist, and must still resolve.
+    const missing = path.join(base, "link", "deep", "not-there");
+    assert.deepEqual(
+      new Set(sandboxPathVariants(missing)),
+      new Set([missing, path.join(base, "real", "deep", "not-there")])
+    );
+
+    // A path with nothing to resolve stays a single entry.
+    assert.deepEqual(sandboxPathVariants(path.join(base, "real")), [path.join(base, "real")]);
+  } finally {
+    await fs.rm(base, { recursive: true, force: true });
+  }
+});
+
+test("the macOS profile allows the resolved spelling of every path it opens up", async (t) => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  // A workspace under os.tmpdir() is exactly the case CI hit: on macOS that is
+  // /var/folders/... whose real path is /private/var/folders/..., and the
+  // tmp-root deny rules are written against the resolved spelling.
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-profile-test-"));
+  const wrapped = buildSandboxedCommand("true", workspace);
+  if (!wrapped || wrapped.cmd !== "sandbox-exec") {
+    await fs.rm(workspace, { recursive: true, force: true });
+    t.skip("no sandbox-exec profile on this platform");
+    return;
+  }
+  try {
+    const profile = await fs.readFile(wrapped.args[wrapped.args.indexOf("-f") + 1], "utf8");
+    for (const p of sandboxPathVariants(workspace)) {
+      assert.ok(
+        profile.includes(`(allow file-write* (subpath "${p}"))`),
+        `profile must allow writes to ${p}`
+      );
+      assert.ok(
+        profile.includes(`(allow file-read* (subpath "${p}"))`),
+        `profile must allow reads from ${p}`
+      );
+    }
+  } finally {
+    wrapped.cleanup?.();
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });

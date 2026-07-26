@@ -217,6 +217,44 @@ function externalGitCommonDir(workspace: string): string | null {
 }
 
 /**
+ * `fs.realpathSync`, but tolerant of paths that don't exist yet: resolves the
+ * deepest existing ancestor and re-appends the missing tail. Needed because
+ * several paths the profile opens up are named before they exist (a per-run
+ * scratch dir, `~/.ssh/known_hosts`, cache dirs on a fresh machine).
+ */
+function realpathBestEffort(p: string): string {
+  const abs = path.resolve(p);
+  let cur = abs;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(cur), ...tail);
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return abs; // reached the root with nothing resolvable
+      tail.unshift(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * Every spelling of `p` a sandbox rule may need to name: the literal path and,
+ * when it differs, its symlink-resolved real path.
+ *
+ * This matters on macOS, where `sandbox-exec` matches `subpath` against the
+ * kernel-canonicalized path. `os.tmpdir()` there is `/var/folders/.../T`, whose
+ * real path is `/private/var/folders/.../T` — so a rule written against the
+ * `/var` spelling never matches anything. The tmp-root DENY rules already
+ * resolve, which means an allow rule that doesn't resolve loses to them and the
+ * path stays blocked. Exported for tests.
+ */
+export function sandboxPathVariants(p: string): string[] {
+  const abs = path.resolve(p);
+  return [...new Set([abs, realpathBestEffort(abs)])];
+}
+
+/**
  * Real filesystem locations that back "the system temp dir" on macOS: `/tmp`
  * (a symlink to `/private/tmp`), that resolved target, and `os.tmpdir()`
  * itself (usually `/private/var/folders/.../T`, but honors `$TMPDIR`).
@@ -224,15 +262,7 @@ function externalGitCommonDir(workspace: string): string | null {
  * whichever spelling a command actually uses.
  */
 function macTmpRoots(): string[] {
-  const roots = new Set<string>(["/tmp", "/private/tmp", os.tmpdir()]);
-  for (const r of [...roots]) {
-    try {
-      roots.add(fs.realpathSync(r));
-    } catch {
-      // Doesn't exist or isn't resolvable — the literal spelling is still denied.
-    }
-  }
-  return [...roots];
+  return [...new Set(["/tmp", "/private/tmp", os.tmpdir()].flatMap(sandboxPathVariants))];
 }
 
 function macSandboxProfile(
@@ -242,7 +272,18 @@ function macSandboxProfile(
   runDir: string
 ): string {
   const esc = (p: string) => p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const writeAllowDirs = [...extraWritablePaths(), ...extraDirs, workspace, runDir];
+  // Every allow rule is emitted for both the literal and the symlink-resolved
+  // spelling of its path — see `sandboxPathVariants`. Without that, a workspace
+  // under `os.tmpdir()` (i.e. `/var/folders/...`) is silently unwritable,
+  // because the tmp-root deny rules below resolve and these allows would not.
+  const variants = (paths: string[]) => [...new Set(paths.flatMap(sandboxPathVariants))];
+  const writeAllowDirs = variants([
+    ...extraWritablePaths(),
+    ...extraDirs,
+    ...(shared ? [shared] : []),
+    workspace,
+    runDir,
+  ]);
   const writeExtra = writeAllowDirs
     .map((p) => `(allow file-write* (subpath "${esc(p)}"))`)
     .join("\n");
@@ -252,7 +293,7 @@ function macSandboxProfile(
   // rules. Writes are denied everywhere except the workspace, the per-run
   // scratch dir, and a short explicit allowlist, so a command can't damage
   // anything outside the project.
-  const readAllowDirs = [workspace, runDir, ...extraDirs, ...(shared ? [shared] : [])];
+  const readAllowDirs = variants([workspace, runDir, ...extraDirs, ...(shared ? [shared] : [])]);
   const readExtra = readAllowDirs.map((p) => `(allow file-read* (subpath "${esc(p)}"))`).join("\n");
   // The world-writable /tmp (and its real path /private/tmp), plus the
   // per-user TMPDIR under /private/var/folders, are denied wholesale for both
@@ -266,16 +307,13 @@ function macSandboxProfile(
   const tmpDeny = macTmpRoots()
     .map((p) => `(deny file-read* (subpath "${esc(p)}"))\n(deny file-write* (subpath "${esc(p)}"))`)
     .join("\n");
-  const sharedRules = shared
-    ? `(allow file-write* (subpath "${esc(shared)}"))\n(allow file-write* (subpath "/private${esc(shared)}"))\n`
-    : "";
   return `(version 1)
 (allow default)
 (deny file-write* (subpath "/"))
 (allow file-write* (subpath "/dev"))
 ${tmpDeny}
 ${writeExtra}
-${sharedRules}${readExtra}
+${readExtra}
 `;
 }
 
