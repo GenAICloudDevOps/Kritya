@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import { test } from "node:test";
-import { buildSandboxedCommand, sandboxAvailable, shouldSandbox } from "../shell/sandbox.js";
+import {
+  buildSandboxedCommand,
+  sandboxAvailable,
+  sandboxSharedTmpDir,
+  shouldSandbox,
+} from "../shell/sandbox.js";
 import { shellTool } from "../tools/shell.js";
 import type { ToolContext } from "../types.js";
 
@@ -111,7 +116,7 @@ test("sandboxed command can write inside the workspace but is blocked outside it
   }
 });
 
-test("sandbox allows writes to XDG/ssh/gnupg config dirs outside the workspace", async (t) => {
+test("sandbox allows writes to the narrow XDG/ssh/gnupg paths outside the workspace", async (t) => {
   if (!sandboxAvailable() || os.platform() === "win32") {
     t.skip("no sandbox binary on this machine");
     return;
@@ -122,7 +127,8 @@ test("sandbox allows writes to XDG/ssh/gnupg config dirs outside the workspace",
   const ctx: ToolContext = { workspace, sandboxMode: "always" };
   const targets: string[] = [];
   try {
-    for (const dir of [".ssh", ".config", ".local", ".gnupg"]) {
+    // Directory allowances that survived the narrowing.
+    for (const dir of [path.join(".config", "gh"), path.join(".local", "share"), ".gnupg"]) {
       const d = path.join(os.homedir(), dir);
       await fs.mkdir(d, { recursive: true });
       const target = path.join(d, `kritya-sandbox-writable-${process.pid}-${Date.now()}.txt`);
@@ -131,8 +137,52 @@ test("sandbox allows writes to XDG/ssh/gnupg config dirs outside the workspace",
       assert.doesNotMatch(out, /sandbox unavailable/);
       assert.match(await fs.readFile(target, "utf8"), /ok/, `expected ~/${dir} to be writable`);
     }
+    // ~/.ssh/known_hosts is a *file* bind: appending to it must work, which is
+    // what a first connection to a new host does.
+    const sshDir = path.join(os.homedir(), ".ssh");
+    await fs.mkdir(sshDir, { recursive: true });
+    const knownHosts = path.join(sshDir, "known_hosts");
+    const before = await fs.readFile(knownHosts, "utf8").catch(() => null);
+    const marker = `# kritya-sandbox-test-${process.pid}-${Date.now()}`;
+    try {
+      const out = await shellTool.execute({ command: `echo '${marker}' >> "${knownHosts}"` }, ctx);
+      assert.doesNotMatch(out, /sandbox unavailable/);
+      assert.match(await fs.readFile(knownHosts, "utf8"), new RegExp(marker));
+    } finally {
+      if (before === null) await fs.rm(knownHosts, { force: true });
+      else await fs.writeFile(knownHosts, before, { mode: 0o600 });
+    }
   } finally {
     for (const t2 of targets) await fs.rm(t2, { force: true });
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("sandbox blocks the RCE-capable paths inside ~/.ssh, ~/.local and ~/.config", async (t) => {
+  if (!sandboxAvailable() || os.platform() === "win32") {
+    t.skip("no sandbox binary on this machine");
+    return;
+  }
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-sandbox-test-"));
+  const ctx: ToolContext = { workspace, sandboxMode: "always" };
+  // Each of these is arbitrary code execution outside the sandbox if writable:
+  // an ssh ProxyCommand, a PATH-shadowing binary, a `!sh -c ...` git alias.
+  const blocked = [
+    path.join(os.homedir(), ".ssh", `kritya-blocked-config-${process.pid}`),
+    path.join(os.homedir(), ".local", "bin", `kritya-blocked-bin-${process.pid}`),
+    path.join(os.homedir(), ".config", "git", `kritya-blocked-config-${process.pid}`),
+    path.join(os.homedir(), ".local", "state", `kritya-blocked-state-${process.pid}`),
+  ];
+  try {
+    for (const target of blocked) {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await shellTool.execute({ command: `echo bad > "${target}"` }, ctx);
+      await assert.rejects(fs.access(target), `expected ${target} to be unwritable in the sandbox`);
+    }
+  } finally {
+    for (const b of blocked) await fs.rm(b, { force: true });
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });
@@ -145,8 +195,8 @@ test("sandboxed git commit works inside a linked worktree (git dir lives outside
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
   const { execFileSync } = await import("node:child_process");
-  // Deliberately NOT under /tmp: /tmp is bound read-write in the sandbox, so a
-  // repo there would have a writable git dir regardless of the worktree bind.
+  // Deliberately NOT under /tmp: the sandbox replaces /tmp with a tmpfs, so a
+  // repo there would be invisible rather than exercising the worktree bind.
   const root = await fs.mkdtemp(path.join(os.homedir(), "kritya-wt-test-"));
   const main = path.join(root, "main");
   await fs.mkdir(main);
@@ -209,7 +259,7 @@ test("a plain (non-worktree) repo gets no redundant extra bind for its git dir",
   }
 });
 
-test("sandboxed /tmp is shared across invocations, not a fresh tmpfs", async (t) => {
+test("the dedicated shared temp dir persists across sandboxed invocations", async (t) => {
   if (!sandboxAvailable() || os.platform() === "win32") {
     t.skip("no sandbox binary on this machine");
     return;
@@ -217,16 +267,51 @@ test("sandboxed /tmp is shared across invocations, not a fresh tmpfs", async (t)
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-tmpshare-test-"));
-  const marker = `/tmp/kritya-tmpshare-${process.pid}-${Date.now()}.txt`;
+  const marker = path.join(
+    sandboxSharedTmpDir(),
+    `kritya-tmpshare-${process.pid}-${Date.now()}.txt`
+  );
   const ctx: ToolContext = { workspace, sandboxMode: "always" };
   try {
     await shellTool.execute({ command: `echo persisted > ${marker}` }, ctx);
     const second = await shellTool.execute({ command: `cat ${marker}` }, ctx);
     assert.match(second, /persisted/);
-    // And it's the host's real /tmp, visible to this process too.
+    // And it's the host's real directory, visible to this process too.
     assert.match(await fs.readFile(marker, "utf8"), /persisted/);
   } finally {
     await fs.rm(marker, { force: true });
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("the rest of /tmp stays isolated per invocation and hidden from the sandbox", async (t) => {
+  if (!sandboxAvailable() || os.platform() === "win32") {
+    t.skip("no sandbox binary on this machine");
+    return;
+  }
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-tmpiso-test-"));
+  const ctx: ToolContext = { workspace, sandboxMode: "always" };
+  // NOT inside the shared dir: this is the regression test for binding all of
+  // the real /tmp read-write.
+  const stray = `/tmp/kritya-tmpiso-${process.pid}-${Date.now()}.txt`;
+  // Stand-in for another agent's worktree under os.tmpdir()/kritya-worktrees.
+  const hostSecret = path.join(os.tmpdir(), `kritya-tmpiso-host-${process.pid}-${Date.now()}.txt`);
+  await fs.writeFile(hostSecret, "host-only\n");
+  try {
+    await shellTool.execute({ command: `echo leaked > ${stray}` }, ctx);
+    // It never reached the host's /tmp...
+    await assert.rejects(fs.access(stray), "stray /tmp write escaped the tmpfs");
+    // ...and it isn't visible to the next sandboxed invocation either.
+    const second = await shellTool.execute({ command: `cat ${stray} 2>&1 || true` }, ctx);
+    assert.doesNotMatch(second, /leaked/);
+    // A pre-existing host file under the real temp dir is invisible too.
+    const third = await shellTool.execute({ command: `cat ${hostSecret} 2>&1 || true` }, ctx);
+    assert.doesNotMatch(third, /host-only/);
+  } finally {
+    await fs.rm(stray, { force: true });
+    await fs.rm(hostSecret, { force: true });
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });

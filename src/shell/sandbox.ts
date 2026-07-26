@@ -83,12 +83,24 @@ function extraWritablePaths(): string[] {
       ".cargo",
       ".rustup",
       ".gem",
-      // ~/.ssh: git push/clone over SSH writes known_hosts the first time a host
-      // is seen. ~/.config and ~/.local: XDG dirs used by gh, pip --user, etc.
-      // ~/.gnupg: GPG-signed commits need to write to the agent socket dir.
-      ".ssh",
-      ".config",
-      ".local",
+      // Deliberately NARROW entries, not whole dotfile directories: a writable
+      // ~/.ssh lets a command plant a `ProxyCommand` in ~/.ssh/config, a
+      // writable ~/.config lets it plant a `!sh -c ...` git alias in
+      // ~/.config/git/config, and a writable ~/.local lets it shadow a real
+      // binary via ~/.local/bin — each of which is arbitrary code execution
+      // outside the sandbox on the next unrelated command.
+      //
+      // known_hosts (a *file*): git push/clone over SSH appends to it the
+      // first time a host is seen. ~/.config/gh: the GitHub CLI's config.
+      // ~/.local/share: the XDG data dir (pip --user site tracking, etc.).
+      path.join(".ssh", "known_hosts"),
+      path.join(".config", "gh"),
+      path.join(".local", "share"),
+      // ~/.gnupg stays whole: GPG-signed commits need to write the agent
+      // socket (S.gpg-agent), trustdb.gpg and pubring.kbx, which sit directly
+      // in that directory, so there's no single safe subpath to narrow to.
+      // Unlike .ssh/.config/.local it holds no "run this command" config that
+      // another tool executes, and GPG keeps it 0700 itself.
       ".gnupg",
     ]
       .map((d) => path.join(home, d))
@@ -96,6 +108,37 @@ function extraWritablePaths(): string[] {
       // don't exist, and the macOS profile tolerates nonexistent subpaths.
       .concat([path.join(home, "Library", "Caches")])
   );
+}
+
+/**
+ * The one directory under the real system temp dir that sandboxed commands can
+ * write to and see again on the next invocation. The rest of /tmp is a fresh
+ * per-invocation tmpfs, so a sandboxed command can't reach other agents'
+ * isolated worktrees (`os.tmpdir()/kritya-worktrees`) or hardlink a host file
+ * into /tmp and write through the link to dodge the read-only bind.
+ */
+export function sandboxSharedTmpDir(): string {
+  return path.join(os.tmpdir(), "kritya-sandbox-shared");
+}
+
+/**
+ * bwrap can only bind paths that already exist, and `~/.ssh/known_hosts` is a
+ * *file* that doesn't exist until the first SSH connection — so without this,
+ * a first-time `git clone git@host:...` inside the sandbox could never create
+ * it. Seeding an empty 0600 file (only when ~/.ssh already exists, so we never
+ * create the directory ourselves) keeps first-use SSH working without falling
+ * back to binding the whole ~/.ssh directory.
+ */
+function seedSshKnownHosts(): void {
+  try {
+    const sshDir = path.join(os.homedir(), ".ssh");
+    if (!fs.existsSync(sshDir)) return;
+    const knownHosts = path.join(sshDir, "known_hosts");
+    if (!fs.existsSync(knownHosts)) fs.writeFileSync(knownHosts, "", { mode: 0o600 });
+  } catch {
+    // Best effort: if we can't seed it, the bind is skipped and SSH to a new
+    // host fails with a clear error instead of silently escaping the sandbox.
+  }
 }
 
 /**
@@ -137,12 +180,19 @@ function macSandboxProfile(workspace: string, extraDirs: string[]): string {
   // Reads and process exec/fork stay open (matches the Linux ro-bind-everything
   // posture below); writes are denied everywhere except the workspace and
   // system temp dirs, so a command can't damage anything outside the project.
+  //
+  // The world-writable /tmp (and its real path /private/tmp) is narrowed to the
+  // same dedicated shared subdir the Linux branch binds, mirroring the tmpfs
+  // isolation there. The per-user TMPDIR under /private/var/folders stays open:
+  // it's 0700 to the user and effectively every macOS tool writes there, so
+  // closing it would break ordinary commands.
+  const shared = sandboxSharedTmpDir();
   return `(version 1)
 (allow default)
 (deny file-write* (subpath "/"))
 (allow file-write* (subpath "${esc(workspace)}"))
-(allow file-write* (subpath "/tmp"))
-(allow file-write* (subpath "/private/tmp"))
+(allow file-write* (subpath "${esc(shared)}"))
+(allow file-write* (subpath "/private${esc(shared)}"))
 (allow file-write* (subpath "/private/var/folders"))
 ${extra}
 `;
@@ -163,24 +213,23 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
 
   // Linked worktrees / submodules keep their real git dir outside the workspace.
   const gitDir = externalGitCommonDir(workspace);
+  const shared = sandboxSharedTmpDir();
+  try {
+    fs.mkdirSync(shared, { recursive: true });
+  } catch {
+    // If it can't be created the bind below is skipped; the sandbox still
+    // runs, just without cross-invocation scratch space.
+  }
 
   if (tool === "bwrap") {
-    // --bind (not --tmpfs) for /tmp: a fresh empty /tmp per invocation would
-    // make anything a command writes there invisible to the next shell call,
-    // and macOS's profile already allows the real /tmp. Keep them consistent.
-    const args = [
-      "--ro-bind",
-      "/",
-      "/",
-      "--dev",
-      "/dev",
-      "--proc",
-      "/proc",
-      "--bind",
-      "/tmp",
-      "/tmp",
-    ];
-    for (const p of [...extraWritablePaths(), ...(gitDir ? [gitDir] : [])]) {
+    // /tmp is a fresh per-invocation tmpfs, EXCEPT for one dedicated shared
+    // subdirectory bound read-write over it. That keeps the "scratch state
+    // persists across sandboxed calls in a session" behavior without exposing
+    // the host's real /tmp — which holds other agents' isolated worktrees and
+    // is the easiest place to hardlink a host file and write through the link.
+    const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"];
+    seedSshKnownHosts();
+    for (const p of [...extraWritablePaths(), shared, ...(gitDir ? [gitDir] : [])]) {
       if (fs.existsSync(p)) args.push("--bind", p, p);
     }
     args.push(
