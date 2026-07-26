@@ -1,10 +1,13 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  # Paused while we're testing the Electron/build.yml pipeline to conserve
+  # Actions minutes. Uncomment to re-enable automatic CI on push/PR.
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

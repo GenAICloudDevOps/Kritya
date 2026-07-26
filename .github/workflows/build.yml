@@ -3,7 +3,11 @@ name: Build Desktop App
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Windows only for now — macOS/Linux legs are commented in, ready to
 # uncomment once we're ready to ship those installers too. The app code
