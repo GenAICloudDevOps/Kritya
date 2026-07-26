@@ -9,17 +9,19 @@ import { matchesRule, type PermissionRules } from "./rules.js";
  */
 /**
  * Key under which an "always allow" decision is recorded for a tool call.
- * For `shell`, this is scoped to the command's first word (e.g. "git") so
- * that approving one command doesn't silently pre-approve every future shell
- * command for the rest of the session — only future commands starting with
- * the same program name.
+ * For `shell`, this is scoped to the *exact* command string, so approving
+ * one invocation (e.g. `python train.py`) only pre-approves that same
+ * invocation again — not every future command starting with the same
+ * program (`python -c "..."`, `python other_script.py`). Interpreters and
+ * other general-purpose runners make a first-word-only key unsafe: the
+ * first word tells you almost nothing about what the full command does.
+ * Users who want broader pre-approval on purpose can still write a wildcard
+ * rule (e.g. `shell(git *)`) into settings.json — see rules.ts.
  */
 function alwaysAllowKey(toolName: string, args: Record<string, unknown>): string {
   if (toolName !== "shell") return toolName;
-  const firstWord = String(args.command ?? "")
-    .trim()
-    .split(/\s+/)[0];
-  return firstWord ? `shell:${firstWord}` : "shell";
+  const command = String(args.command ?? "").trim();
+  return command ? `shell:${command}` : "shell";
 }
 
 export class PermissionManager {

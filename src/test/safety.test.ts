@@ -63,3 +63,17 @@ test("path patterns match file tools", () => {
   assert.equal(matchesRule("edit_file(*secret*)", "edit_file", { path: "config/app.ts" }), false);
   assert.equal(matchesRule("shell(git *)", "shell", { command: "git status" }), true);
 });
+
+test("always-allow for shell is scoped to the exact command, not just the program name", () => {
+  const pm = new PermissionManager([]);
+  const tool = ALL_TOOLS.find((t) => t.name === "shell")!;
+
+  const trainArgs = { command: "python train.py" };
+  const evilArgs = { command: "python -c \"import os; os.remove('x')\"" };
+
+  assert.equal(pm.needsPrompt(tool, trainArgs), true);
+  pm.record("shell", "always", trainArgs);
+  assert.equal(pm.needsPrompt(tool, trainArgs), false);
+  // A different command starting with the same program must still prompt.
+  assert.equal(pm.needsPrompt(tool, evilArgs), true);
+});
