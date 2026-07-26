@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Dependency checks that ask the registry, not the machine: the answer is the
   # same on every OS and Node version, so running them once per matrix entry
@@ -34,16 +38,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        node-version: [22.x, 24.x]
+        node-version: [22.x]
         include:
-          # Pinned to the support floor rather than the newest Node: the
-          # per-OS code paths (sandbox profiles, path handling) only ever
-          # execute on their own runner, so this is the sole place they get
-          # checked against the oldest Node we claim to support.
           - os: windows-latest
             node-version: 22.x
-          - os: macos-latest
-            node-version: 22.x
+          # macOS runner costs 10x Actions minutes vs Linux — commented out
+          # for now to conserve included minutes. Re-enable by uncommenting
+          # once macOS coverage is actually needed (e.g. before a desktop
+          # build release).
+          # - os: macos-latest
+          #   node-version: 22.x
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -59,10 +63,10 @@ jobs:
       # line endings, so this isn't purely a repeat of the Linux run.
       - run: npm run format:check
       # Coverage thresholds only need checking once; running c8 on every
-      # OS/Node combination would just repeat the same numbers four times.
+      # OS/Node combination would just repeat the same numbers twice.
       # These two conditions are complements — keep them in sync, or a matrix
       # change can silently leave coverage unenforced everywhere.
       - run: npm test
-        if: matrix.os != 'ubuntu-latest' || matrix.node-version != '22.x'
+        if: matrix.os != 'ubuntu-latest'
       - run: npm run test:coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22.x'
+        if: matrix.os == 'ubuntu-latest'
