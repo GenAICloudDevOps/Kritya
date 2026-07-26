@@ -9,6 +9,7 @@ import {
 } from "../shell/sandbox.js";
 import type { ToolDef } from "../types.js";
 import { truncateTail } from "./common.js";
+import { redactSecrets } from "./secretScan.js";
 
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_TIMEOUT_S = 600;
@@ -106,7 +107,13 @@ export const shellTool: ToolDef = {
           parts.push(`[exit code: ${error.code ?? "unknown"}]`);
         }
       }
-      resolve(truncateTail(parts.join("\n") || "(no output)"));
+      const joined = parts.join("\n") || "(no output)";
+      const { redacted, matches } = redactSecrets(joined);
+      const withNote =
+        matches.length > 0
+          ? `[${matches.length} secret(s) redacted from output: ${matches.map((m) => m.kind).join(", ")}]\n${redacted}`
+          : redacted;
+      resolve(truncateTail(withNote));
     };
 
     return new Promise((resolve) => {

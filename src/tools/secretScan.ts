@@ -125,6 +125,33 @@ export function scanForSecrets(content: string): SecretMatch[] {
   return matches;
 }
 
+/**
+ * Scans `content` the same way `scanForSecrets` does, but instead of
+ * blocking, replaces each matched secret with a `[REDACTED: <kind>]`
+ * placeholder. Used for shell output, which — unlike a file write — has
+ * already happened by the time we see it; redacting the display is the
+ * only lever left, so masking rather than throwing is the right shape here.
+ */
+export function redactSecrets(content: string): { redacted: string; matches: SecretMatch[] } {
+  const matches = scanForSecrets(content);
+  if (matches.length === 0) return { redacted: content, matches };
+
+  let redacted = content;
+  for (const { kind, re } of NAMED_PATTERNS) {
+    redacted = redacted.replace(re, () => `[REDACTED: ${kind}]`);
+  }
+  redacted = redacted.replace(ASSIGNMENT_RE, (full, _label, value) => {
+    if (looksLikePlaceholder(value) || shannonEntropy(value) < MIN_ENTROPY) return full;
+    // `full` is `key<sep><quote?>value<quote?>` — replace just the value
+    // substring so the key (useful context) stays visible. `value` is at
+    // least 16 chars, so a spurious earlier occurrence inside the key/label
+    // portion of `full` is not a realistic concern.
+    return full.replace(value, "[REDACTED]");
+  });
+
+  return { redacted, matches };
+}
+
 export function formatSecretWarning(matches: SecretMatch[], path: string): string {
   const lines = matches.map((m) => `  - ${m.kind}: ${m.snippet}`);
   return (

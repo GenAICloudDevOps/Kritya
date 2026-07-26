@@ -110,3 +110,10 @@ test("sandboxed command can write inside the workspace but is blocked outside it
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });
+
+test("shell tool redacts secrets from command output", async () => {
+  const ctx: ToolContext = { workspace: os.tmpdir(), sandboxMode: "off" };
+  const out = await shellTool.execute({ command: "echo AKIAABCDEFGHIJKLMNOP" }, ctx);
+  assert.doesNotMatch(out, /AKIAABCDEFGHIJKLMNOP/);
+  assert.match(out, /secret\(s\) redacted/);
+});

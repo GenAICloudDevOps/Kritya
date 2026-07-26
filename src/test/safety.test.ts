@@ -4,6 +4,7 @@ import { classifyDanger } from "../permissions/danger.js";
 import { PermissionManager } from "../permissions/permissions.js";
 import { matchesRule } from "../permissions/rules.js";
 import { ALL_TOOLS } from "../tools/index.js";
+import { redactSecrets } from "../tools/secretScan.js";
 
 test("classifyDanger flags destructive commands", () => {
   assert.ok(classifyDanger("rm -rf /tmp/x"));
@@ -76,4 +77,20 @@ test("always-allow for shell is scoped to the exact command, not just the progra
   assert.equal(pm.needsPrompt(tool, trainArgs), false);
   // A different command starting with the same program must still prompt.
   assert.equal(pm.needsPrompt(tool, evilArgs), true);
+});
+
+test("redactSecrets masks known secret formats in text and reports what was found", () => {
+  const { redacted, matches } = redactSecrets(
+    "here is a key: AKIAABCDEFGHIJKLMNOP and more text after it"
+  );
+  assert.doesNotMatch(redacted, /AKIAABCDEFGHIJKLMNOP/);
+  assert.match(redacted, /\[REDACTED: AWS Access Key ID\]/);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].kind, "AWS Access Key ID");
+});
+
+test("redactSecrets leaves ordinary output untouched", () => {
+  const { redacted, matches } = redactSecrets("total 12\ndrwxr-xr-x 2 user user 4096 file.txt");
+  assert.equal(redacted, "total 12\ndrwxr-xr-x 2 user user 4096 file.txt");
+  assert.equal(matches.length, 0);
 });
