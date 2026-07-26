@@ -280,6 +280,29 @@ test("runTurn blocks a mutating tool in plan mode without executing it, then con
   assert.equal(log.texts.at(-1), "Understood, staying read-only.");
 });
 
+test("runTurn blocks a mutating tool in dry-run mode independently of plan mode", async () => {
+  const writeTool = fakeTool("write_file", { requiresPermission: true });
+
+  const { client } = scriptedClient([
+    toolRound([{ id: "call_1", name: "write_file", argsJson: '{"path":"a.ts"}' }]),
+    textRound("Understood, staying read-only."),
+  ]);
+
+  const agent = makeAgent(client, [writeTool]);
+  agent.dryRunMode = true;
+  agent.planMode = false; // explicitly NOT the workflow flag
+  const log = makeHandlers("yes");
+
+  await agent.runTurn("update a.ts", log.handlers);
+
+  assert.equal(writeTool.calls.length, 0, "tool never executed in dry-run mode");
+  const blockedEnd = log.toolEnds.find((e) => e.name === "write_file");
+  assert.ok(blockedEnd?.isError, "blocked call is reported as an error to the UI");
+  const toolMsg = agent.history.find((m) => m.role === "tool") as { content: string };
+  assert.match(String(toolMsg.content), /dry-run mode/i);
+  assert.equal(log.texts.at(-1), "Understood, staying read-only.");
+});
+
 test("runTurn feeds a user permission denial back to the model instead of executing the tool", async () => {
   const writeTool = fakeTool("write_file", { requiresPermission: true });
 

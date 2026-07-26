@@ -26,11 +26,16 @@ const MEMORY_MAX_CHARS = 4000;
  * Keep it that way: adding anything volatile (dates, git output, listings)
  * above the memory section throws away the cached prefix on every turn.
  */
-export function buildSystemPrompt(workspace: string, planMode = false): string {
+export function buildSystemPrompt(workspace: string, planMode = false, dryRunMode = false): string {
   const planSection = planMode
     ? "\n# PLAN MODE (read-only)\nYou are in plan mode. Do NOT write, edit, or run shell commands — those are blocked. " +
       "Investigate with read-only tools and present a concrete, step-by-step plan for the user to approve. " +
       "The user will turn off plan mode when they want you to execute.\n"
+    : "";
+  const dryRunSection = dryRunMode
+    ? "\n# DRY-RUN MODE (read-only)\nYou are in dry-run mode. Do NOT write, edit, or run shell commands — those are blocked. " +
+      "Investigate with read-only tools and present a concrete, step-by-step plan for the user to approve. " +
+      "The user will turn off dry-run mode when they want you to execute.\n"
     : "";
   const gitSection = () => {
     const status = gitStatusShort(workspace);
@@ -112,5 +117,5 @@ ${memory}
 
 # Workspace top-level contents
 ${listing || "(empty)"}
-${gitSection()}${workflowSection()}${planSection}`;
+${gitSection()}${workflowSection()}${planSection}${dryRunSection}`;
 }

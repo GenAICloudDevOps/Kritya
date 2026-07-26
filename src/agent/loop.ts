@@ -97,6 +97,13 @@ export class Agent {
   toolTimeoutMs = DEFAULT_TOOL_TIMEOUT_MS;
   /** When true, mutating tools are auto-denied (plan / read-only mode). */
   planMode = false;
+  /**
+   * When true, mutating tools are auto-denied — the manual Shift+Tab
+   * read-only toggle. Independent of `planMode`, which the project
+   * workflow's own PLAN phase owns; the two are separate gates that can be
+   * on at the same time, each blocking on its own.
+   */
+  dryRunMode = false;
   /** When true, file-edit tools auto-approve without prompting (see ACCEPT_EDITS_TOOL_NAMES). */
   acceptEdits = false;
   /** Fires each time a tool call is auto-approved because of acceptEdits, for a UI counter. */
@@ -461,7 +468,7 @@ export class Agent {
 
     const systemMsg: ChatMessage = {
       role: "system",
-      content: buildSystemPrompt(this.ctx.workspace, this.planMode),
+      content: buildSystemPrompt(this.ctx.workspace, this.planMode, this.dryRunMode),
     };
 
     const turnSpan = this.tracer.startSpan("agent.turn", {
@@ -799,6 +806,18 @@ export class Agent {
         "In an active project workflow, writing Markdown under that project's docs/<name>/ " +
         "folder is allowed; everything else — other docs, application code, shell — is not. " +
         "Do not attempt other writes or shell commands until plan mode is turned off."
+      );
+    }
+
+    if (this.dryRunMode && tool.requiresPermission) {
+      this.audit?.logPermission({ tool: name, summary, verdict: "denied", source: "dry-run-mode" });
+      logToolOutcome("blocked");
+      finishSpan("ERROR", "blocked: dry-run mode");
+      handlers.onToolEnd(id, name, summary, "blocked: dry-run mode (read-only)", true);
+      return (
+        "Dry-run mode is ON (read-only). This mutating action was blocked. " +
+        "Keep exploring with read-only tools and present a concrete plan to the user. " +
+        "Do not attempt writes or shell commands until dry-run mode is turned off."
       );
     }
 
