@@ -40,7 +40,10 @@ class BackgroundManager {
     if (shouldSandbox(sandboxMode, command)) {
       const wrapped = buildSandboxedCommand(command, cwd);
       if (wrapped) {
-        proc = spawn(wrapped.cmd, wrapped.args, spawnOpts);
+        const opts = wrapped.env
+          ? { ...spawnOpts, env: { ...spawnOpts.env, ...wrapped.env } }
+          : spawnOpts;
+        proc = spawn(wrapped.cmd, wrapped.args, opts);
         cleanup = wrapped.cleanup;
       } else {
         // Sandboxing was requested but no sandbox binary is available here —

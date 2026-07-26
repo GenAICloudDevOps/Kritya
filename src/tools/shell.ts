@@ -123,7 +123,10 @@ export const shellTool: ToolDef = {
       if (shouldSandbox(ctx.sandboxMode, command)) {
         const wrapped = buildSandboxedCommand(command, ctx.workspace);
         if (wrapped) {
-          execFile(wrapped.cmd, wrapped.args, runOpts, (error, stdout, stderr) => {
+          const opts = wrapped.env
+            ? { ...runOpts, env: { ...runOpts.env, ...wrapped.env } }
+            : runOpts;
+          execFile(wrapped.cmd, wrapped.args, opts, (error, stdout, stderr) => {
             wrapped.cleanup?.();
             finish(resolve, error, stdout, stderr);
           });

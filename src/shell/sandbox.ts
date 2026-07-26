@@ -9,7 +9,9 @@ export type SandboxMode = "auto" | "always" | "off";
 export interface SandboxedCommand {
   cmd: string;
   args: string[];
-  /** Removes any temp file (e.g. a macOS sandbox profile) created for this run. */
+  /** Env vars to overlay on top of the caller's env for this run only (e.g. a redirected TMPDIR). */
+  env?: Record<string, string>;
+  /** Removes any temp file/dir (e.g. a macOS sandbox profile, a per-run scratch dir) created for this run. */
   cleanup?: () => void;
 }
 
@@ -214,42 +216,78 @@ function externalGitCommonDir(workspace: string): string | null {
   }
 }
 
-function macSandboxProfile(workspace: string, extraDirs: string[], shared: string | null): string {
+/**
+ * Real filesystem locations that back "the system temp dir" on macOS: `/tmp`
+ * (a symlink to `/private/tmp`), that resolved target, and `os.tmpdir()`
+ * itself (usually `/private/var/folders/.../T`, but honors `$TMPDIR`).
+ * Deduped and resolved through symlinks so the profile's deny rules cover
+ * whichever spelling a command actually uses.
+ */
+function macTmpRoots(): string[] {
+  const roots = new Set<string>(["/tmp", "/private/tmp", os.tmpdir()]);
+  for (const r of [...roots]) {
+    try {
+      roots.add(fs.realpathSync(r));
+    } catch {
+      // Doesn't exist or isn't resolvable — the literal spelling is still denied.
+    }
+  }
+  return [...roots];
+}
+
+function macSandboxProfile(
+  workspace: string,
+  extraDirs: string[],
+  shared: string | null,
+  runDir: string
+): string {
   const esc = (p: string) => p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const extra = [...extraWritablePaths(), ...extraDirs]
+  const writeAllowDirs = [...extraWritablePaths(), ...extraDirs, workspace, runDir];
+  const writeExtra = writeAllowDirs
     .map((p) => `(allow file-write* (subpath "${esc(p)}"))`)
     .join("\n");
-  // Reads and process exec/fork stay open (matches the Linux ro-bind-everything
-  // posture below); writes are denied everywhere except the workspace and
-  // system temp dirs, so a command can't damage anything outside the project.
-  //
-  // The world-writable /tmp (and its real path /private/tmp) is narrowed to the
-  // same dedicated shared subdir the Linux branch binds, mirroring the tmpfs
-  // isolation there — but only when `shared` passed validation (see
-  // `safeSandboxSharedTmpDir`); otherwise it's omitted entirely rather than
-  // trusting an unvalidated path. The per-user TMPDIR under
-  // /private/var/folders stays open: it's 0700 to the user and effectively
-  // every macOS tool writes there, so closing it would break ordinary
-  // commands.
+  // Reads and process exec/fork stay open by default (matches the Linux
+  // ro-bind-everything posture below) EXCEPT under the real temp-dir roots,
+  // which are denied and then selectively re-opened below — see the tmp-root
+  // rules. Writes are denied everywhere except the workspace, the per-run
+  // scratch dir, and a short explicit allowlist, so a command can't damage
+  // anything outside the project.
+  const readAllowDirs = [workspace, runDir, ...extraDirs, ...(shared ? [shared] : [])];
+  const readExtra = readAllowDirs.map((p) => `(allow file-read* (subpath "${esc(p)}"))`).join("\n");
+  // The world-writable /tmp (and its real path /private/tmp), plus the
+  // per-user TMPDIR under /private/var/folders, are denied wholesale for both
+  // reads and writes — hiding any other process's files there, the same
+  // isolation the Linux branch gets for free from a fresh per-invocation
+  // tmpfs — then selectively reopened just above for the workspace, the
+  // shared persistent dir (only when `shared` passed validation; see
+  // `safeSandboxSharedTmpDir`), and `runDir`, a fresh directory created for
+  // this invocation alone and exposed to the command via $TMPDIR so ordinary
+  // scratch-file use keeps working without reaching the real host temp dirs.
+  const tmpDeny = macTmpRoots()
+    .map((p) => `(deny file-read* (subpath "${esc(p)}"))\n(deny file-write* (subpath "${esc(p)}"))`)
+    .join("\n");
   const sharedRules = shared
     ? `(allow file-write* (subpath "${esc(shared)}"))\n(allow file-write* (subpath "/private${esc(shared)}"))\n`
     : "";
   return `(version 1)
 (allow default)
 (deny file-write* (subpath "/"))
-(allow file-write* (subpath "${esc(workspace)}"))
-${sharedRules}(allow file-write* (subpath "/private/var/folders"))
-${extra}
+(allow file-write* (subpath "/dev"))
+${tmpDeny}
+${writeExtra}
+${sharedRules}${readExtra}
 `;
 }
 
 /**
  * Wraps `command` (run via `sh -c`) so it's confined to `workspace`: writes
- * are blocked everywhere else, network and reads are left open. This
- * contains accidental or malicious damage outside the project — it does not
- * stop a command from reading files the real user can read (e.g. `cat
- * ~/.ssh/id_rsa`), since restricting reads breaks most ordinary tooling
- * (dynamic linking, package manager caches, etc.). Returns null if no
+ * are blocked everywhere else, network and (outside the real temp-dir roots)
+ * reads are left open. This contains accidental or malicious damage outside
+ * the project — it does not stop a command from reading files the real user
+ * can read (e.g. `cat ~/.ssh/id_rsa`), since restricting reads generally
+ * breaks most ordinary tooling (dynamic linking, package manager caches,
+ * etc.); the temp-dir roots are the one exception, hidden to keep one
+ * sandboxed command from reading another's scratch files. Returns null if no
  * sandbox binary is available on this platform.
  */
 export function buildSandboxedCommand(command: string, workspace: string): SandboxedCommand | null {
@@ -294,10 +332,28 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
 
   // sandbox-exec (macOS) takes its policy as a profile file, not inline args.
   const profilePath = path.join(os.tmpdir(), `kritya-sandbox-${process.pid}-${Date.now()}.sb`);
-  fs.writeFileSync(profilePath, macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared));
+  // A fresh, uniquely-named scratch dir for this invocation alone — exposed
+  // to the command via $TMPDIR so ordinary tools that write scratch files
+  // keep working even though the rest of the real temp dirs are now hidden
+  // (see macSandboxProfile). Read by sandbox-exec's own profile loader before
+  // confinement takes effect, so it isn't subject to the tmp-root read-deny
+  // it's about to create.
+  const runDir = path.join(
+    os.tmpdir(),
+    `kritya-sandbox-run-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
+  fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    profilePath,
+    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir)
+  );
   return {
     cmd: "sandbox-exec",
     args: ["-f", profilePath, "sh", "-c", command],
-    cleanup: () => fs.rm(profilePath, { force: true }, () => {}),
+    env: { TMPDIR: runDir, TMP: runDir, TEMP: runDir },
+    cleanup: () => {
+      fs.rm(profilePath, { force: true }, () => {});
+      fs.rm(runDir, { recursive: true, force: true }, () => {});
+    },
   };
 }
