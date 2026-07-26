@@ -110,3 +110,35 @@ test("bg_output redacts secrets from a background process's captured output", as
     backgroundManager.kill(id);
   }
 });
+
+test("bg_output keeps the status header even when the output is truncated", async () => {
+  // Far more than truncateTail's 10k budget, so a header folded into the
+  // truncated string would be cut away along with the head of the output.
+  const { id } = backgroundManager.start(
+    `node -e "console.log('x'.repeat(40000)); setInterval(() => {}, 1000)"`,
+    os.tmpdir()
+  );
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    const out = await bgOutputTool.execute({ id }, ctx);
+    assert.match(out, new RegExp(`^Process ${id} \\(.*\\) — still running`, "m"));
+    assert.ok(out.includes("truncated") || out.length < 40000);
+  } finally {
+    backgroundManager.kill(id);
+  }
+});
+
+test("bg_output redacts secrets from the command in both the listing and the header", async () => {
+  const { id } = backgroundManager.start(
+    `node -e "setInterval(() => {}, 1000)" # AKIAABCDEFGHIJKLMNOP`,
+    os.tmpdir()
+  );
+  try {
+    const listed = await bgOutputTool.execute({}, ctx);
+    assert.doesNotMatch(listed, /AKIAABCDEFGHIJKLMNOP/);
+    const single = await bgOutputTool.execute({ id }, ctx);
+    assert.doesNotMatch(single, /AKIAABCDEFGHIJKLMNOP/);
+  } finally {
+    backgroundManager.kill(id);
+  }
+});

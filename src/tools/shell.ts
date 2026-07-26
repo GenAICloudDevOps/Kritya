@@ -67,8 +67,11 @@ export const shellTool: ToolDef = {
 
     if (args.background) {
       const { id } = backgroundManager.start(command, ctx.workspace, ctx.sandboxMode);
+      // Echoing the command back can leak a credential embedded in it (e.g. a
+      // curl Authorization header), so redact it here just like bg_output does.
+      const { redacted } = redactSecrets(command);
       return Promise.resolve(
-        `Started background process ${id}: ${command}\nUse bg_output {"id":"${id}"} to read its output and bg_kill {"id":"${id}"} to stop it.`
+        `Started background process ${id}: ${redacted}\nUse bg_output {"id":"${id}"} to read its output and bg_kill {"id":"${id}"} to stop it.`
       );
     }
 

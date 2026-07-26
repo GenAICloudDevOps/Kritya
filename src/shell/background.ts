@@ -77,6 +77,10 @@ class BackgroundManager {
     proc.on("error", (err) => {
       entry.running = false;
       entry.buffer += `\n[failed to start: ${err.message}]`;
+      // If the sandbox binary itself fails to spawn, "exit" may never fire, so
+      // the macOS temp profile would leak. cleanup is fs.rm({force:true}),
+      // which is idempotent, so running it from both handlers is safe.
+      cleanup?.();
     });
 
     this.procs.set(id, entry);

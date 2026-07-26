@@ -75,12 +75,63 @@ export function shouldSandbox(mode: SandboxMode | undefined, command: string): b
  */
 function extraWritablePaths(): string[] {
   const home = os.homedir();
-  return [".npm", ".cache", ".cargo", ".rustup", ".gem"].map((d) => path.join(home, d));
+  return (
+    [
+      // Package-manager / toolchain caches.
+      ".npm",
+      ".cache",
+      ".cargo",
+      ".rustup",
+      ".gem",
+      // ~/.ssh: git push/clone over SSH writes known_hosts the first time a host
+      // is seen. ~/.config and ~/.local: XDG dirs used by gh, pip --user, etc.
+      // ~/.gnupg: GPG-signed commits need to write to the agent socket dir.
+      ".ssh",
+      ".config",
+      ".local",
+      ".gnupg",
+    ]
+      .map((d) => path.join(home, d))
+      // macOS-only, but harmless elsewhere: the bwrap branch skips paths that
+      // don't exist, and the macOS profile tolerates nonexistent subpaths.
+      .concat([path.join(home, "Library", "Caches")])
+  );
 }
 
-function macSandboxProfile(workspace: string): string {
+/**
+ * The git common directory for `workspace` when it lives OUTSIDE the workspace.
+ *
+ * In a linked worktree (or a submodule) `.git` is a *file* pointing at
+ * `<main-repo>/.git/worktrees/<name>` (or `<parent>/.git/modules/<name>`),
+ * which the sandbox would otherwise mount read-only — breaking `git add`,
+ * `git commit`, `git stash`, and friends with "Read-only file system".
+ * Returns null for a plain repo (whose common dir is `workspace/.git`, already
+ * writable), for a non-repo, or if git isn't available.
+ */
+function externalGitCommonDir(workspace: string): string | null {
+  try {
+    const res = spawnSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: workspace,
+      encoding: "utf8",
+    });
+    if (res.status !== 0 || !res.stdout) return null;
+    const raw = res.stdout.trim();
+    if (!raw) return null;
+    // Git may print this relative to the cwd we passed in.
+    const abs = path.resolve(workspace, raw);
+    const rel = path.relative(workspace, abs);
+    // Inside the workspace already (the plain-repo case) — no extra bind needed.
+    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return null;
+    if (!fs.existsSync(abs)) return null;
+    return abs;
+  } catch {
+    return null;
+  }
+}
+
+function macSandboxProfile(workspace: string, extraDirs: string[]): string {
   const esc = (p: string) => p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const extra = extraWritablePaths()
+  const extra = [...extraWritablePaths(), ...extraDirs]
     .map((p) => `(allow file-write* (subpath "${esc(p)}"))`)
     .join("\n");
   // Reads and process exec/fork stay open (matches the Linux ro-bind-everything
@@ -110,9 +161,26 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   const tool = sandboxTool();
   if (!tool) return null;
 
+  // Linked worktrees / submodules keep their real git dir outside the workspace.
+  const gitDir = externalGitCommonDir(workspace);
+
   if (tool === "bwrap") {
-    const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"];
-    for (const p of extraWritablePaths()) {
+    // --bind (not --tmpfs) for /tmp: a fresh empty /tmp per invocation would
+    // make anything a command writes there invisible to the next shell call,
+    // and macOS's profile already allows the real /tmp. Keep them consistent.
+    const args = [
+      "--ro-bind",
+      "/",
+      "/",
+      "--dev",
+      "/dev",
+      "--proc",
+      "/proc",
+      "--bind",
+      "/tmp",
+      "/tmp",
+    ];
+    for (const p of [...extraWritablePaths(), ...(gitDir ? [gitDir] : [])]) {
       if (fs.existsSync(p)) args.push("--bind", p, p);
     }
     args.push(
@@ -132,7 +200,7 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
 
   // sandbox-exec (macOS) takes its policy as a profile file, not inline args.
   const profilePath = path.join(os.tmpdir(), `kritya-sandbox-${process.pid}-${Date.now()}.sb`);
-  fs.writeFileSync(profilePath, macSandboxProfile(workspace));
+  fs.writeFileSync(profilePath, macSandboxProfile(workspace, gitDir ? [gitDir] : []));
   return {
     cmd: "sandbox-exec",
     args: ["-f", profilePath, "sh", "-c", command],
