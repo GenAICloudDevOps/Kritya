@@ -40,3 +40,4 @@ jobs:
             release/*.dmg
             release/*.AppImage
           if-no-files-found: error
+          retention-days: 1
