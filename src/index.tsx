@@ -272,7 +272,7 @@ async function main() {
     process.exit(1);
   }
 
-  const sandboxMode = config.sandboxExec ?? "off";
+  const sandboxMode = config.sandboxExec ?? "auto";
   if (sandboxMode !== "off" && !sandboxAvailable()) {
     console.error(
       `⚠ sandboxExec is "${sandboxMode}" but ${sandboxUnavailableReason()}. ` +

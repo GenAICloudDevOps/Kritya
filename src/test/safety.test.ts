@@ -16,6 +16,12 @@ test("classifyDanger flags destructive commands", () => {
   assert.ok(classifyDanger("git clean --force -d"));
 });
 
+test("classifyDanger flags plain (non-recursive/forced) rm too", () => {
+  assert.ok(classifyDanger("rm foo.txt"));
+  assert.ok(classifyDanger("rm /home/nanda/notes.txt"));
+  assert.equal(classifyDanger("git rm --cached foo.txt"), null);
+});
+
 test("classifyDanger flags Windows and additional POSIX destructive commands", () => {
   assert.ok(classifyDanger("del /s /q build"));
   assert.ok(classifyDanger("rd /s /q build"));

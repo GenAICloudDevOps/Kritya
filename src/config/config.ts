@@ -54,8 +54,8 @@ export interface CliConfig {
    * OS-level sandboxing for shell commands, confining writes to the workspace
    * (bubblewrap on Linux, sandbox-exec on macOS; no effect on Windows). This
    * is a backstop for when destructive-command detection is evaded, not a
-   * replacement for it. "auto" (recommended) sandboxes only commands flagged
-   * by classifyDanger; "always" sandboxes every shell command; "off" (default)
+   * replacement for it. "auto" (default) sandboxes only commands flagged
+   * by classifyDanger; "always" sandboxes every shell command; "off"
    * disables it. Falls back to unsandboxed execution with a warning if the
    * required binary isn't on PATH.
    */

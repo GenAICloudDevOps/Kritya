@@ -15,6 +15,7 @@ const PATTERNS: DangerPattern[] = [
     re: /\brm\s+.*(-[a-z]*[rf][a-z]*\b|--recursive\b|--force\b|--no-preserve-root\b)/i,
     label: "recursive/forced file deletion (rm -rf)",
   },
+  { re: /(?<!git\s)\brm\b\s+\S/i, label: "file deletion (rm)" },
   { re: /\brmdir\s+\/s/i, label: "recursive directory deletion" },
   {
     re: /\bgit\s+push\b.*(--force(-with-lease)?|-f)\b/i,
