@@ -7,6 +7,9 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createEngineSession } from "../dist/engine.js";
+import { SessionStore } from "../dist/session/store.js";
+import { loadConfig, listProviders } from "../dist/config/config.js";
+import { CURATED_MODELS } from "../dist/config/models.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,16 +49,68 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-ipcMain.handle("kritya:start", async (event, dir) => {
+ipcMain.handle("kritya:start", async (event, dir, opts) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   try {
-    const engine = await createEngineSession(dir || process.cwd());
+    const engine = await createEngineSession(dir || process.cwd(), opts || {});
+    sessions.get(event.sender.id)?.dispose();
     sessions.set(event.sender.id, engine);
-    return { ok: true, workspace: engine.workspace, model: engine.model };
+    return {
+      ok: true,
+      workspace: engine.workspace,
+      provider: engine.provider,
+      model: engine.model,
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
     void win;
+  }
+});
+
+ipcMain.handle("kritya:list-sessions", (event) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return [];
+  return SessionStore.listSessions(engine.workspace);
+});
+
+ipcMain.handle("kritya:load-session", (event, filePath) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  const messages = SessionStore.loadFile(filePath);
+  engine.agent.loadHistory(messages);
+  return { ok: true, messages };
+});
+
+ipcMain.handle("kritya:list-providers", () => listProviders(loadConfig()));
+
+ipcMain.handle("kritya:list-models", () => {
+  const config = loadConfig();
+  return [
+    ...CURATED_MODELS,
+    ...(config.customModels ?? []).map((m) => ({ id: m.id, label: m.label || m.id })),
+  ];
+});
+
+ipcMain.handle("kritya:switch-model", (event, model) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  engine.setModel(model);
+  return { ok: true, model: engine.model };
+});
+
+ipcMain.handle("kritya:switch-provider", async (event, provider, model) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  try {
+    const history = engine.agent.history;
+    const next = await createEngineSession(engine.workspace, { provider, model });
+    next.agent.loadHistory(history);
+    engine.dispose();
+    sessions.set(event.sender.id, next);
+    return { ok: true, workspace: next.workspace, provider: next.provider, model: next.model };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
 

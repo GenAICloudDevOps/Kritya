@@ -20,7 +20,9 @@ export interface EngineSession {
   agent: Agent;
   session: SessionStore;
   workspace: string;
+  provider: string;
   model: string;
+  setModel(model: string): void;
   dispose(): void;
 }
 
@@ -32,7 +34,10 @@ export interface EngineSession {
  * app) should call instead of duplicating the setup — a change to how
  * Agent is constructed or tools are wired only needs to happen here.
  */
-export async function createEngineSession(dir: string): Promise<EngineSession> {
+export async function createEngineSession(
+  dir: string,
+  opts: { provider?: string; model?: string } = {}
+): Promise<EngineSession> {
   const workspace = path.resolve(dir);
   loadDotEnv([path.join(CONFIG_DIR, ".env")]);
 
@@ -41,7 +46,7 @@ export async function createEngineSession(dir: string): Promise<EngineSession> {
   if (trustWorkspace) loadDotEnv([path.join(workspace, ".env")]);
 
   const config = loadConfig();
-  const provider = resolveProvider(config);
+  const provider = resolveProvider(config, opts.provider);
   if (!provider.apiKey) {
     throw new Error(
       `No API key found for provider "${provider.name}". Set it via env var, a .env file, or ~/.kritya/config.json.`
@@ -49,7 +54,7 @@ export async function createEngineSession(dir: string): Promise<EngineSession> {
   }
 
   const providerDefaultModel = config.providers?.[provider.name]?.model;
-  const model = config.model || providerDefaultModel || DEFAULT_MODEL;
+  let currentModel = opts.model || config.model || providerDefaultModel || DEFAULT_MODEL;
   const client = new ProviderClient(provider.apiKey, provider.baseUrl, {
     temperature: provider.temperature,
     topP: provider.topP,
@@ -75,14 +80,14 @@ export async function createEngineSession(dir: string): Promise<EngineSession> {
   const permissions = new PermissionManager(loadRules(workspace, trustWorkspace));
   const agent = new Agent(
     client,
-    () => model,
+    () => currentModel,
     ALL_TOOLS,
     { workspace, sandboxMode: config.sandboxExec ?? "auto" },
     permissions,
     session,
     []
   );
-  agent.contextWindow = contextWindowFor(model, config);
+  agent.contextWindow = contextWindowFor(currentModel, config);
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   if (config.toolTimeoutSeconds !== undefined) {
     agent.toolTimeoutMs = config.toolTimeoutSeconds * 1000;
@@ -98,7 +103,14 @@ export async function createEngineSession(dir: string): Promise<EngineSession> {
     agent,
     session,
     workspace,
-    model,
+    provider: provider.name,
+    get model() {
+      return currentModel;
+    },
+    setModel(next: string) {
+      currentModel = next;
+      agent.contextWindow = contextWindowFor(next, config);
+    },
     dispose() {
       backgroundManager.killAll();
       lspManager.disposeAll();

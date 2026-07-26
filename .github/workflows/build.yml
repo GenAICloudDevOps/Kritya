@@ -2,8 +2,10 @@ name: Build Desktop App
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+  # Paused to conserve Actions minutes. Uncomment to re-enable automatic
+  # desktop builds on push to main.
+  # push:
+  #   branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

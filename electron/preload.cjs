@@ -5,10 +5,17 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("kritya", {
-  start: (dir) => ipcRenderer.invoke("kritya:start", dir),
+  start: (dir, opts) => ipcRenderer.invoke("kritya:start", dir, opts),
   sendPrompt: (text) => ipcRenderer.invoke("kritya:prompt", text),
   onEvent: (callback) => {
     ipcRenderer.on("kritya:event", (_event, payload) => callback(payload));
   },
   respondPermission: (id, decision) => ipcRenderer.send("kritya:permission-response", id, decision),
+  listSessions: () => ipcRenderer.invoke("kritya:list-sessions"),
+  loadSession: (filePath) => ipcRenderer.invoke("kritya:load-session", filePath),
+  listProviders: () => ipcRenderer.invoke("kritya:list-providers"),
+  listModels: () => ipcRenderer.invoke("kritya:list-models"),
+  switchModel: (model) => ipcRenderer.invoke("kritya:switch-model", model),
+  switchProvider: (provider, model) =>
+    ipcRenderer.invoke("kritya:switch-provider", provider, model),
 });
