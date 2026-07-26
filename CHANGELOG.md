@@ -28,6 +28,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The task checklist is the width of its tasks**, not of the terminal.
 - **A silent command says so on its own line** — `✓ Run: … — no output` rather
   than a preview line reading `(no output)`.
+- **Node 22 is now the minimum** (`engines: >=22`). Node 20 reached end of life
+  in April 2026, so CI no longer tests it and the package no longer claims to
+  support it. The matrix is Ubuntu on 22 and 24, with Windows and macOS pinned
+  to 22 — the per-OS code paths only ever run on their own runner, so that job
+  is the one place they meet the oldest Node we support.
 
 ### Fixed
 
