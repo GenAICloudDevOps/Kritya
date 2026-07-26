@@ -122,6 +122,43 @@ export function sandboxSharedTmpDir(): string {
 }
 
 /**
+ * Creates (if needed) and validates the shared sandbox temp dir, returning its
+ * path only if it's safe to bind read-write into every sandboxed command —
+ * otherwise `null`, and callers must skip the bind rather than use it.
+ *
+ * On a multi-user host, `os.tmpdir()` (usually `/tmp`) is world-writable, so
+ * another local user could pre-create `kritya-sandbox-shared` as a symlink to
+ * somewhere sensitive (e.g. the real user's `~/.ssh`) before we ever get to
+ * it. Binding that in read-write would hand every sandboxed command a path
+ * back into the real filesystem — exactly what the dedicated-tmpfs isolation
+ * above exists to prevent. Guarding against it requires:
+ *  - creating with `mode: 0o700` so a *freshly created* dir isn't itself
+ *    squattable by another user afterwards, and
+ *  - `fs.lstatSync` (never `fs.statSync`, which follows symlinks) to confirm
+ *    the path is a real directory we own before trusting it.
+ */
+function safeSandboxSharedTmpDir(): string | null {
+  const shared = sandboxSharedTmpDir();
+  try {
+    fs.mkdirSync(shared, { recursive: true, mode: 0o700 });
+  } catch {
+    // May already exist (as a legitimate dir from an earlier run, or as
+    // something a hostile squatter left behind) — fall through to the lstat
+    // check below, which is the real safety gate either way.
+  }
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(shared);
+  } catch {
+    // Doesn't exist and we couldn't create it — no bind, sandbox still runs.
+    return null;
+  }
+  if (!st.isDirectory()) return null; // symlink, file, or anything else squatted here
+  if (typeof process.getuid === "function" && st.uid !== process.getuid()) return null;
+  return shared;
+}
+
+/**
  * bwrap can only bind paths that already exist, and `~/.ssh/known_hosts` is a
  * *file* that doesn't exist until the first SSH connection — so without this,
  * a first-time `git clone git@host:...` inside the sandbox could never create
@@ -134,10 +171,15 @@ function seedSshKnownHosts(): void {
     const sshDir = path.join(os.homedir(), ".ssh");
     if (!fs.existsSync(sshDir)) return;
     const knownHosts = path.join(sshDir, "known_hosts");
-    if (!fs.existsSync(knownHosts)) fs.writeFileSync(knownHosts, "", { mode: 0o600 });
+    // O_CREAT|O_EXCL ("wx"): the create is atomic, so a concurrent seeder
+    // that wins the race gets EEXIST here (caught below and ignored) instead
+    // of this call truncating a file that gained content in the meantime.
+    fs.writeFileSync(knownHosts, "", { mode: 0o600, flag: "wx" });
   } catch {
-    // Best effort: if we can't seed it, the bind is skipped and SSH to a new
-    // host fails with a clear error instead of silently escaping the sandbox.
+    // Either it already exists (including the race above) or we can't create
+    // it: best effort — if we can't seed it, the bind is skipped and SSH to a
+    // new host fails with a clear error instead of silently escaping the
+    // sandbox.
   }
 }
 
@@ -172,7 +214,7 @@ function externalGitCommonDir(workspace: string): string | null {
   }
 }
 
-function macSandboxProfile(workspace: string, extraDirs: string[]): string {
+function macSandboxProfile(workspace: string, extraDirs: string[], shared: string | null): string {
   const esc = (p: string) => p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const extra = [...extraWritablePaths(), ...extraDirs]
     .map((p) => `(allow file-write* (subpath "${esc(p)}"))`)
@@ -183,17 +225,20 @@ function macSandboxProfile(workspace: string, extraDirs: string[]): string {
   //
   // The world-writable /tmp (and its real path /private/tmp) is narrowed to the
   // same dedicated shared subdir the Linux branch binds, mirroring the tmpfs
-  // isolation there. The per-user TMPDIR under /private/var/folders stays open:
-  // it's 0700 to the user and effectively every macOS tool writes there, so
-  // closing it would break ordinary commands.
-  const shared = sandboxSharedTmpDir();
+  // isolation there — but only when `shared` passed validation (see
+  // `safeSandboxSharedTmpDir`); otherwise it's omitted entirely rather than
+  // trusting an unvalidated path. The per-user TMPDIR under
+  // /private/var/folders stays open: it's 0700 to the user and effectively
+  // every macOS tool writes there, so closing it would break ordinary
+  // commands.
+  const sharedRules = shared
+    ? `(allow file-write* (subpath "${esc(shared)}"))\n(allow file-write* (subpath "/private${esc(shared)}"))\n`
+    : "";
   return `(version 1)
 (allow default)
 (deny file-write* (subpath "/"))
 (allow file-write* (subpath "${esc(workspace)}"))
-(allow file-write* (subpath "${esc(shared)}"))
-(allow file-write* (subpath "/private${esc(shared)}"))
-(allow file-write* (subpath "/private/var/folders"))
+${sharedRules}(allow file-write* (subpath "/private/var/folders"))
 ${extra}
 `;
 }
@@ -213,13 +258,9 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
 
   // Linked worktrees / submodules keep their real git dir outside the workspace.
   const gitDir = externalGitCommonDir(workspace);
-  const shared = sandboxSharedTmpDir();
-  try {
-    fs.mkdirSync(shared, { recursive: true });
-  } catch {
-    // If it can't be created the bind below is skipped; the sandbox still
-    // runs, just without cross-invocation scratch space.
-  }
+  // null if the path exists but isn't a real, self-owned directory (e.g.
+  // another local user squatted it as a symlink) — see safeSandboxSharedTmpDir.
+  const shared = safeSandboxSharedTmpDir();
 
   if (tool === "bwrap") {
     // /tmp is a fresh per-invocation tmpfs, EXCEPT for one dedicated shared
@@ -229,7 +270,11 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
     // is the easiest place to hardlink a host file and write through the link.
     const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"];
     seedSshKnownHosts();
-    for (const p of [...extraWritablePaths(), shared, ...(gitDir ? [gitDir] : [])]) {
+    for (const p of [
+      ...extraWritablePaths(),
+      ...(shared ? [shared] : []),
+      ...(gitDir ? [gitDir] : []),
+    ]) {
       if (fs.existsSync(p)) args.push("--bind", p, p);
     }
     args.push(
@@ -249,7 +294,7 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
 
   // sandbox-exec (macOS) takes its policy as a profile file, not inline args.
   const profilePath = path.join(os.tmpdir(), `kritya-sandbox-${process.pid}-${Date.now()}.sb`);
-  fs.writeFileSync(profilePath, macSandboxProfile(workspace, gitDir ? [gitDir] : []));
+  fs.writeFileSync(profilePath, macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared));
   return {
     cmd: "sandbox-exec",
     args: ["-f", profilePath, "sh", "-c", command],

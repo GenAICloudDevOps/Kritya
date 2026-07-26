@@ -284,6 +284,59 @@ test("the dedicated shared temp dir persists across sandboxed invocations", asyn
   }
 });
 
+test("a squatted shared temp dir (symlink) is never bound into the sandbox", async (t) => {
+  if (!sandboxAvailable() || os.platform() === "win32") {
+    t.skip("no sandbox binary on this machine");
+    return;
+  }
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const shared = sandboxSharedTmpDir();
+  // Stand-in for "somewhere sensitive" — the point is only that the sandbox
+  // must refuse to bind ANY symlink at the shared-dir path, not that this
+  // particular target is sensitive.
+  const symlinkTarget = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-squat-target-"));
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-squat-test-"));
+  // Preserve whatever legitimately lives at the shared-dir path so later
+  // tests in this file aren't left with a dangling symlink.
+  const hadRealDir = await fs
+    .stat(shared)
+    .then((s) => s.isDirectory())
+    .catch(() => false);
+  let cleanup: { cleanup?: () => void } | undefined;
+  try {
+    // recursive is required when `shared` is a real directory (the common
+    // case); it's irrelevant for a symlink, which rm never recurses into.
+    await fs.rm(shared, { recursive: true, force: true });
+    await fs.symlink(symlinkTarget, shared);
+    const wrapped = buildSandboxedCommand("true", workspace);
+    assert.ok(wrapped, "sandbox should still run, just without the shared-dir bind");
+    cleanup = wrapped!;
+    if (wrapped!.cmd === "bwrap") {
+      const bindIdx = wrapped!.args.findIndex(
+        (a, i) => a === "--bind" && wrapped!.args[i + 1] === shared
+      );
+      assert.equal(bindIdx, -1, "squatted shared dir must not be bound into bwrap");
+    } else {
+      // sandbox-exec (macOS): the profile is a file passed via `-f <path>`.
+      const fIdx = wrapped!.args.indexOf("-f");
+      assert.ok(fIdx >= 0);
+      const profile = await fs.readFile(wrapped!.args[fIdx + 1], "utf8");
+      assert.doesNotMatch(
+        profile,
+        new RegExp(shared.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        "squatted shared dir must not be referenced in the sandbox profile"
+      );
+    }
+  } finally {
+    cleanup?.cleanup?.();
+    await fs.rm(shared, { recursive: true, force: true }); // unlink the symlink (or dir) left behind
+    await fs.rm(symlinkTarget, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true });
+    if (hadRealDir) await fs.mkdir(shared, { recursive: true, mode: 0o700 });
+  }
+});
+
 test("the rest of /tmp stays isolated per invocation and hidden from the sandbox", async (t) => {
   if (!sandboxAvailable() || os.platform() === "win32") {
     t.skip("no sandbox binary on this machine");
