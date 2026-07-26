@@ -94,3 +94,21 @@ test("redactSecrets leaves ordinary output untouched", () => {
   assert.equal(redacted, "total 12\ndrwxr-xr-x 2 user user 4096 file.txt");
   assert.equal(matches.length, 0);
 });
+
+test("redactSecrets masks a quoted high-entropy assignment but keeps the key visible", () => {
+  const { redacted, matches } = redactSecrets('api_key="Zx9pQr2LmN8vTy4Wk1Bs"');
+  assert.doesNotMatch(redacted, /Zx9pQr2LmN8vTy4Wk1Bs/);
+  // Exact match confirms the redaction boundary — the key and both
+  // surrounding quotes stay intact, only the value is replaced.
+  assert.equal(redacted, 'api_key="[REDACTED]"');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].kind, "high-entropy api_key value");
+});
+
+test("redactSecrets masks an unquoted high-entropy assignment but keeps the key visible", () => {
+  const { redacted, matches } = redactSecrets("cat .env\ntoken=Zx9pQr2LmN8vTy4Wk1Bs\nDONE");
+  assert.doesNotMatch(redacted, /Zx9pQr2LmN8vTy4Wk1Bs/);
+  assert.equal(redacted, "cat .env\ntoken=[REDACTED]\nDONE");
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].kind, "high-entropy token value");
+});
