@@ -97,7 +97,7 @@ Also: @path/to/file attaches a file to your message (with autocomplete).
 @mcp:server/name attaches a document an MCP server offers.
 MCP servers can also contribute their own /server-prompt commands.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
-Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/plan
+Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/dry-run
 mode · ↑/↓ recalls history · Ctrl+O toggles full tool output · Ctrl+K is the
 kill switch (stops everything until /kill off) · Ctrl+C exits`;
 

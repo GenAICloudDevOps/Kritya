@@ -241,6 +241,7 @@ export function App({
     branch,
     planMode,
     setPlanMode,
+    dryRunMode,
     killed,
     killReason,
     engageKill,
@@ -678,7 +679,7 @@ export function App({
           <Text dimColor>
             Destructive shell commands (rm -rf, force-push, etc.) always still ask, in every mode.
           </Text>
-          <Text dimColor>Shift+Tab again moves to plan mode; once more back to normal.</Text>
+          <Text dimColor>Shift+Tab again moves to dry-run mode; once more back to normal.</Text>
           <Box marginTop={1}>
             <Text>
               <Text color="green">Yes (y)</Text> · No (n/Esc)
@@ -778,7 +779,9 @@ export function App({
           ) : (
             ""
           )}
-          {planMode ? (
+          {dryRunMode ? (
+            <Text color="cyan">dry-run · </Text>
+          ) : planMode ? (
             <Text color="cyan">plan · </Text>
           ) : acceptEdits ? (
             <Text color="green">accept edits ({autoApprovedCount} auto-approved) · </Text>

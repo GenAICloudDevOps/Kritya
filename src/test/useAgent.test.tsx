@@ -22,6 +22,7 @@ function fakeAgent(overrides: Partial<Record<string, unknown>> = {}): Agent {
     kill: new KillSwitch(),
     contextWindow: 120_000,
     planMode: false,
+    dryRunMode: false,
     acceptEdits: false,
     onAutoApprove: undefined,
     audit: undefined,
@@ -101,7 +102,7 @@ test("resuming a session adds a note with the checklist restore stats", async ()
   assert.match(lastItemText(api.items), /checklist restored \(1\/2 done\)/);
 });
 
-test("cycleMode goes normal -> confirm -> accept-edits -> plan -> normal", async () => {
+test("cycleMode goes normal -> confirm -> accept-edits -> dry-run -> normal", async () => {
   const agent = fakeAgent();
   const { api } = await setup({ agent });
 
@@ -120,13 +121,14 @@ test("cycleMode goes normal -> confirm -> accept-edits -> plan -> normal", async
   api.cycleMode();
   await tick();
   assert.equal(agent.acceptEdits, false);
-  assert.equal(agent.planMode, true);
-  assert.match(lastItemText(api.items), /Plan mode ON/);
+  assert.equal(agent.dryRunMode, true);
+  assert.equal(agent.planMode, false, "the manual toggle never touches the workflow's plan mode");
+  assert.match(lastItemText(api.items), /Dry-run mode ON/);
 
   api.cycleMode();
   await tick();
-  assert.equal(agent.planMode, false);
-  assert.match(lastItemText(api.items), /Plan mode OFF/);
+  assert.equal(agent.dryRunMode, false);
+  assert.match(lastItemText(api.items), /Dry-run mode OFF/);
 });
 
 test("declining the first accept-edits confirmation leaves everything off", async () => {
@@ -147,7 +149,7 @@ test("once accept-edits has been confirmed once, cycling back to it skips the pr
   await tick();
   api.onAcceptEditsConfirm(true); // -> accept-edits
   await tick();
-  api.cycleMode(); // -> plan
+  api.cycleMode(); // -> dry-run
   await tick();
   api.cycleMode(); // -> normal
   await tick();

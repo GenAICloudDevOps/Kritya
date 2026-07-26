@@ -123,6 +123,9 @@ export function useAgent({
   const [budgetStopped, setBudgetStopped] = useState(false);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
+  /** The manual Shift+Tab read-only toggle — independent of the project
+   *  workflow's own `planMode`. */
+  const [dryRunMode, setDryRunMode] = useState(false);
   const [killed, setKilled] = useState(agent.kill.active);
   const [killReason, setKillReason] = useState<string | undefined>(agent.kill.reason);
   const [acceptEdits, setAcceptEdits] = useState(false);
@@ -174,27 +177,27 @@ export function useAgent({
       kind: "info",
       text:
         "Accept-edits mode ON — file writes/edits auto-approve without asking. Destructive shell " +
-        "commands (rm -rf, force-push, etc.) still always ask. Shift+Tab again for plan mode, once " +
+        "commands (rm -rf, force-push, etc.) still always ask. Shift+Tab again for dry-run mode, once " +
         "more for normal.",
     });
   };
 
-  /** Cycles normal → accept-edits → plan → normal. First entry into accept-edits this session pauses on a confirmation instead of switching immediately. */
+  /** Cycles normal → accept-edits → dry-run → normal. First entry into accept-edits this session pauses on a confirmation instead of switching immediately. */
   const cycleMode = () => {
-    if (planMode) {
-      agent.planMode = false;
-      setPlanMode(false);
-      addItem({ kind: "info", text: "Plan mode OFF — the agent can make changes again." });
+    if (dryRunMode) {
+      agent.dryRunMode = false;
+      setDryRunMode(false);
+      addItem({ kind: "info", text: "Dry-run mode OFF — the agent can make changes again." });
       return;
     }
     if (acceptEdits) {
       agent.acceptEdits = false;
       setAcceptEdits(false);
-      agent.planMode = true;
-      setPlanMode(true);
+      agent.dryRunMode = true;
+      setDryRunMode(true);
       addItem({
         kind: "info",
-        text: "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked.",
+        text: "Dry-run mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked.",
       });
       return;
     }
@@ -697,6 +700,7 @@ export function useAgent({
     branch,
     planMode,
     setPlanMode,
+    dryRunMode,
     killed,
     killReason,
     engageKill,
