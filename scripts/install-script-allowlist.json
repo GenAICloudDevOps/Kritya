@@ -1,4 +1,4 @@
 {
   "_comment": "Packages allowed to run an npm lifecycle script (preinstall/install/postinstall) on `npm ci`, checked by scripts/check-install-scripts.mjs. A dependency (direct or transitive) that gains one of these scripts and isn't listed here fails CI — lifecycle scripts run arbitrary code at install time with no review, the classic supply-chain injection vector, so adding a new one here should get its own look in the PR that introduces it.",
-  "allow": ["canvas", "esbuild"]
+  "allow": ["canvas", "esbuild", "electron-winstaller"]
 }
