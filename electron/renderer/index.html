@@ -14,7 +14,15 @@
       <div id="main">
         <div id="workspace-bar">
           <span id="workspace-label">No workspace loaded</span>
+          <span id="usage-label"></span>
+          <span id="retry-label" class="hidden"></span>
+          <button id="stop-button" class="hidden" type="button">Stop</button>
+          <span id="kill-banner" class="hidden">
+            ⛔ Kill switch active
+            <button id="resume-button" type="button">Resume</button>
+          </span>
         </div>
+        <div id="task-list" class="hidden"></div>
         <div id="messages"></div>
         <div id="permission-prompt" class="hidden">
           <div id="permission-box">
@@ -28,6 +36,9 @@
         <div id="picker-bar">
           <select id="provider-select"></select>
           <select id="model-select"></select>
+          <label><input type="checkbox" id="plan-mode-toggle" /> Plan</label>
+          <label><input type="checkbox" id="dry-run-toggle" /> Dry run</label>
+          <label><input type="checkbox" id="accept-edits-toggle" /> Auto-accept edits</label>
         </div>
         <form id="input-form">
           <input id="prompt-input" placeholder="Ask kritya to do something..." autocomplete="off" />
@@ -35,6 +46,6 @@
         </form>
       </div>
     </div>
-    <script src="renderer.js"></script>
+    <script type="module" src="renderer.js"></script>
   </body>
 </html>

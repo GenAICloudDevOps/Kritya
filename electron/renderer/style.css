@@ -76,11 +76,62 @@ body {
   font-size: 12px;
 }
 #workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 8px 12px;
   background: #252525;
   border-bottom: 1px solid #333;
   font-size: 12px;
   color: #888;
+}
+#usage-label {
+  color: #666;
+}
+#retry-label {
+  color: #e0a030;
+}
+#stop-button {
+  margin-left: auto;
+  background: #c94040;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+#kill-banner {
+  margin-left: auto;
+  color: #ff6b6b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#resume-button {
+  background: #444;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+#task-list {
+  padding: 8px 12px;
+  background: #202020;
+  border-bottom: 1px solid #333;
+  font-size: 12px;
+}
+#task-list .task-item {
+  padding: 2px 0;
+  color: #999;
+}
+#task-list .task-item.done {
+  color: #5fc36a;
+  text-decoration: line-through;
+}
+#task-list .task-item.in_progress {
+  color: #7ec4ff;
+}
+#picker-bar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #bbb;
 }
 #messages {
   flex: 1;

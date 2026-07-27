@@ -29,3 +29,23 @@ export function isValidStartOpts(value: unknown): value is { provider?: string; 
   }
   return true;
 }
+
+const MODE_FLAG_KEYS = ["planMode", "dryRunMode", "acceptEdits"] as const;
+
+export interface ModeFlags {
+  planMode?: boolean;
+  dryRunMode?: boolean;
+  acceptEdits?: boolean;
+}
+
+export function isValidModeFlags(value: unknown): value is ModeFlags {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const flags = value as Record<string, unknown>;
+  for (const key of Object.keys(flags)) {
+    if (!(MODE_FLAG_KEYS as readonly string[]).includes(key)) return false;
+  }
+  for (const key of MODE_FLAG_KEYS) {
+    if (key in flags && typeof flags[key] !== "boolean") return false;
+  }
+  return true;
+}

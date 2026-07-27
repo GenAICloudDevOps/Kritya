@@ -18,4 +18,7 @@ contextBridge.exposeInMainWorld("kritya", {
   switchModel: (model) => ipcRenderer.invoke("kritya:switch-model", model),
   switchProvider: (provider, model) =>
     ipcRenderer.invoke("kritya:switch-provider", provider, model),
+  kill: (reason) => ipcRenderer.invoke("kritya:kill", reason),
+  killRelease: () => ipcRenderer.invoke("kritya:kill-release"),
+  setMode: (flags) => ipcRenderer.invoke("kritya:set-mode", flags),
 });

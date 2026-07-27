@@ -4,6 +4,7 @@ import {
   isNonEmptyString,
   isValidPermissionDecision,
   isValidStartOpts,
+  isValidModeFlags,
 } from "../electron/ipcValidation.js";
 
 test("isNonEmptyString accepts non-blank strings, rejects everything else", () => {
@@ -35,4 +36,15 @@ test("isValidStartOpts accepts undefined and well-shaped opts, rejects malformed
   assert.equal(isValidStartOpts({ model: {} }), false);
   // Prototype pollution style payload — must not be treated as valid opts.
   assert.equal(isValidStartOpts({ __proto__: { polluted: true } }), true);
+});
+
+test("isValidModeFlags accepts well-shaped boolean flags, rejects malformed ones", () => {
+  assert.equal(isValidModeFlags({ planMode: true }), true);
+  assert.equal(isValidModeFlags({ dryRunMode: false, acceptEdits: true }), true);
+  assert.equal(isValidModeFlags({}), true);
+  assert.equal(isValidModeFlags(undefined), false);
+  assert.equal(isValidModeFlags(null), false);
+  assert.equal(isValidModeFlags({ planMode: "yes" }), false);
+  assert.equal(isValidModeFlags({ unknownFlag: true }), false);
+  assert.equal(isValidModeFlags([]), false);
 });

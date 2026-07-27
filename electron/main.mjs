@@ -14,6 +14,7 @@ import {
   isNonEmptyString,
   isValidPermissionDecision,
   isValidStartOpts,
+  isValidModeFlags,
 } from "../dist/electron/ipcValidation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -156,6 +157,11 @@ ipcMain.handle("kritya:prompt", async (event, text) => {
   const send = (channel, payload) => event.sender.send(channel, payload);
   let reqCounter = 0;
 
+  // update_tasks pushes checklist changes through ctx.onTasksUpdate, not the
+  // per-turn AgentHandlers — wire it here so each window's task list only
+  // reaches that window.
+  engine.agent.ctx.onTasksUpdate = (tasks) => send("kritya:event", { type: "tasksUpdate", tasks });
+
   const handlers = {
     onTextDelta: (delta) => send("kritya:event", { type: "textDelta", delta }),
     onReasoningDelta: (delta) => send("kritya:event", { type: "reasoningDelta", delta }),
@@ -196,4 +202,40 @@ ipcMain.on("kritya:permission-response", (_event, id, decision) => {
     resolve(decision);
     pendingPermissions.delete(id);
   }
+});
+
+ipcMain.handle("kritya:kill", (event, reason) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  if (reason !== undefined && !isNonEmptyString(reason)) {
+    return { ok: false, error: "Invalid kill reason." };
+  }
+  engine.agent.kill.engage(reason);
+  return { ok: true };
+});
+
+ipcMain.handle("kritya:kill-release", (event) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  engine.agent.kill.release();
+  return { ok: true };
+});
+
+ipcMain.handle("kritya:set-mode", (event, flags) => {
+  const engine = sessions.get(event.sender.id);
+  if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  if (!isValidModeFlags(flags)) return { ok: false, error: "Invalid mode flags." };
+  const agent = engine.agent;
+  if (flags.planMode !== undefined) agent.planMode = flags.planMode;
+  if (flags.dryRunMode !== undefined) agent.dryRunMode = flags.dryRunMode;
+  if (flags.acceptEdits !== undefined) agent.acceptEdits = flags.acceptEdits;
+  // Mirrors the Ink CLI's /plan command: plan mode and auto-accept are
+  // mutually exclusive, so entering plan mode always drops accept-edits.
+  if (agent.planMode && agent.acceptEdits) agent.acceptEdits = false;
+  return {
+    ok: true,
+    planMode: agent.planMode,
+    dryRunMode: agent.dryRunMode,
+    acceptEdits: agent.acceptEdits,
+  };
 });
