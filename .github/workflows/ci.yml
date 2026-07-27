@@ -19,24 +19,30 @@ jobs:
   # (injection, unsafe regex, etc). Results land in the repo's Security tab,
   # not in job logs — a green check here means no new alerts, not zero
   # findings ever.
-  codeql:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      # Needed for the analyze step to read workflow-run context on a
-      # private repo (GET /repos/.../actions/runs/...) — without it, the
-      # scan itself still completes but the job is reported as a
-      # "configuration error" when it can't fetch that metadata.
-      actions: read
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
-        with:
-          languages: javascript-typescript
-
-      - uses: github/codeql-action/analyze@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+  #
+  # Disabled for now: the scan itself runs fine, but the final upload step
+  # fails with "Code scanning is not enabled for this repository" — that's a
+  # repo Settings > Code security and analysis toggle (and, on a private
+  # repo, may require GitHub Advanced Security), not something this workflow
+  # can fix. Re-enable once code scanning is turned on for the repo.
+  # codeql:
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #     security-events: write
+  #     # Needed for the analyze step to read workflow-run context on a
+  #     # private repo (GET /repos/.../actions/runs/...) — without it, the
+  #     # scan itself still completes but the job is reported as a
+  #     # "configuration error" when it can't fetch that metadata.
+  #     actions: read
+  #   steps:
+  #     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+  #
+  #     - uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+  #       with:
+  #         languages: javascript-typescript
+  #
+  #     - uses: github/codeql-action/analyze@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
 
   # Dependency checks that ask the registry, not the machine: the answer is the
   # same on every OS and Node version, so running them once per matrix entry
