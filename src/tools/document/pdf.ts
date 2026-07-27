@@ -6,9 +6,13 @@ import type { TextItem } from "pdfjs-dist/types/src/display/api.js";
 
 // Points pdfjs at its own bundled standard-font metrics so it doesn't warn
 // about missing font data when a PDF references one of the base 14 fonts.
+// pdfjs-dist requires this to be a string ending in "/" (it does a literal
+// `.endsWith("/")` check before reading via fs.readFile), but on Windows
+// fileURLToPath yields backslash-separated paths — normalize to forward
+// slashes, which fs.readFile accepts on every platform.
 const STANDARD_FONT_DATA_URL = fileURLToPath(
   new URL("../../../node_modules/pdfjs-dist/standard_fonts/", import.meta.url)
-);
+).replace(/\\/g, "/");
 
 export async function readPdf(buf: Buffer): Promise<string> {
   const loadingTask = getDocument({
