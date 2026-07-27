@@ -40,10 +40,12 @@ the domain-specific skills themselves are a separate, later effort.
   scripts via the existing `shellTool`, which already goes through kritya's
   permission gate. This keeps `load_skill` a pure read with no new execution
   surface.
-- **Telemetry**: `load_skill` opens a `skill.load` span (same
-  `NOOP_TRACER`/`Tracer` pattern already used for `llm.chat` in
-  `provider/client.ts`) with a `kritya.skill_name` attribute, so which skills
-  actually get used is observable without adding instrumentation later.
+- **Telemetry**: no new plumbing. `ToolContext` has no tracer today, and the
+  agent loop already wraps every tool call in a `tool.<name>` span with a
+  `kritya.summary` attribute from `tool.summarize(args)` — for `load_skill`
+  that summary is `Load skill "<name>"`, so per-skill usage is already
+  observable through the existing `tool.load_skill` span without adding a
+  tracer to `ToolContext` for one tool's sake.
 
 ## Architecture
 
@@ -58,8 +60,7 @@ src/
 │                        omitted entirely when no skills exist
 └── tools/
     └── skills.ts        loadSkillTool: looks up name in discovery result,
-                          returns SKILL.md body + bundled-file listing,
-                          wraps execution in a skill.load trace span
+                          returns SKILL.md body + bundled-file listing
 ```
 
 ## Key behaviors
@@ -85,10 +86,13 @@ src/
 - **`load_skill` tool**: input `{ name: string }`. Looks up `name` against the
   _discovered_ list (never builds a path directly from the model-supplied
   string, closing off path-traversal via a hallucinated/malicious name).
-  Unknown name → clear error string listing available skills, so the model
-  can self-correct instead of the call throwing. `requiresPermission: false`
-  (it's a read, like `read_file`). Registered in both `ALL_TOOLS` and
-  `READONLY_TOOLS`.
+  Unknown name → throws `Error("skill \"x\" not found. Available: a, b")`,
+  matching the codebase's existing convention (`resolveSafe`, etc.): the
+  agent loop's catch path both marks the call `isError` (so headless JSON and
+  telemetry reflect the failure correctly) and returns `Error: <message>` to
+  the model as the tool result, so it can still self-correct in the next
+  round. `requiresPermission: false` (it's a read, like `read_file`).
+  Registered in both `ALL_TOOLS` and `READONLY_TOOLS`.
 
 ## Testing
 
@@ -103,32 +107,37 @@ src/
   Multiple scenarios, not just the happy path:
   1. Single skill exists, matches the task → `load_skill` call returns body +
      bundled-file listing, loop completes on the following text round.
-  2. Model calls `load_skill` with a name that doesn't exist → tool returns
-     the "not found, available: ..." error string as a tool result (not a
-     thrown exception), loop continues and the model's next round can react
-     to it.
+  2. Model calls `load_skill` with a name that doesn't exist → the thrown
+     error surfaces to the model as `Error: skill "x" not found. Available:
+...` (the loop's standard catch-path formatting), the call is recorded
+     as failed, and the loop continues so the model's next round can react.
   3. Skill has bundled `scripts/` and `references/` → returned listing
      includes both, and a follow-up round where the model reads a referenced
      file via the real `readFileTool` succeeds.
   4. Two skills present, task matches the second one by name → confirms
      lookup isn't order-dependent on discovery.
   5. Workspace has no `.kritya/skills/` directory at all → `load_skill` is
-     still registered but its call returns the "no skills available" error;
-     loop doesn't crash.
+     still registered but its call throws the "no skills available" error
+     (`Available: (none)`); loop doesn't crash.
 - **E2E** (`headless.e2e.test.ts` pattern): spawn the real built CLI against
   fresh temp `$HOME`/workspace pairs, `startFakeProvider` scripted per case.
   Multiple scenarios:
   1. Happy path: real `.kritya/skills/<name>/SKILL.md` fixture on disk,
-     provider script is `[load_skill tool call, text reply]` — assert on the
-     JSON output's `toolCalls` (contains `load_skill` with correct args) and
-     `result` (reflects skill content), and `code === 0`.
+     provider script is `[load_skill tool call, text reply]` — assert
+     `code === 0`, the JSON output's `toolCalls` contains
+     `{name: "load_skill", error: false}`, and `result` matches the scripted
+     final text.
   2. Unknown skill name scripted by the fake provider — assert the process
-     still exits `0` (tool error surfaced to the model, not a crash) and the
-     tool-call error text appears in the recorded `toolCalls` result.
+     still exits `0` (tool error surfaced to the model, not a crash), the
+     JSON output's `toolCalls` entry for `load_skill` has `error: true`
+     (`ToolCallRecord` is `{name, summary, error}` — no raw output field), and
+     the model's final `result` (from its next scripted round) reflects it.
   3. No skills directory present at all, provider never calls `load_skill` —
      regression guard that the feature is fully inert (no prompt section, no
      behavior change) for non-skill workspaces.
-  4. Skill with a bundled script — provider script is
-     `[load_skill call, shell tool call running the bundled script, text
-reply]` — proves the full discovery → load → execute chain works
-     end-to-end through the real subprocess, not just the load step alone.
+  4. Skill with a bundled `references/` file — provider script is
+     `[load_skill call, read_file call on the referenced file, text reply]`
+     (`read_file` needs no permission prompt, unlike `shell`, so the script
+     runs unattended) — proves the full discovery → load → follow-up-read
+     chain works end-to-end through the real subprocess, not just the load
+     step alone.
