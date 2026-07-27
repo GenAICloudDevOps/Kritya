@@ -73,6 +73,29 @@ test("parseSkillFrontmatter leaves an unquoted value with mismatched quotes alon
   assert.equal(parsed!.meta.description, "don't quote me");
 });
 
+test("parseSkillFrontmatter joins a literal block scalar (|) preserving line breaks", () => {
+  const raw = "---\nname: foo\ndescription: |\n  Line 1\n  Line 2\n---\nbody\n";
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(parsed!.meta.description, "Line 1\nLine 2");
+});
+
+test("parseSkillFrontmatter joins a folded block scalar (>) into a single space-joined line", () => {
+  const raw =
+    "---\nname: foo\ndescription: >\n  Compute ratios from a balance sheet\n  and income statement.\n---\nbody\n";
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(
+    parsed!.meta.description,
+    "Compute ratios from a balance sheet and income statement."
+  );
+});
+
+test("parseSkillFrontmatter stops a block scalar at the next top-level key", () => {
+  const raw = "---\nname: foo\ndescription: |\n  Line 1\n  Line 2\nlicense: MIT\n---\nbody\n";
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(parsed!.meta.description, "Line 1\nLine 2");
+  assert.equal(parsed!.meta.license, "MIT");
+});
+
 test("parseSkillFrontmatter returns null when there is no frontmatter block", () => {
   assert.equal(parseSkillFrontmatter("just a plain markdown file\n"), null);
 });

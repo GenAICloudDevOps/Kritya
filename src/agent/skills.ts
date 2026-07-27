@@ -13,6 +13,7 @@ export interface DiscoveredSkill {
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const KEY_VALUE_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
+const BLOCK_SCALAR_RE = /^([A-Za-z0-9_-]+):\s*([>|])\s*$/;
 
 /**
  * Parses a SKILL.md's leading `---`-delimited frontmatter block into a flat
@@ -26,11 +27,44 @@ export function parseSkillFrontmatter(
   if (!match) return null;
   const [, frontmatter, body] = match;
   const meta: Record<string, string> = {};
-  for (const line of frontmatter.split(/\r?\n/)) {
+  const lines = frontmatter.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const block = BLOCK_SCALAR_RE.exec(line);
+    if (block) {
+      const [, key, style] = block;
+      const blockLines: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && (lines[j] === "" || /^\s/.test(lines[j]))) {
+        blockLines.push(lines[j].trim());
+        j++;
+      }
+      i = j - 1;
+      meta[key] = style === "|" ? blockLines.join("\n") : foldBlockLines(blockLines);
+      continue;
+    }
     const kv = KEY_VALUE_RE.exec(line);
     if (kv) meta[kv[1]] = unquote(kv[2].trim());
   }
   return { meta, body: body.trim() };
+}
+
+/**
+ * Simplified YAML folded-scalar (`>`) join: consecutive non-blank lines
+ * become one space-joined line; a blank line forces a line break. Real YAML
+ * folding has more edge cases (indentation-sensitive literal lines, trailing
+ * newline "chomping") that this doesn't attempt.
+ */
+function foldBlockLines(lines: string[]): string {
+  const paragraphs: string[][] = [[]];
+  for (const line of lines) {
+    if (line === "") paragraphs.push([]);
+    else paragraphs[paragraphs.length - 1].push(line);
+  }
+  return paragraphs
+    .map((p) => p.join(" "))
+    .filter((p) => p !== "")
+    .join("\n");
 }
 
 /**
