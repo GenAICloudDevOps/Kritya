@@ -105,6 +105,7 @@ export function scanSkills(roots: string[]): DiscoveredSkill[] {
         warn(`skipping ${skillFile}: frontmatter must include "name" and "description"`);
         continue;
       }
+      if (meta.disabled === "true") continue;
       if (meta.name !== entry.name) {
         warn(
           `skipping ${skillFile}: folder name "${entry.name}" does not match frontmatter name "${meta.name}"`

@@ -125,6 +125,27 @@ test("scanSkills skips a folder whose frontmatter name differs from its folder n
   }
 });
 
+test("scanSkills excludes a skill whose frontmatter has disabled: true", () => {
+  const root = tmpWorkspace();
+  writeSkill(root, "off", { description: "should not load", extraFrontmatter: "disabled: true" });
+  writeSkill(root, "on", { description: "should load" });
+  const found = scanSkills([root]);
+  assert.deepEqual(
+    found.map((s) => s.name),
+    ["on"]
+  );
+});
+
+test("scanSkills loads a skill whose frontmatter has disabled: false", () => {
+  const root = tmpWorkspace();
+  writeSkill(root, "on", { description: "should load", extraFrontmatter: "disabled: false" });
+  const found = scanSkills([root]);
+  assert.deepEqual(
+    found.map((s) => s.name),
+    ["on"]
+  );
+});
+
 test("scanSkills skips a folder with no SKILL.md", () => {
   const root = tmpWorkspace();
   fs.mkdirSync(path.join(root, "not-a-skill"), { recursive: true });
