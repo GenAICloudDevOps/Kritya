@@ -2,18 +2,37 @@ name: CI
 
 on:
   workflow_dispatch:
-  # Paused while we're testing the Electron/build.yml pipeline to conserve
-  # Actions minutes. Uncomment to re-enable automatic CI on push/PR.
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # Static analysis of the JS/TS source for security vulnerabilities
+  # (injection, unsafe regex, etc). Results land in the repo's Security tab,
+  # not in job logs — a green check here means no new alerts, not zero
+  # findings ever.
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+        with:
+          languages: javascript-typescript
+
+      - uses: github/codeql-action/analyze@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+
   # Dependency checks that ask the registry, not the machine: the answer is the
   # same on every OS and Node version, so running them once per matrix entry
   # bought no extra coverage and made a registry-side hiccup look like five
@@ -45,12 +64,8 @@ jobs:
         include:
           - os: windows-latest
             node-version: 22.x
-          # macOS runner costs 10x Actions minutes vs Linux — commented out
-          # for now to conserve included minutes. Re-enable by uncommenting
-          # once macOS coverage is actually needed (e.g. before a desktop
-          # build release).
-          # - os: macos-latest
-          #   node-version: 22.x
+          - os: macos-latest
+            node-version: 22.x
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
