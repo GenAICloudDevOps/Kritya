@@ -28,6 +28,7 @@ import {
   lspRenameTool,
 } from "./lsp.js";
 import { repoMapTool } from "./repoMap.js";
+import { loadSkillTool } from "./skills.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   readFileTool,
@@ -57,6 +58,7 @@ export const ALL_TOOLS: ToolDef[] = [
   editPdfTool,
   readNotebookTool,
   editNotebookTool,
+  loadSkillTool,
 ];
 
 /** Read-only tools a subagent is allowed to use (no writes, edits, or shell). */
@@ -72,4 +74,5 @@ export const READONLY_TOOLS: ToolDef[] = [
   lspHoverTool,
   readDocumentTool,
   readNotebookTool,
+  loadSkillTool,
 ];
