@@ -5,6 +5,13 @@ import { truncateResult } from "./common.js";
 const DEFAULT_MAX_CHARS = 20_000;
 /** Give up on a slow or hanging server rather than blocking the whole turn. */
 const FETCH_TIMEOUT_MS = 20_000;
+/**
+ * Hard cap on raw response bytes read off the wire, independent of max_chars.
+ * Enforced while streaming (not after buffering the full body) so a server
+ * that lies about content-length or sends gigabytes of text can't blow up
+ * process memory before truncation ever gets a chance to run.
+ */
+export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Reject URLs that point at the local machine or a private/internal network.
@@ -53,6 +60,62 @@ function assertPublicUrl(raw: string): URL {
   return url;
 }
 
+/** Refuse to keep chasing redirects forever. */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Fetch `url`, following redirects manually so every hop — not just the
+ * original URL — is checked against assertPublicUrl. A public URL that
+ * 302s to 169.254.169.254 or localhost would otherwise sail straight past
+ * the initial check, since `redirect: "follow"` never re-validates.
+ */
+async function fetchFollowingRedirects(
+  url: URL,
+  signal: AbortSignal,
+  headers: Record<string, string>
+): Promise<{ res: Response; finalUrl: URL }> {
+  let current = url;
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(current, { redirect: "manual", signal, headers });
+    const isRedirect = res.status >= 300 && res.status < 400;
+    const location = res.headers.get("location");
+    if (!isRedirect || !location) {
+      return { res, finalUrl: current };
+    }
+    if (hop >= MAX_REDIRECTS) {
+      throw new Error(`Too many redirects fetching ${url.href} (stopped at ${current.href})`);
+    }
+    current = assertPublicUrl(new URL(location, current).href);
+  }
+}
+
+/**
+ * Read a response body up to `maxBytes`, stopping the underlying stream as
+ * soon as the cap is hit instead of buffering the whole thing first. A
+ * server that ignores Content-Length (or lies about it) can otherwise be
+ * used to exhaust process memory before `truncateResult` ever runs.
+ */
+async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.length;
+    if (total > maxBytes) {
+      const keep = value.length - (total - maxBytes);
+      if (keep > 0) chunks.push(value.subarray(0, keep));
+      await reader.cancel();
+      break;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf-8");
+}
+
 /** Collapse an HTML document down to readable plain text (best-effort, no deps). */
 function htmlToText(html: string): string {
   return html
@@ -86,16 +149,13 @@ export async function fetchUrlText(raw: string, maxChars = DEFAULT_MAX_CHARS): P
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let res: Response;
+  let finalUrl: URL;
   try {
-    res = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        // Some servers 403 an unknown agent; identify honestly.
-        "User-Agent": "kritya-agent/1.0 (+https://github.com/) fetch_url",
-        Accept: "text/html,application/xhtml+xml,application/json,text/plain,*/*",
-      },
-    });
+    ({ res, finalUrl } = await fetchFollowingRedirects(url, controller.signal, {
+      // Some servers 403 an unknown agent; identify honestly.
+      "User-Agent": "kritya-agent/1.0 (+https://github.com/) fetch_url",
+      Accept: "text/html,application/xhtml+xml,application/json,text/plain,*/*",
+    }));
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`Timed out after ${FETCH_TIMEOUT_MS / 1000}s fetching ${url.href}`, {
@@ -110,18 +170,18 @@ export async function fetchUrlText(raw: string, maxChars = DEFAULT_MAX_CHARS): P
   }
 
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} for ${url.href}`);
+    throw new Error(`HTTP ${res.status} ${res.statusText} for ${finalUrl.href}`);
   }
   const contentType = res.headers.get("content-type") ?? "";
   if (!/text\/|application\/(json|xml|xhtml)|\+xml|\+json/i.test(contentType) && contentType) {
     throw new Error(
-      `Refusing to fetch non-text content (${contentType}) from ${url.href}. ` +
+      `Refusing to fetch non-text content (${contentType}) from ${finalUrl.href}. ` +
         `fetch_url only reads web pages, docs, and APIs — not binaries.`
     );
   }
-  const body = await res.text();
+  const body = await readBodyCapped(res, MAX_RESPONSE_BYTES);
   const text = /html/i.test(contentType) ? htmlToText(body) : body.trim();
-  const header = `URL: ${url.href}\nContent-Type: ${contentType || "unknown"}\n\n`;
+  const header = `URL: ${finalUrl.href}\nContent-Type: ${contentType || "unknown"}\n\n`;
   return truncateResult(header + (text || "(empty response body)"), maxChars);
 }
 
