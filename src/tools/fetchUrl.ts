@@ -98,9 +98,13 @@ export async function fetchUrlText(raw: string, maxChars = DEFAULT_MAX_CHARS): P
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Timed out after ${FETCH_TIMEOUT_MS / 1000}s fetching ${url.href}`);
+      throw new Error(`Timed out after ${FETCH_TIMEOUT_MS / 1000}s fetching ${url.href}`, {
+        cause: err,
+      });
     }
-    throw new Error(`Could not fetch ${url.href}: ${err instanceof Error ? err.message : err}`);
+    throw new Error(`Could not fetch ${url.href}: ${err instanceof Error ? err.message : err}`, {
+      cause: err,
+    });
   } finally {
     clearTimeout(timer);
   }

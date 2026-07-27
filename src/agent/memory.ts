@@ -100,7 +100,7 @@ function sanitizeFacts(text: string): string[] {
 /** Reads the existing auto-memory bullet list from KRITYA.md, if any. */
 function readExistingFacts(workspace: string): { before: string; after: string; facts: string[] } {
   const file = path.join(workspace, MEMORY_FILE);
-  let content = "";
+  let content: string;
   try {
     content = fs.readFileSync(file, "utf8");
   } catch {

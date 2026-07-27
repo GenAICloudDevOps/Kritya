@@ -27,7 +27,7 @@ export const writeFileTool: ToolDef = {
     `Write ${args.path} (${Buffer.byteLength(String(args.content ?? ""), "utf8")} bytes)`,
   async preview(args, ctx) {
     const abs = resolveSafe(ctx.workspace, String(args.path));
-    let existing = "";
+    let existing: string;
     try {
       existing = await fs.readFile(abs, "utf8");
     } catch {
