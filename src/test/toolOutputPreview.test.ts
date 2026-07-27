@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { toolOutputPreview } from "../ui/App.js";
+import { toolOutputPreview } from "../ui/toolOutputPreview.js";
 
 test("short, non-error output is shown in full, up to 3 lines", () => {
   const out = toolOutputPreview("line one\nline two", false, 80);

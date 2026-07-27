@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
-import path from "node:path";
 import fg from "fast-glob";
 import stringWidth from "string-width";
 import type { Agent } from "../agent/loop.js";
@@ -14,13 +13,13 @@ import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { TaskItem, UiBridge } from "../types.js";
-import { Banner } from "./Banner.js";
-import { truncateToWidth } from "./inline.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
+import { StatusLine } from "./StatusLine.js";
+import { TranscriptItem } from "./TranscriptItem.js";
 import { tailForViewport, terminalColumns, terminalRows } from "./viewport.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
@@ -45,45 +44,6 @@ export interface AppProps {
   resumeSessions?: SessionMeta[];
   customCommands?: CustomCommand[];
   mcpToolCount?: number;
-}
-
-/**
- * Preview of tool output: a few lines by default, everything when verbose.
- * Tabs are expanded first — `read` emits a padded line number and a tab, which
- * the terminal takes to the next 8-column stop, leaving a ragged gap that made
- * previews look broken. Lines are clipped rather than wrapped, so a preview
- * stays the size it claims to be.
- */
-export function toolOutputPreview(
-  output: string,
-  verbose: boolean,
-  width: number,
-  isError = false
-): string {
-  const lines = output
-    .replace(/\s+$/, "")
-    .split("\n")
-    // The untrusted-content fence is an instruction to the model about how to
-    // treat what follows. It says nothing to the person reading the screen.
-    .filter((l) => !/^<<<(end_)?external_untrusted_content/i.test(l.trim()))
-    .map((l) => l.replace(/^(\s*\d+)\t/, "$1 ").replace(/\t/g, "  "));
-  while (lines.length && !lines[0].trim()) lines.shift();
-  // Drop indentation every line shares — `read` pads its line numbers to five
-  // columns, which is dead space in a preview that is already indented.
-  const common = Math.min(
-    ...lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)![0].length),
-    Infinity
-  );
-  if (common > 0 && common < Infinity) {
-    for (let i = 0; i < lines.length; i++) lines[i] = lines[i].slice(common);
-  }
-  if (verbose) return lines.join("\n");
-  // A failure is exactly when the detail is worth the rows.
-  const keep = isError ? 8 : 3;
-  const head = lines.slice(0, keep).map((l) => truncateToWidth(l, width));
-  return lines.length > keep
-    ? `${head.join("\n")}\n… (+${lines.length - keep} lines · Ctrl+O)`
-    : head.join("\n");
 }
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
@@ -532,45 +492,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Static key={staticKey} items={items}>
-        {(item) => (
-          <Box key={item.id} marginBottom={item.kind === "tool" ? 0 : 1} flexDirection="column">
-            {item.kind === "user" && (
-              <Text>
-                <Text bold color="green">
-                  ❯{" "}
-                </Text>
-                {item.text}
-              </Text>
-            )}
-            {item.kind === "assistant" && <Markdown text={item.text} />}
-            {item.kind === "tool" && (
-              <Box flexDirection="column">
-                <Text dimColor>
-                  {item.error ? <Text color="red">✗</Text> : <Text color="green">✓</Text>}{" "}
-                  {item.summary}
-                  {item.resultSummary && !verbose ? ` — ${item.resultSummary}` : ""}
-                </Text>
-                {item.output &&
-                  item.output.trim() &&
-                  (item.resultSummary === undefined || verbose) && (
-                    <Text dimColor>
-                      {toolOutputPreview(
-                        item.output,
-                        verbose,
-                        Math.max(20, terminalColumns(stdout) - 6),
-                        item.error
-                      )
-                        .split("\n")
-                        .map((l) => `    ${l}`)
-                        .join("\n")}
-                    </Text>
-                  )}
-              </Box>
-            )}
-            {item.kind === "info" && <Text dimColor>{item.text}</Text>}
-            {item.kind === "banner" && <Banner subtitle={item.subtitle} />}
-          </Box>
-        )}
+        {(item) => <TranscriptItem key={item.id} item={item} verbose={verbose} stdout={stdout} />}
       </Static>
 
       {stream ? (
@@ -771,55 +693,27 @@ export function App({
       )}
 
       <Box>
-        <Text dimColor>
-          {killed ? (
-            <Text bold color="red">
-              ⛔ KILLED{killReason ? ` (${killReason})` : ""} ·{" "}
-            </Text>
-          ) : (
-            ""
-          )}
-          {dryRunMode ? (
-            <Text color="cyan">dry-run · </Text>
-          ) : planMode ? (
-            <Text color="cyan">plan · </Text>
-          ) : acceptEdits ? (
-            <Text color="green">accept edits ({autoApprovedCount} auto-approved) · </Text>
-          ) : (
-            ""
-          )}
-          {model}
-          {workflow ? (
-            <Text color="magenta">
-              {" "}
-              · ⚑ {workflow.name}:{workflow.phase}
-            </Text>
-          ) : (
-            ""
-          )}
-          {branch ? ` · ⎇ ${branch}` : ""}
-          {tasks.length > 0
-            ? ` · tasks ${tasks.filter((t) => t.status === "done").length}/${tasks.length}`
-            : ""}
-          {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""}
-          {budgetPct > 0 ? (
-            <Text color={budgetStopped ? "red" : budgetPct >= 80 ? "yellow" : undefined}>
-              {" "}
-              · budget {budgetPct}%
-            </Text>
-          ) : (
-            ""
-          )}
-          {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
-          {totalUsage.estimated ? "~" : ""}
-          {totalUsage.promptTokens.toLocaleString()} in
-          {(totalUsage.cachedPromptTokens ?? 0) > 0
-            ? ` (${Math.round(((totalUsage.cachedPromptTokens ?? 0) / totalUsage.promptTokens) * 100)}% cached)`
-            : ""}{" "}
-          / {totalUsage.completionTokens.toLocaleString()} out
-          {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""}
-          {verbose ? " · verbose" : ""} · {path.basename(workspace)}
-        </Text>
+        <StatusLine
+          killed={killed}
+          killReason={killReason}
+          dryRunMode={dryRunMode}
+          planMode={planMode}
+          acceptEdits={acceptEdits}
+          autoApprovedCount={autoApprovedCount}
+          model={model}
+          workflow={workflow}
+          branch={branch}
+          tasks={tasks}
+          ctxPct={ctxPct}
+          budgetPct={budgetPct}
+          budgetStopped={budgetStopped}
+          phase={phase}
+          elapsed={elapsed}
+          totalUsage={totalUsage}
+          totalCost={totalCost}
+          verbose={verbose}
+          workspace={workspace}
+        />
       </Box>
     </Box>
   );

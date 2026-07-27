@@ -5,13 +5,6 @@ import { gitBranch } from "../git/git.js";
 import { listProviders, resolveProvider, saveConfig, type CliConfig } from "../config/config.js";
 import { contextWindowFor } from "../config/models.js";
 import { ProviderClient, RetryExhaustedError } from "../provider/client.js";
-import { crossedContextWarnThreshold } from "../agent/contextWarning.js";
-import {
-  cacheSavingsFor,
-  costFor,
-  crossedBudgetWarnThreshold,
-  tokenBudgetFor,
-} from "../agent/budget.js";
 import { KillSwitchError } from "../agent/killSwitch.js";
 import {
   loadProjectState,
@@ -20,9 +13,12 @@ import {
   type ProjectState,
   type WorkflowPhase,
 } from "../agent/workflow.js";
-import { SessionStore, type SessionMeta } from "../session/store.js";
+import type { SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
-import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge, Usage } from "../types.js";
+import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge } from "../types.js";
+import { killActiveNotice, useKillSwitch } from "./useKillSwitch.js";
+import { useUsageBudget } from "./useUsageBudget.js";
+import { useSessionResume } from "./useSessionResume.js";
 
 export type Item = ItemBody & { id: number };
 
@@ -111,23 +107,12 @@ export function useAgent({
   const [permission, setPermission] = useState<PendingPermission | null>(null);
   const [model, setModel] = useState(modelRef.current);
   const [provider, setProvider] = useState(providerRef.current);
-  const [usageByModel, setUsageByModel] = useState<Record<string, Usage>>({});
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks ?? []);
-  const [ctxPct, setCtxPct] = useState(0);
-  const ctxPctRef = useRef(0);
-  const [tokenBudget, setTokenBudget] = useState(() => tokenBudgetFor(config));
-  const [budgetPct, setBudgetPct] = useState(0);
-  const budgetPctRef = useRef(0);
-  const [budgetUsed, setBudgetUsed] = useState(0);
-  const totalTokensRef = useRef(0);
-  const [budgetStopped, setBudgetStopped] = useState(false);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
   /** The manual Shift+Tab read-only toggle — independent of the project
    *  workflow's own `planMode`. */
   const [dryRunMode, setDryRunMode] = useState(false);
-  const [killed, setKilled] = useState(agent.kill.active);
-  const [killReason, setKillReason] = useState<string | undefined>(agent.kill.reason);
   const [acceptEdits, setAcceptEdits] = useState(false);
   const [autoApprovedCount, setAutoApprovedCount] = useState(0);
   const hasConfirmedAcceptEdits = useRef(false);
@@ -153,6 +138,36 @@ export function useAgent({
       return [...prev, { ...next, id: nextId.current++ }];
     });
   }, []);
+
+  const {
+    usageByModel,
+    totalUsage,
+    totalCost,
+    costReport,
+    ctxPct,
+    setCtxPct,
+    tokenBudget,
+    budgetPct,
+    budgetUsed,
+    budgetStopped,
+    resetBudget,
+    setBudgetLimit,
+    recordUsage,
+    totalTokensRef,
+  } = useUsageBudget({ agent, config, modelRef, model, addItem, abortRef });
+
+  const { killed, killReason, engageKill, releaseKill } = useKillSwitch({
+    agent,
+    addItem,
+    abortRef,
+    permission,
+    setPermission,
+    setInFlight,
+    setActivity,
+    setStream,
+    setThinking,
+    setPhase,
+  });
 
   useEffect(() => {
     uiBridge.onTasksUpdate = setTasks;
@@ -213,66 +228,6 @@ export function useAgent({
     if (confirmed) enterAcceptEdits();
   };
 
-  /** The line shown for anything the user tries while the switch is engaged. */
-  const killActiveNotice = (reason?: string): string =>
-    `⛔ Kill switch ACTIVE${reason ? ` — ${reason}` : ""}. Nothing will run. ` +
-    `Release it with /kill off.`;
-
-  /**
-   * Engage the kill switch: abort the in-flight turn, answer any open
-   * permission prompt with "no" (otherwise the tool call would hang forever
-   * waiting on a promise nobody will resolve), and drop back to the input
-   * line. The agent-side gates in agent/loop.ts are what actually enforce it;
-   * this is the UI half.
-   */
-  const engageKill = (reason?: string) => {
-    if (!agent.kill.engage(reason)) return; // already engaged
-    setKilled(true);
-    setKillReason(agent.kill.reason);
-    abortRef.current?.abort();
-    permission?.resolve("no");
-    setPermission(null);
-    setInFlight([]);
-    setActivity(null);
-    setStream("");
-    setThinking(false);
-    setPhase("input");
-    agent.audit?.logTool({
-      tool: "kill-switch",
-      summary: `kill switch engaged${agent.kill.reason ? `: ${agent.kill.reason}` : ""}`,
-      outcome: "blocked",
-    });
-    agent.turnSpan?.addEvent("kill_switch.engaged", {
-      "kritya.kill_reason": agent.kill.reason ?? "",
-    });
-    process.stdout.write("\x07"); // bell: something just stopped hard
-    addItem({
-      kind: "info",
-      text:
-        `⛔ KILL SWITCH ENGAGED${agent.kill.reason ? ` — ${agent.kill.reason}` : ""}.\n` +
-        `Everything in flight was aborted; no model calls, tools, or subagents will run.\n` +
-        `Release it with /kill off when you're ready to continue.`,
-    });
-  };
-
-  const releaseKill = () => {
-    if (!agent.kill.release()) {
-      addItem({ kind: "info", text: "The kill switch isn't engaged." });
-      return;
-    }
-    setKilled(false);
-    setKillReason(undefined);
-    agent.audit?.logTool({
-      tool: "kill-switch",
-      summary: "kill switch released",
-      outcome: "ok",
-    });
-    addItem({
-      kind: "info",
-      text: "Kill switch released — the agent can run again. The interrupted turn is not resumed; send a new message.",
-    });
-  };
-
   const setModelEverywhere = (id: string) => {
     modelRef.current = id;
     setModel(id);
@@ -320,55 +275,6 @@ export function useAgent({
     addItem({ kind: "info", text: note });
   };
 
-  const totalUsage = Object.values(usageByModel).reduce(
-    (acc, u) => ({
-      promptTokens: acc.promptTokens + u.promptTokens,
-      completionTokens: acc.completionTokens + u.completionTokens,
-      cachedPromptTokens: (acc.cachedPromptTokens ?? 0) + (u.cachedPromptTokens ?? 0),
-      estimated: acc.estimated || Boolean(u.estimated),
-    }),
-    { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, estimated: false }
-  );
-
-  const totalCost = Object.entries(usageByModel).reduce((sum, [id, u]) => {
-    const p = config.pricing?.[id];
-    return p ? sum + costFor(u, p) : sum;
-  }, 0);
-
-  const costReport = () => {
-    const lines = Object.entries(usageByModel).map(([id, u]) => {
-      const p = config.pricing?.[id];
-      const dollars = p ? ` ≈ $${costFor(u, p).toFixed(4)}` : "";
-      const cached = u.cachedPromptTokens ?? 0;
-      const hitRate =
-        cached > 0 && u.promptTokens > 0
-          ? ` (${cached.toLocaleString()} cached, ${Math.round((cached / u.promptTokens) * 100)}% hit rate)`
-          : "";
-      // Some providers omit real token counts; those turns fall back to a
-      // text-length estimate (see agent/loop.ts). Flag it here rather than
-      // let an approximate number pass as an exact one.
-      const estNote = u.estimated ? " (some figures estimated — provider didn't report usage)" : "";
-      return `  ${id}: ${u.promptTokens.toLocaleString()} in${hitRate} / ${u.completionTokens.toLocaleString()} out${dollars}${estNote}`;
-    });
-    if (!lines.length) return "No usage yet this session.";
-    const totalSavings = Object.entries(usageByModel).reduce((sum, [id, u]) => {
-      const p = config.pricing?.[id];
-      return p ? sum + cacheSavingsFor(u, p) : sum;
-    }, 0);
-    const savingsNote =
-      totalSavings > 0 ? ` (saved $${totalSavings.toFixed(4)} via prompt caching)` : "";
-    const total = totalCost > 0 ? `\nEstimated total: $${totalCost.toFixed(4)}${savingsNote}` : "";
-    const ctxNote = `\nContext window: ${ctxPctRef.current}% used`;
-    const budgetNote =
-      `\nToken budget: ${budgetUsed.toLocaleString()} / ${tokenBudget.toLocaleString()} ` +
-      `(${budgetPct}%)${budgetStopped ? " — STOPPED, run /budget reset or /budget <number>" : ""}`;
-    const hint =
-      totalCost > 0
-        ? ""
-        : `\nTip: add per-model prices (USD per 1M tokens) to ~/.kritya/config.json to see $ estimates:\n  "pricing": { "${model}": { "input": 0.6, "output": 2.4, "cachedInput": 0.15 } }\n("cachedInput" is optional — the discounted rate for cache-hit prompt tokens, for cache-savings reporting.)`;
-    return `Usage this session:\n${lines.join("\n")}${total}${ctxNote}${budgetNote}${hint}`;
-  };
-
   /** Re-read the workflow pointer from disk after anything that may have moved it. */
   const refreshWorkflow = useCallback(() => {
     setWorkflow(loadProjectState(workspace));
@@ -397,24 +303,6 @@ export function useAgent({
         : `✓ ${current} phase done — the workflow is complete. /project clear ends it.`,
     });
   }, [workspace, addItem, setRunningPhase]);
-
-  const resetBudget = () => {
-    totalTokensRef.current = 0;
-    budgetPctRef.current = 0;
-    setBudgetUsed(0);
-    setBudgetPct(0);
-    setBudgetStopped(false);
-    addItem({ kind: "info", text: "Token budget usage reset for this session." });
-  };
-
-  const setBudgetLimit = (n: number) => {
-    setTokenBudget(n);
-    const pct = Math.min(999, Math.round((totalTokensRef.current / n) * 100));
-    budgetPctRef.current = pct;
-    setBudgetPct(pct);
-    if (pct < 100) setBudgetStopped(false);
-    addItem({ kind: "info", text: `Token budget set to ${n.toLocaleString()} for this session.` });
-  };
 
   const runWebSearch = async (query: string) => {
     if (agent.kill.active) {
@@ -505,69 +393,7 @@ export function useAgent({
               `Provider error${status ? ` (${status})` : ""} — retrying (attempt ${attempt})…`
             );
           },
-          onUsage: (u) => {
-            const pct = Math.round(agent.contextUsage() * 100);
-            if (crossedContextWarnThreshold(ctxPctRef.current, pct)) {
-              addItem({
-                kind: "info",
-                text: `⚠ Context usage at ${pct}% — kritya will auto-compact older history soon to stay within the model's context window.`,
-              });
-            }
-            ctxPctRef.current = pct;
-            setCtxPct(pct);
-            const id = modelRef.current;
-            setUsageByModel((prev) => ({
-              ...prev,
-              [id]: {
-                promptTokens: (prev[id]?.promptTokens ?? 0) + u.promptTokens,
-                completionTokens: (prev[id]?.completionTokens ?? 0) + u.completionTokens,
-                cachedPromptTokens:
-                  (prev[id]?.cachedPromptTokens ?? 0) + (u.cachedPromptTokens ?? 0),
-                // Once any turn's usage for this model was estimated rather
-                // than provider-reported, the running total is no longer
-                // exact — keep it flagged for the rest of the session.
-                estimated: Boolean(prev[id]?.estimated) || Boolean(u.estimated),
-              },
-            }));
-
-            totalTokensRef.current += u.promptTokens + u.completionTokens;
-            setBudgetUsed(totalTokensRef.current);
-            const bPct = Math.min(999, Math.round((totalTokensRef.current / tokenBudget) * 100));
-            if (crossedBudgetWarnThreshold(budgetPctRef.current, bPct)) {
-              addItem({
-                kind: "info",
-                text:
-                  `⚠ Token budget at ${bPct}% (${totalTokensRef.current.toLocaleString()} / ` +
-                  `${tokenBudget.toLocaleString()} tokens this session). kritya will stop once it ` +
-                  `hits 100% — run /budget to check or raise it.`,
-              });
-              agent.audit?.logTool({
-                tool: "budget",
-                summary: `token budget at ${bPct}% (${totalTokensRef.current}/${tokenBudget})`,
-                outcome: "ok",
-              });
-              agent.turnSpan?.addEvent("budget.warn", { "kritya.budget_pct": bPct });
-            }
-            if (bPct >= 100 && budgetPctRef.current < 100) {
-              addItem({
-                kind: "info",
-                text:
-                  `⛔ Token budget reached (${totalTokensRef.current.toLocaleString()} / ` +
-                  `${tokenBudget.toLocaleString()} tokens). Stopping further turns — run ` +
-                  `/budget reset to clear it, or /budget <number> to raise the cap.`,
-              });
-              agent.audit?.logTool({
-                tool: "budget",
-                summary: `token budget reached, stopping (${totalTokensRef.current}/${tokenBudget})`,
-                outcome: "blocked",
-              });
-              agent.turnSpan?.addEvent("budget.stopped", { "kritya.budget_pct": bPct });
-              setBudgetStopped(true);
-              abortRef.current?.abort();
-            }
-            budgetPctRef.current = bPct;
-            setBudgetPct(bPct);
-          },
+          onUsage: recordUsage,
         },
         ac.signal,
         images
@@ -628,44 +454,13 @@ export function useAgent({
     pending?.resolve(decision);
   };
 
-  const agentLoadSession = (file: string): number => {
-    const messages = SessionStore.loadFile(file);
-    agent.loadHistory(messages);
-    const replay = messages.filter(
-      (m) =>
-        (m.role === "user" || m.role === "assistant") &&
-        typeof m.content === "string" &&
-        m.content.trim() &&
-        !(m.role === "user" && m.content.startsWith("["))
-    );
-    for (const m of replay.slice(-6)) {
-      addItem({
-        kind: m.role === "user" ? "user" : "assistant",
-        text: String(m.content),
-      });
-    }
-    return messages.length;
-  };
-
-  const onResumeSelect = (file: string) => {
-    setPhase("input");
-    if (!file) {
-      addItem({ kind: "info", text: "Starting a fresh session." });
-      return;
-    }
-    const meta = resumeSessions?.find((s) => s.file === file);
-    const messages = agentLoadSession(file);
-    const restoredTasks = SessionStore.loadTasksForSession(file);
-    setTasks(restoredTasks);
-    const done = restoredTasks.filter((t) => t.status === "done").length;
-    const taskNote = restoredTasks.length
-      ? ` — checklist restored (${done}/${restoredTasks.length} done)`
-      : "";
-    addItem({
-      kind: "info",
-      text: `Resumed session from ${meta?.date ?? "?"} (${messages} messages)${taskNote}.`,
-    });
-  };
+  const { onResumeSelect } = useSessionResume({
+    agent,
+    resumeSessions,
+    addItem,
+    setPhase,
+    setTasks,
+  });
 
   return {
     items,
