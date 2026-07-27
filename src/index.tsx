@@ -11,6 +11,7 @@ import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
+import { runSkillsCli } from "./agent/skillsCli.js";
 import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
 import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
@@ -70,6 +71,9 @@ Headless / CI mode (no terminal UI, exits with 0 on success / 1 on failure):
 Inspect the local audit log:
   kritya audit --list | --verify [file] | --show [file]
 
+List and validate skills:
+  kritya skills [dir] [--json] [--validate]
+
 Setup:
   1. Get an API key at https://build.nvidia.com (free credits available)
   2. export NVIDIA_API_KEY=nvapi-...        (Linux/macOS)
@@ -128,6 +132,12 @@ function parseArgs(argv: string[]) {
 // directory-based argv parsing below even looks at it.
 if (process.argv[2] === "audit") {
   process.exit(runAuditCli(process.argv.slice(3)));
+}
+
+// `kritya skills` is likewise a standalone inspection subcommand, dispatched
+// the same way and for the same reason.
+if (process.argv[2] === "skills") {
+  process.exit(runSkillsCli(process.argv.slice(3)));
 }
 
 const args = parseArgs(process.argv.slice(2));

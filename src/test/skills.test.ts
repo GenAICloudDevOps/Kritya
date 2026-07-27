@@ -7,6 +7,7 @@ import {
   buildSkillsSection,
   parseSkillFrontmatter,
   scanSkills,
+  scanSkillsDetailed,
   skillsDir,
   userSkillsDir,
   _setWarnSink,
@@ -173,6 +174,31 @@ test("scanSkills scans multiple roots and keeps the first match on a name collis
   } finally {
     _setWarnSink(prevSink);
   }
+});
+
+test("scanSkillsDetailed reports why each skipped skill was skipped", () => {
+  const root = tmpWorkspace();
+  writeSkill(root, "off", { description: "should not load", extraFrontmatter: "disabled: true" });
+  writeSkill(root, "ok", { description: "fine" });
+  const dir = path.join(root, "mismatched");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "SKILL.md"),
+    "---\nname: different-name\ndescription: does stuff\n---\n\nBody.\n"
+  );
+  const { loaded, skipped } = scanSkillsDetailed([root]);
+  assert.deepEqual(
+    loaded.map((s) => s.name),
+    ["ok"]
+  );
+  assert.deepEqual(skipped.map((s) => s.name).sort(), ["mismatched", "off"]);
+  const offSkip = skipped.find((s) => s.name === "off");
+  assert.equal(offSkip!.reason, "disabled: true");
+  const mismatchedSkip = skipped.find((s) => s.name === "mismatched");
+  assert.match(
+    mismatchedSkip!.reason,
+    /folder name "mismatched".*frontmatter name "different-name"/
+  );
 });
 
 test("skillsDir joins the workspace with .kritya/skills", () => {

@@ -64,18 +64,29 @@ export function _setWarnSink(sink: (message: string) => void): (message: string)
   return prev;
 }
 
+export interface SkippedSkill {
+  /** The folder name -- often the problem itself, e.g. when it doesn't match the frontmatter name. */
+  name: string;
+  dir: string;
+  reason: string;
+}
+
+export interface SkillScanResult {
+  loaded: DiscoveredSkill[];
+  skipped: SkippedSkill[];
+}
+
 /**
- * Scans each root for `<name>/SKILL.md` folders, in name order. Roots that
- * don't exist are skipped silently -- an unconfigured skills directory is not
- * a warning-worthy condition. A folder without a SKILL.md is not a skill and
- * is skipped without comment; a SKILL.md that IS present but malformed (no
- * frontmatter, or missing name/description) is skipped with a warning, since
- * that's a mistake in the user's own skill file they'd want to know about.
- * On a name collision across or within roots, the first one found wins and
- * the rest are skipped with a warning.
+ * Scans each root for `<name>/SKILL.md` folders, in name order, and reports
+ * both what loaded and why anything didn't (used by `kritya skills` to help
+ * authors debug a skill that isn't showing up). Roots that don't exist are
+ * skipped silently -- an unconfigured skills directory isn't noteworthy. A
+ * folder without a SKILL.md is not a skill and isn't reported at all. On a
+ * name collision across or within roots, the first one found wins.
  */
-export function scanSkills(roots: string[]): DiscoveredSkill[] {
+export function scanSkillsDetailed(roots: string[]): SkillScanResult {
   const seen = new Map<string, DiscoveredSkill>();
+  const skipped: SkippedSkill[] = [];
   for (const root of roots) {
     let entries: fs.Dirent[];
     try {
@@ -97,32 +108,57 @@ export function scanSkills(roots: string[]): DiscoveredSkill[] {
       }
       const parsed = parseSkillFrontmatter(raw);
       if (!parsed) {
-        warn(`skipping ${skillFile}: missing frontmatter block`);
+        skipped.push({ name: entry.name, dir, reason: "missing frontmatter block" });
         continue;
       }
       const { meta } = parsed;
       if (!meta.name || !meta.description) {
-        warn(`skipping ${skillFile}: frontmatter must include "name" and "description"`);
+        skipped.push({
+          name: entry.name,
+          dir,
+          reason: 'frontmatter must include "name" and "description"',
+        });
         continue;
       }
-      if (meta.disabled === "true") continue;
+      if (meta.disabled === "true") {
+        skipped.push({ name: entry.name, dir, reason: "disabled: true" });
+        continue;
+      }
       if (meta.name !== entry.name) {
-        warn(
-          `skipping ${skillFile}: folder name "${entry.name}" does not match frontmatter name "${meta.name}"`
-        );
+        skipped.push({
+          name: entry.name,
+          dir,
+          reason: `folder name "${entry.name}" does not match frontmatter name "${meta.name}"`,
+        });
         continue;
       }
       const existing = seen.get(meta.name);
       if (existing) {
-        warn(
-          `skipping ${skillFile}: duplicate skill name "${meta.name}" (already loaded from ${existing.dir})`
-        );
+        skipped.push({
+          name: entry.name,
+          dir,
+          reason: `duplicate skill name "${meta.name}" (already loaded from ${existing.dir})`,
+        });
         continue;
       }
       seen.set(meta.name, { name: meta.name, description: meta.description, dir, meta });
     }
   }
-  return [...seen.values()];
+  return { loaded: [...seen.values()], skipped };
+}
+
+/**
+ * Same scan as scanSkillsDetailed, but for the common case that only wants
+ * the loaded list, warning (once per skip) about anything malformed. A
+ * disabled skill is intentional, not a mistake, so it doesn't warn.
+ */
+export function scanSkills(roots: string[]): DiscoveredSkill[] {
+  const { loaded, skipped } = scanSkillsDetailed(roots);
+  for (const s of skipped) {
+    if (s.reason === "disabled: true") continue;
+    warn(`skipping ${path.join(s.dir, "SKILL.md")}: ${s.reason}`);
+  }
+  return loaded;
 }
 
 export function skillsDir(workspace: string): string {
