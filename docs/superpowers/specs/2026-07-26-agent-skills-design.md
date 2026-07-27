@@ -19,10 +19,19 @@ the domain-specific skills themselves are a separate, later effort.
   `load_skill` call (no session-start caching) so skills added mid-session
   work immediately. Cost is a handful of small file reads — not worth trading
   for staleness risk.
-- **Frontmatter parsing**: minimal regex-based extraction of `name` and
-  `description` from the leading `---`-delimited block. No YAML dependency —
-  Skill frontmatter here is two flat string fields, and a full YAML parser
-  would be a disproportionate dependency for that.
+- **Frontmatter parsing**: minimal regex-based extraction of all
+  `key: value` lines in the leading `---`-delimited block into a generic
+  `Record<string, string>`; `name` and `description` are read off that map.
+  No YAML dependency — these are flat string fields, so a full YAML parser
+  would be a disproportionate dependency. Keeping the rest of the map (even
+  though only two fields are used today) means an optional spec field (e.g.
+  `license`, `allowed-tools`) can be read later without touching the parser
+  again. This has no effect on prompt/token cost — only `name` and
+  `description` are ever injected into the system prompt.
+- **Discovery roots**: `scanSkills(roots: string[])` takes a list of
+  directories to scan, even though it is only ever called with
+  `[.kritya/skills]` today. Adding a second root (e.g. a future user-level
+  `~/.kritya/skills/`) is then a one-line call-site change, not a rewrite.
 - **Activation mechanism**: a dedicated `load_skill` tool (not reuse of
   `read_file`), so skill usage is explicit and trackable rather than an
   implicit convention the model has to infer.
@@ -31,19 +40,26 @@ the domain-specific skills themselves are a separate, later effort.
   scripts via the existing `shellTool`, which already goes through kritya's
   permission gate. This keeps `load_skill` a pure read with no new execution
   surface.
+- **Telemetry**: `load_skill` opens a `skill.load` span (same
+  `NOOP_TRACER`/`Tracer` pattern already used for `llm.chat` in
+  `provider/client.ts`) with a `kritya.skill_name` attribute, so which skills
+  actually get used is observable without adding instrumentation later.
 
 ## Architecture
 
 ```
 src/
 ├── agent/
-│   ├── skills.ts        discovery: scan .kritya/skills/*/SKILL.md, parse
-│   │                    frontmatter, return [{name, description, dir}]
+│   ├── skills.ts        discovery: scanSkills(roots) scans each root's
+│   │                    */SKILL.md, parses frontmatter into a generic
+│   │                    Record<string, string>, returns [{name, description,
+│   │                    dir, meta}] (called today with roots=[.kritya/skills])
 │   └── systemPrompt.ts  +skillsSection(): injects name+description list,
 │                        omitted entirely when no skills exist
 └── tools/
     └── skills.ts        loadSkillTool: looks up name in discovery result,
-                          returns SKILL.md body + bundled-file listing
+                          returns SKILL.md body + bundled-file listing,
+                          wraps execution in a skill.load trace span
 ```
 
 ## Key behaviors
@@ -76,10 +92,12 @@ src/
 
 ## Testing
 
-- **Unit**: `skills.test.ts` (discovery — valid parse, missing fields,
-  missing/empty directory, duplicate names) and `tools/skills.test.ts`
-  (`load_skill` — valid lookup, unknown-name error, traversal guard); a
-  `systemPrompt` case for section presence/absence and formatting.
+- **Unit**: `skills.test.ts` (discovery — valid parse, extra frontmatter
+  fields preserved in `meta`, missing required fields, missing/empty
+  directory, multiple roots, duplicate names) and `tools/skills.test.ts`
+  (`load_skill` — valid lookup, unknown-name error, traversal guard, span
+  recorded with `kritya.skill_name`); a `systemPrompt` case for section
+  presence/absence and formatting.
 - **Integration** (`loop.integration.test.ts` pattern): real `Agent` loop +
   real `loadSkillTool` against a real temp workspace with a `.kritya/skills/`
   fixture, scripted `ProviderClient` (round 1: `load_skill` tool call, round
