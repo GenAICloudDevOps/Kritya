@@ -56,6 +56,7 @@ function createWindow() {
   win.on("closed", () => {
     const engine = sessions.get(webContentsId);
     sessions.delete(webContentsId);
+    engine?.agent.kill.engage("window closed");
     rejectPendingPermissions(webContentsId);
     // engine.dispose() tears down backgroundManager/lspManager — process-wide
     // singletons, not scoped to this window's session. Calling it while other
