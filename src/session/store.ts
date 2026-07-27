@@ -165,6 +165,25 @@ export class SessionStore {
     }
   }
 
+  /**
+   * True if `filePath` is a real session transcript belonging to `workspace`
+   * — i.e. resolves inside that workspace's session directory. Callers that
+   * accept a session path from outside the process (e.g. the Electron
+   * renderer over IPC) must check this before loading it: without it,
+   * "load this session" is really "read any file the OS user can read".
+   */
+  static isSessionFile(workspace: string, filePath: string): boolean {
+    const dir = sessionDir(workspace);
+    const resolved = path.resolve(dir, filePath);
+    const relative = path.relative(dir, resolved);
+    return (
+      resolved.endsWith(".jsonl") &&
+      relative !== "" &&
+      !relative.startsWith("..") &&
+      !path.isAbsolute(relative)
+    );
+  }
+
   static loadFile(filePath: string): ChatMessage[] {
     const messages: ChatMessage[] = [];
     let raw: string;

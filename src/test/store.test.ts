@@ -142,3 +142,43 @@ test("saveTasks/loadTasksForSession round-trip and never leave a partial file (r
   const dirFiles = await fs.readdir(path.dirname(session.file));
   assert.ok(!dirFiles.some((f) => f.includes(".tmp-")));
 });
+
+test("isSessionFile accepts a real file inside that workspace's session directory", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-7`);
+  const workspace = "/tmp/some-workspace-g";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "hi" });
+  const [session] = SessionStore.listSessions(workspace);
+
+  assert.equal(SessionStore.isSessionFile(workspace, session.file), true);
+});
+
+test("isSessionFile rejects a path outside the workspace's session directory (traversal / arbitrary file read)", async () => {
+  const home = await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-8`);
+  const workspace = "/tmp/some-workspace-h";
+
+  const outside = path.join(home, "not-a-session.jsonl");
+  await fs.writeFile(outside, JSON.stringify({ role: "user", content: "secret" }) + "\n");
+
+  assert.equal(SessionStore.isSessionFile(workspace, outside), false);
+  assert.equal(SessionStore.isSessionFile(workspace, "/etc/passwd"), false);
+  assert.equal(SessionStore.isSessionFile(workspace, "../../etc/passwd"), false);
+});
+
+test("isSessionFile rejects a path from a different workspace's session directory", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-9`);
+  const workspaceA = "/tmp/some-workspace-i";
+  const workspaceB = "/tmp/some-workspace-j";
+
+  const storeB = new SessionStore(workspaceB);
+  storeB.start();
+  storeB.append({ role: "user", content: "hi" });
+  const [sessionB] = SessionStore.listSessions(workspaceB);
+
+  assert.equal(SessionStore.isSessionFile(workspaceA, sessionB.file), false);
+});

@@ -9,6 +9,7 @@ import { NOOP_TRACER, type Tracer } from "../telemetry/tracer.js";
 import { McpAuthRequiredError } from "./oauth.js";
 import { missingVars } from "./servers.js";
 import { HttpTransport, StdioTransport, type JsonRpcMessage, type Transport } from "./transport.js";
+import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
 
 /**
  * Model Context Protocol client with two transports and no SDK dependency
@@ -464,6 +465,15 @@ export function assertSafeUrl(name: string, url: string): URL {
     parsed = new URL(url);
   } catch {
     throw new Error(`server "${name}" has an invalid url: ${url}`);
+  }
+  // https alone doesn't mean the traffic (incl. any bearer token in headers)
+  // stays where the user intends — a config pointing at 169.254.169.254 or
+  // another private/internal address would still ship credentials there.
+  // Loopback is exempt: that's this app talking to itself, nothing to leak to.
+  if (!isLoopback(parsed.hostname) && isPrivateOrLoopbackHost(parsed.hostname)) {
+    throw new Error(
+      `server "${name}" points at a private/internal address (${parsed.hostname}) — refusing to connect.`
+    );
   }
   if (parsed.protocol === "https:") return parsed;
   if (parsed.protocol === "http:" && isLoopback(parsed.hostname)) return parsed;

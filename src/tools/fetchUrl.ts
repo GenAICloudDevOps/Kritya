@@ -1,5 +1,7 @@
+import { lookup as dnsLookup } from "node:dns/promises";
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
+import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
 
 /** Cap on how much text a single fetch returns, unless the caller asks for less. */
 const DEFAULT_MAX_CHARS = 20_000;
@@ -40,24 +42,31 @@ function assertPublicUrl(raw: string): URL {
   ) {
     throw new Error(`Refusing to fetch a local address: ${host}`);
   }
-  // IPv4 private / loopback / link-local ranges, incl. cloud metadata (169.254.169.254).
-  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    const isPrivate =
-      a === 10 ||
-      a === 127 ||
-      (a === 192 && b === 168) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 169 && b === 254) ||
-      a === 0;
-    if (isPrivate) throw new Error(`Refusing to fetch a private/internal address: ${host}`);
-  }
-  // IPv6 loopback / unique-local (fc00::/7) / link-local (fe80::/10).
-  if (host.includes(":") && /^(fc|fd|fe8|fe9|fea|feb)/.test(host)) {
+  if (isPrivateOrLoopbackHost(host)) {
     throw new Error(`Refusing to fetch a private/internal address: ${host}`);
   }
   return url;
+}
+
+/**
+ * Resolve `hostname` and check whether any answer is private/loopback.
+ * assertPublicUrl only checks the literal hostname string, so a
+ * public-looking name that resolves (now, or on a later request) to an
+ * internal IP — DNS rebinding, or simply attacker-controlled DNS — slips
+ * past it. This closes that gap for the initial request; lookupFn is
+ * injectable for tests, and defaults to a real DNS resolution.
+ */
+export async function hostResolvesToPrivateAddress(
+  hostname: string,
+  lookupFn: typeof dnsLookup = dnsLookup
+): Promise<boolean> {
+  try {
+    const addresses = await lookupFn(hostname, { all: true });
+    return addresses.some((a) => isPrivateOrLoopbackHost(a.address));
+  } catch {
+    // Unresolvable host — let the actual fetch fail naturally with its own error.
+    return false;
+  }
 }
 
 /** Refuse to keep chasing redirects forever. */
@@ -69,12 +78,19 @@ const MAX_REDIRECTS = 5;
  * 302s to 169.254.169.254 or localhost would otherwise sail straight past
  * the initial check, since `redirect: "follow"` never re-validates.
  */
+async function assertNotDnsRebound(url: URL): Promise<void> {
+  if (await hostResolvesToPrivateAddress(url.hostname)) {
+    throw new Error(`Refusing to fetch ${url.hostname}: resolves to a private/internal address`);
+  }
+}
+
 async function fetchFollowingRedirects(
   url: URL,
   signal: AbortSignal,
   headers: Record<string, string>
 ): Promise<{ res: Response; finalUrl: URL }> {
   let current = url;
+  await assertNotDnsRebound(current);
   for (let hop = 0; ; hop++) {
     const res = await fetch(current, { redirect: "manual", signal, headers });
     const isRedirect = res.status >= 300 && res.status < 400;
@@ -86,6 +102,7 @@ async function fetchFollowingRedirects(
       throw new Error(`Too many redirects fetching ${url.href} (stopped at ${current.href})`);
     }
     current = assertPublicUrl(new URL(location, current).href);
+    await assertNotDnsRebound(current);
   }
 }
 

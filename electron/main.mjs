@@ -10,6 +10,11 @@ import { createEngineSession } from "../dist/engine.js";
 import { SessionStore } from "../dist/session/store.js";
 import { loadConfig, listProviders } from "../dist/config/config.js";
 import { CURATED_MODELS } from "../dist/config/models.js";
+import {
+  isNonEmptyString,
+  isValidPermissionDecision,
+  isValidStartOpts,
+} from "../dist/electron/ipcValidation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,8 +37,14 @@ function createWindow() {
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   const webContentsId = win.webContents.id;
   win.on("closed", () => {
-    sessions.get(webContentsId)?.dispose();
+    const engine = sessions.get(webContentsId);
     sessions.delete(webContentsId);
+    // engine.dispose() tears down backgroundManager/lspManager — process-wide
+    // singletons, not scoped to this window's session. Calling it while other
+    // windows still have an active session would kill their background
+    // shells and LSP servers too. Only the window that empties the map
+    // should trigger the teardown.
+    if (sessions.size === 0) engine?.dispose();
   });
   return win;
 }
@@ -51,9 +62,17 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("kritya:start", async (event, dir, opts) => {
   const win = BrowserWindow.fromWebContents(event.sender);
+  if (dir !== undefined && !isNonEmptyString(dir)) {
+    return { ok: false, error: "Invalid workspace directory." };
+  }
+  if (!isValidStartOpts(opts)) {
+    return { ok: false, error: "Invalid start options." };
+  }
   try {
     const engine = await createEngineSession(dir || process.cwd(), opts || {});
-    sessions.get(event.sender.id)?.dispose();
+    // Not dispose() on a pre-existing session here: it tears down the
+    // process-wide backgroundManager/lspManager singletons other windows may
+    // still depend on — restarting this window's session doesn't need that.
     sessions.set(event.sender.id, engine);
     return {
       ok: true,
@@ -77,6 +96,13 @@ ipcMain.handle("kritya:list-sessions", (event) => {
 ipcMain.handle("kritya:load-session", (event, filePath) => {
   const engine = sessions.get(event.sender.id);
   if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  // filePath comes from the renderer; without this check "load this session"
+  // is really "read any file this OS user can read" (path traversal / arbitrary
+  // file read). Only files inside the current workspace's own session
+  // directory — the ones kritya:list-sessions actually returned — are valid.
+  if (!isNonEmptyString(filePath) || !SessionStore.isSessionFile(engine.workspace, filePath)) {
+    return { ok: false, error: "Not a valid session file for this workspace." };
+  }
   const messages = SessionStore.loadFile(filePath);
   engine.agent.loadHistory(messages);
   return { ok: true, messages };
@@ -95,6 +121,7 @@ ipcMain.handle("kritya:list-models", () => {
 ipcMain.handle("kritya:switch-model", (event, model) => {
   const engine = sessions.get(event.sender.id);
   if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  if (!isNonEmptyString(model)) return { ok: false, error: "Invalid model id." };
   engine.setModel(model);
   return { ok: true, model: engine.model };
 });
@@ -102,11 +129,18 @@ ipcMain.handle("kritya:switch-model", (event, model) => {
 ipcMain.handle("kritya:switch-provider", async (event, provider, model) => {
   const engine = sessions.get(event.sender.id);
   if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  if (!isNonEmptyString(provider)) return { ok: false, error: "Invalid provider name." };
+  if (model !== undefined && !isNonEmptyString(model)) {
+    return { ok: false, error: "Invalid model id." };
+  }
   try {
     const history = engine.agent.history;
     const next = await createEngineSession(engine.workspace, { provider, model });
     next.agent.loadHistory(history);
-    engine.dispose();
+    // Not engine.dispose() here: it tears down the same process-wide
+    // backgroundManager/lspManager singletons the new engine also uses, and
+    // that other windows may still depend on — nothing to clean up just for
+    // swapping the provider on one window's session.
     sessions.set(event.sender.id, next);
     return { ok: true, workspace: next.workspace, provider: next.provider, model: next.model };
   } catch (err) {
@@ -117,6 +151,7 @@ ipcMain.handle("kritya:switch-provider", async (event, provider, model) => {
 ipcMain.handle("kritya:prompt", async (event, text) => {
   const engine = sessions.get(event.sender.id);
   if (!engine) return { ok: false, error: "No active session — call kritya:start first." };
+  if (typeof text !== "string") return { ok: false, error: "Invalid prompt text." };
 
   const send = (channel, payload) => event.sender.send(channel, payload);
   let reqCounter = 0;
@@ -155,6 +190,7 @@ ipcMain.handle("kritya:prompt", async (event, text) => {
 });
 
 ipcMain.on("kritya:permission-response", (_event, id, decision) => {
+  if (!isNonEmptyString(id) || !isValidPermissionDecision(decision)) return;
   const resolve = pendingPermissions.get(id);
   if (resolve) {
     resolve(decision);
