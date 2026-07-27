@@ -11,10 +11,11 @@ const STANDARD_FONT_DATA_URL = fileURLToPath(
 );
 
 export async function readPdf(buf: Buffer): Promise<string> {
-  const doc = await getDocument({
+  const loadingTask = getDocument({
     data: new Uint8Array(buf),
     standardFontDataUrl: STANDARD_FONT_DATA_URL,
-  }).promise;
+  });
+  const doc = await loadingTask.promise;
   const pageTexts: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
@@ -24,7 +25,7 @@ export async function readPdf(buf: Buffer): Promise<string> {
       .join(" ");
     pageTexts.push(text);
   }
-  await doc.destroy();
+  await loadingTask.destroy();
   return pageTexts.join("\n\n");
 }
 
