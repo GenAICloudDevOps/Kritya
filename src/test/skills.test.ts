@@ -8,6 +8,7 @@ import {
   parseSkillFrontmatter,
   scanSkills,
   skillsDir,
+  userSkillsDir,
   _setWarnSink,
 } from "../agent/skills.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
@@ -80,6 +81,26 @@ test("scanSkills skips a folder missing description, with the rest still found",
   }
 });
 
+test("scanSkills skips a folder whose frontmatter name differs from its folder name", () => {
+  const root = tmpWorkspace();
+  const warnings: string[] = [];
+  const prevSink = _setWarnSink((msg) => warnings.push(msg));
+  try {
+    const dir = path.join(root, "my-folder");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "SKILL.md"),
+      "---\nname: different-name\ndescription: does stuff\n---\n\nBody.\n"
+    );
+    const found = scanSkills([root]);
+    assert.deepEqual(found, []);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /folder name "my-folder".*frontmatter name "different-name"/);
+  } finally {
+    _setWarnSink(prevSink);
+  }
+});
+
 test("scanSkills skips a folder with no SKILL.md", () => {
   const root = tmpWorkspace();
   fs.mkdirSync(path.join(root, "not-a-skill"), { recursive: true });
@@ -113,10 +134,32 @@ test("skillsDir joins the workspace with .kritya/skills", () => {
   assert.equal(skillsDir("/ws"), path.join("/ws", ".kritya", "skills"));
 });
 
+test("userSkillsDir joins the home config dir with skills", () => {
+  assert.equal(userSkillsDir(), path.join(os.homedir(), ".kritya", "skills"));
+});
+
+test("buildSkillsSection finds a skill that only exists in the user-global root", () => {
+  const ws = tmpWorkspace();
+  const userRoot = tmpWorkspace();
+  writeSkill(userRoot, "global-skill", { description: "Available everywhere" });
+  const section = buildSkillsSection(ws, [userRoot]);
+  assert.match(section, /global-skill: Available everywhere/);
+});
+
+test("buildSkillsSection prefers the project skill over a same-named user-global skill", () => {
+  const ws = tmpWorkspace();
+  const userRoot = tmpWorkspace();
+  writeSkill(skillsDir(ws), "dup", { description: "project version" });
+  writeSkill(userRoot, "dup", { description: "user version" });
+  const section = buildSkillsSection(ws, [userRoot]);
+  assert.match(section, /dup: project version/);
+  assert.doesNotMatch(section, /user version/);
+});
+
 test("buildSkillsSection lists discovered skills", () => {
   const ws = tmpWorkspace();
   writeSkill(skillsDir(ws), "ratio-analysis", { description: "Compute financial ratios" });
-  const section = buildSkillsSection(ws);
+  const section = buildSkillsSection(ws, []);
   assert.match(section, /# Available skills/);
   assert.match(section, /ratio-analysis: Compute financial ratios/);
   assert.match(section, /load_skill/);
@@ -124,19 +167,31 @@ test("buildSkillsSection lists discovered skills", () => {
 
 test("buildSkillsSection returns empty string when there are no skills", () => {
   const ws = tmpWorkspace();
-  assert.equal(buildSkillsSection(ws), "");
+  assert.equal(buildSkillsSection(ws, []), "");
 });
 
 test("buildSystemPrompt includes the skills section when a skill exists", () => {
   const ws = tmpWorkspace();
-  writeSkill(skillsDir(ws), "ratio-analysis", { description: "Compute financial ratios" });
-  const prompt = buildSystemPrompt(ws);
-  assert.match(prompt, /# Available skills/);
-  assert.match(prompt, /ratio-analysis: Compute financial ratios/);
+  const prevHome = os.homedir();
+  process.env.HOME = tmpWorkspace();
+  try {
+    writeSkill(skillsDir(ws), "ratio-analysis", { description: "Compute financial ratios" });
+    const prompt = buildSystemPrompt(ws);
+    assert.match(prompt, /# Available skills/);
+    assert.match(prompt, /ratio-analysis: Compute financial ratios/);
+  } finally {
+    process.env.HOME = prevHome;
+  }
 });
 
 test("buildSystemPrompt omits the skills section when there are none", () => {
   const ws = tmpWorkspace();
-  const prompt = buildSystemPrompt(ws);
-  assert.doesNotMatch(prompt, /# Available skills/);
+  const prevHome = os.homedir();
+  process.env.HOME = tmpWorkspace();
+  try {
+    const prompt = buildSystemPrompt(ws);
+    assert.doesNotMatch(prompt, /# Available skills/);
+  } finally {
+    process.env.HOME = prevHome;
+  }
 });

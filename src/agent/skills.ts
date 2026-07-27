@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export interface DiscoveredSkill {
@@ -88,6 +89,12 @@ export function scanSkills(roots: string[]): DiscoveredSkill[] {
         warn(`skipping ${skillFile}: frontmatter must include "name" and "description"`);
         continue;
       }
+      if (meta.name !== entry.name) {
+        warn(
+          `skipping ${skillFile}: folder name "${entry.name}" does not match frontmatter name "${meta.name}"`
+        );
+        continue;
+      }
       const existing = seen.get(meta.name);
       if (existing) {
         warn(
@@ -105,13 +112,23 @@ export function skillsDir(workspace: string): string {
   return path.join(workspace, ".kritya", "skills");
 }
 
+/** User-global skills root, available across all workspaces. */
+export function userSkillsDir(): string {
+  return path.join(os.homedir(), ".kritya", "skills");
+}
+
 /**
  * The system-prompt fragment listing discovered skills by name+description
  * only (progressive disclosure -- full instructions load via load_skill).
  * Returns "" when there are none, so non-skill workspaces pay zero prompt cost.
+ * The project root is scanned before any extra roots, so a project skill
+ * wins over a same-named user-global one.
  */
-export function buildSkillsSection(workspace: string): string {
-  const skills = scanSkills([skillsDir(workspace)]);
+export function buildSkillsSection(
+  workspace: string,
+  extraRoots: string[] = [userSkillsDir()]
+): string {
+  const skills = scanSkills([skillsDir(workspace), ...extraRoots]);
   if (!skills.length) return "";
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n");
   return `\n# Available skills\n${lines}\nCall load_skill with the skill name when a task matches one of these.\n`;

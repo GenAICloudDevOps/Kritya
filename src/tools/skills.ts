@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parseSkillFrontmatter, scanSkills, skillsDir } from "../agent/skills.js";
+import { parseSkillFrontmatter, scanSkills, skillsDir, userSkillsDir } from "../agent/skills.js";
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
 
@@ -40,7 +40,7 @@ export const loadSkillTool: ToolDef = {
     // Re-scan on every call (no session-start caching) so a skill added
     // mid-session is usable immediately -- cheap since these are a handful
     // of small file reads.
-    const skills = scanSkills([skillsDir(ctx.workspace)]);
+    const skills = scanSkills([skillsDir(ctx.workspace), userSkillsDir()]);
     const skill = skills.find((s) => s.name === name);
     if (!skill) {
       const available = skills.map((s) => s.name).join(", ") || "(none)";
