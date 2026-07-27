@@ -48,6 +48,30 @@ test("parseSkillFrontmatter preserves extra frontmatter fields", () => {
   assert.equal(parsed!.meta.license, "MIT");
 });
 
+test("parseSkillFrontmatter strips matching double quotes from a value", () => {
+  const raw = '---\nname: foo\ndescription: "Use when: doing X or Y"\n---\nbody\n';
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(parsed!.meta.description, "Use when: doing X or Y");
+});
+
+test("parseSkillFrontmatter strips matching single quotes from a value", () => {
+  const raw = "---\nname: foo\ndescription: 'a value with: a colon'\n---\nbody\n";
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(parsed!.meta.description, "a value with: a colon");
+});
+
+test('parseSkillFrontmatter unescapes \\" inside a double-quoted value', () => {
+  const raw = '---\nname: foo\ndescription: "she said \\"hi\\""\n---\nbody\n';
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(parsed!.meta.description, 'she said "hi"');
+});
+
+test("parseSkillFrontmatter leaves an unquoted value with mismatched quotes alone", () => {
+  const raw = "---\nname: foo\ndescription: don't quote me\n---\nbody\n";
+  const parsed = parseSkillFrontmatter(raw);
+  assert.equal(parsed!.meta.description, "don't quote me");
+});
+
 test("parseSkillFrontmatter returns null when there is no frontmatter block", () => {
   assert.equal(parseSkillFrontmatter("just a plain markdown file\n"), null);
 });

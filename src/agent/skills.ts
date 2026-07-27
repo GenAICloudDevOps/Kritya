@@ -28,9 +28,25 @@ export function parseSkillFrontmatter(
   const meta: Record<string, string> = {};
   for (const line of frontmatter.split(/\r?\n/)) {
     const kv = KEY_VALUE_RE.exec(line);
-    if (kv) meta[kv[1]] = kv[2].trim();
+    if (kv) meta[kv[1]] = unquote(kv[2].trim());
   }
   return { meta, body: body.trim() };
+}
+
+/**
+ * Strips a single matching pair of enclosing quotes from a frontmatter value
+ * and unescapes `\"`/`\\` inside a double-quoted value -- just enough to let
+ * a description contain a colon or apostrophe without breaking the parser.
+ * True multi-line YAML block scalars are still not supported.
+ */
+function unquote(value: string): string {
+  if (value.length >= 2 && value[0] === '"' && value[value.length - 1] === '"') {
+    return value.slice(1, -1).replace(/\\(["\\])/g, "$1");
+  }
+  if (value.length >= 2 && value[0] === "'" && value[value.length - 1] === "'") {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 let warnSink: (message: string) => void = (message) => {
