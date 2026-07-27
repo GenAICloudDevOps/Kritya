@@ -98,10 +98,10 @@ src/
 
 - **Unit**: `skills.test.ts` (discovery — valid parse, extra frontmatter
   fields preserved in `meta`, missing required fields, missing/empty
-  directory, multiple roots, duplicate names) and `tools/skills.test.ts`
-  (`load_skill` — valid lookup, unknown-name error, traversal guard, span
-  recorded with `kritya.skill_name`); a `systemPrompt` case for section
-  presence/absence and formatting.
+  directory, multiple roots, duplicate names — plus `buildSkillsSection`
+  cases for section presence/absence and formatting) and
+  `tools/skills.test.ts` (`load_skill` — valid lookup, unknown-name error,
+  traversal guard).
 - **Integration** (`loop.integration.test.ts` pattern): real `Agent` loop +
   real `loadSkillTool` against real temp workspaces, scripted `ProviderClient`.
   Multiple scenarios, not just the happy path:
