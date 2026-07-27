@@ -14,6 +14,7 @@ import { useAgent, type UseAgentParams } from "../ui/useAgent.js";
 
 async function tick(): Promise<void> {
   await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
 }
 
 type FakeRunTurn = Agent["runTurn"];

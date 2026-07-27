@@ -24,6 +24,7 @@ const items = [
 async function renderReady(el: ReactElement) {
   const instance = render(el);
   await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
   return instance;
 }
 
@@ -36,6 +37,9 @@ async function renderReady(el: ReactElement) {
 async function press(stdin: { write(data: string): void }, key: string) {
   stdin.write(key);
   await new Promise((r) => setImmediate(r));
+  // Ink buffers a lone ESC byte for pendingInputFlushDelayMilliseconds (20ms) to see
+  // whether more bytes follow as part of a longer escape sequence.
+  await new Promise((r) => setTimeout(r, 25));
 }
 
 /** Whether Ink colors its output depends on the real terminal, not this test's mocked stdout. */
@@ -73,7 +77,7 @@ test("down arrow moves the highlight forward and wraps past the end", async () =
 
 test("up arrow from the first item wraps to the last", async () => {
   const { stdin, lastFrame } = await renderReady(<SelectList items={items} onSelect={() => {}} />);
-  stdin.write(UP);
+  await press(stdin, UP);
   assert.match(plain(lastFrame()), /❯ Third/);
 });
 
@@ -103,7 +107,7 @@ test("escape calls onCancel when provided", async () => {
       }}
     />
   );
-  stdin.write(ESCAPE);
+  await press(stdin, ESCAPE);
   assert.equal(cancelled, true);
 });
 
