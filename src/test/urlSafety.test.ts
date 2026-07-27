@@ -29,6 +29,37 @@ test("isPrivateOrLoopbackHost allows public hosts", () => {
   }
 });
 
+test("isPrivateOrLoopbackHost catches IPv4-mapped/compatible IPv6 that embed a private address", () => {
+  for (const h of [
+    "::ffff:169.254.169.254", // IPv4-mapped metadata address — the allowlist-bypass case
+    "::ffff:127.0.0.1",
+    "::ffff:10.0.0.1",
+    "0:0:0:0:0:ffff:169.254.169.254",
+    "::10.0.0.1", // deprecated IPv4-compatible form
+  ]) {
+    assert.equal(isPrivateOrLoopbackHost(h), true, `expected ${h} to be flagged private`);
+  }
+});
+
+test("isPrivateOrLoopbackHost catches non-canonical (long-form) loopback/private IPv6", () => {
+  for (const h of [
+    "0:0:0:0:0:0:0:1", // long-form ::1
+    "fc00:0:0:0:0:0:0:1", // long-form unique-local
+  ]) {
+    assert.equal(isPrivateOrLoopbackHost(h), true, `expected ${h} to be flagged private`);
+  }
+});
+
+test("isPrivateOrLoopbackHost allows an IPv4-mapped IPv6 embedding a public address", () => {
+  assert.equal(isPrivateOrLoopbackHost("::ffff:93.184.216.34"), false);
+});
+
+test("isLoopbackHost catches IPv4-mapped loopback and long-form ::1", () => {
+  assert.equal(isLoopbackHost("::ffff:127.0.0.1"), true);
+  assert.equal(isLoopbackHost("0:0:0:0:0:0:0:1"), true);
+  assert.equal(isLoopbackHost("::ffff:10.0.0.1"), false);
+});
+
 test("isLoopbackHost only matches loopback, not other private ranges", () => {
   assert.equal(isLoopbackHost("localhost"), true);
   assert.equal(isLoopbackHost("127.0.0.1"), true);
