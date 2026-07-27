@@ -99,11 +99,36 @@ src/
   recorded with `kritya.skill_name`); a `systemPrompt` case for section
   presence/absence and formatting.
 - **Integration** (`loop.integration.test.ts` pattern): real `Agent` loop +
-  real `loadSkillTool` against a real temp workspace with a `.kritya/skills/`
-  fixture, scripted `ProviderClient` (round 1: `load_skill` tool call, round
-  2: text reply). Catches discovery→tool→loop wiring bugs unit tests miss.
-- **E2E** (`headless.e2e.test.ts` pattern): spawn the real built CLI against a
-  fresh temp `$HOME`/workspace with a real skills fixture, `startFakeProvider`
-  scripted the same way. Asserts on the JSON output's `toolCalls` and
-  `result`, proving the feature works through the actual subprocess
-  entrypoint.
+  real `loadSkillTool` against real temp workspaces, scripted `ProviderClient`.
+  Multiple scenarios, not just the happy path:
+  1. Single skill exists, matches the task → `load_skill` call returns body +
+     bundled-file listing, loop completes on the following text round.
+  2. Model calls `load_skill` with a name that doesn't exist → tool returns
+     the "not found, available: ..." error string as a tool result (not a
+     thrown exception), loop continues and the model's next round can react
+     to it.
+  3. Skill has bundled `scripts/` and `references/` → returned listing
+     includes both, and a follow-up round where the model reads a referenced
+     file via the real `readFileTool` succeeds.
+  4. Two skills present, task matches the second one by name → confirms
+     lookup isn't order-dependent on discovery.
+  5. Workspace has no `.kritya/skills/` directory at all → `load_skill` is
+     still registered but its call returns the "no skills available" error;
+     loop doesn't crash.
+- **E2E** (`headless.e2e.test.ts` pattern): spawn the real built CLI against
+  fresh temp `$HOME`/workspace pairs, `startFakeProvider` scripted per case.
+  Multiple scenarios:
+  1. Happy path: real `.kritya/skills/<name>/SKILL.md` fixture on disk,
+     provider script is `[load_skill tool call, text reply]` — assert on the
+     JSON output's `toolCalls` (contains `load_skill` with correct args) and
+     `result` (reflects skill content), and `code === 0`.
+  2. Unknown skill name scripted by the fake provider — assert the process
+     still exits `0` (tool error surfaced to the model, not a crash) and the
+     tool-call error text appears in the recorded `toolCalls` result.
+  3. No skills directory present at all, provider never calls `load_skill` —
+     regression guard that the feature is fully inert (no prompt section, no
+     behavior change) for non-skill workspaces.
+  4. Skill with a bundled script — provider script is
+     `[load_skill call, shell tool call running the bundled script, text
+reply]` — proves the full discovery → load → execute chain works
+     end-to-end through the real subprocess, not just the load step alone.
