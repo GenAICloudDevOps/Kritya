@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gitStatusShort } from "../git/git.js";
+import { buildSkillsSection } from "./skills.js";
 import {
   artifactPath,
   loadProjectState,
@@ -109,7 +110,7 @@ ${PHASE_ORDER.map((p, i) => {
 }).join("\n")}
 Each phase reads the artifact immediately before it and does not redo that phase's work: the spec owns requirements, contracts and numbered acceptance criteria; the plan owns architecture and the milestone order, citing criteria by number rather than restating them. Keep artifacts dense — every later phase pays to read them.
 Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. After writing a phase's artifact, summarize it and ask the user to approve — never advance past a phase on your own. The user may also drive phases manually with ${PHASE_ORDER.map((p) => PHASE_COMMAND[p]).join(", ")}; when they do, that command sets the phase for you.
-${memory}
+${memory}${buildSkillsSection(workspace)}
 # Environment
 - OS: ${os.platform()} (${os.release()})
 - Workspace root: ${workspace}

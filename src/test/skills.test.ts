@@ -10,6 +10,7 @@ import {
   skillsDir,
   _setWarnSink,
 } from "../agent/skills.js";
+import { buildSystemPrompt } from "../agent/systemPrompt.js";
 
 function tmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "kritya-skills-"));
@@ -124,4 +125,18 @@ test("buildSkillsSection lists discovered skills", () => {
 test("buildSkillsSection returns empty string when there are no skills", () => {
   const ws = tmpWorkspace();
   assert.equal(buildSkillsSection(ws), "");
+});
+
+test("buildSystemPrompt includes the skills section when a skill exists", () => {
+  const ws = tmpWorkspace();
+  writeSkill(skillsDir(ws), "ratio-analysis", { description: "Compute financial ratios" });
+  const prompt = buildSystemPrompt(ws);
+  assert.match(prompt, /# Available skills/);
+  assert.match(prompt, /ratio-analysis: Compute financial ratios/);
+});
+
+test("buildSystemPrompt omits the skills section when there are none", () => {
+  const ws = tmpWorkspace();
+  const prompt = buildSystemPrompt(ws);
+  assert.doesNotMatch(prompt, /# Available skills/);
 });
