@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Agent Skills** — kritya now supports the open Agent Skills format. Drop a
+  `SKILL.md` file (with `name` and `description` frontmatter fields) in
+  `.kritya/skills/<name>/` and the agent picks it up automatically: a
+  lightweight name-and-description listing goes into the system prompt so
+  the model knows the skill exists, and it loads the skill's full
+  instructions on demand through a new `load_skill` tool — along with the
+  contents of any bundled `scripts/`, `references/`, or `assets/`
+  directories the skill ships alongside its `SKILL.md`.
+
 ### Changed
 
 - **A tool call reports its result instead of dumping the top of it** — every

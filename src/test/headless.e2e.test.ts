@@ -313,8 +313,14 @@ test("load_skill followed by reading a bundled reference file works end to end",
     assert.equal(parsed.success, true);
     assert.equal(parsed.result, "Used the referenced formula.");
     assert.deepEqual(
-      parsed.toolCalls.map((t: { name: string; error: boolean }) => t.name),
-      ["load_skill", "read_file"]
+      parsed.toolCalls.map((t: { name: string; error: boolean }) => ({
+        name: t.name,
+        error: t.error,
+      })),
+      [
+        { name: "load_skill", error: false },
+        { name: "read_file", error: false },
+      ]
     );
   } finally {
     await provider.close();

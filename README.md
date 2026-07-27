@@ -568,6 +568,40 @@ Review the current git diff for correctness bugs and style issues. $ARGUMENTS
 
 Now `/review focus on error handling` runs that prompt.
 
+### Skills
+
+Drop a `SKILL.md` file in `.kritya/skills/<name>/` in your workspace to teach
+kritya a reusable procedure. The file needs `---`-delimited frontmatter with
+`name` and `description` fields — both required, and a skill missing either
+is silently skipped with a warning — followed by the skill's full
+instructions as a markdown body.
+
+```markdown
+<!-- .kritya/skills/ratio-analysis/SKILL.md -->
+
+---
+
+name: ratio-analysis
+description: Compute standard financial ratios from a balance sheet/income statement
+---
+
+Read the balance sheet and income statement, then compute:
+
+- Current ratio = current assets / current liabilities
+- ...
+```
+
+kritya lists discovered skills by name and description in its system prompt,
+and loads a skill's full body on demand when the agent calls `load_skill`. A
+skill folder can also include `scripts/`, `references/`, or `assets/`
+subdirectories — `load_skill` lists their contents so the agent can read or
+run them via its normal tools.
+
+Keep `name` and `description` to one line each, unquoted plain text — the
+frontmatter parser is a small regex, not a full YAML parser, so quoted
+strings or multi-line (`>`/`|`) values won't parse the way you might expect
+from YAML.
+
 ### Hooks
 
 Run your own shell commands around the agent's tool calls via `hooks` in

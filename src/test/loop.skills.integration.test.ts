@@ -188,10 +188,10 @@ test("load_skill surfaces bundled scripts/references, and a follow-up read_file 
   const log = makeHandlers();
   await agent.runTurn("compute the ratio", log.handlers);
   assert.equal(log.texts.at(-1), "Used the formula from the referenced file.");
-  assert.deepEqual(
-    log.toolEnds.map((e) => e.name),
-    ["load_skill", "read_file"]
-  );
+  assert.deepEqual(log.toolEnds, [
+    { name: "load_skill", isError: false },
+    { name: "read_file", isError: false },
+  ]);
   const firstToolMsg = agent.history[2] as { content: string };
   assert.match(firstToolMsg.content, /scripts\/[\s\S]*compute\.py/);
   assert.match(firstToolMsg.content, /references\/[\s\S]*formulas\.md/);
