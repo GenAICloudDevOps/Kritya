@@ -140,6 +140,8 @@ test("load_skill returns the skill body and the loop completes", async () => {
   await agent.runTurn("analyze the ratios", log.handlers);
   assert.equal(log.texts.at(-1), "Loaded the ratio-analysis skill and applied it.");
   assert.deepEqual(log.toolEnds, [{ name: "load_skill", isError: false }]);
+  const toolMsg = agent.history[2] as { content: string };
+  assert.match(toolMsg.content, /Compute current ratio = current assets \/ current liabilities\./);
 });
 
 test("load_skill with an unknown name surfaces an error the loop can continue from", async () => {
