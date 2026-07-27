@@ -15,6 +15,7 @@ import {
   isValidPermissionDecision,
   isValidStartOpts,
   isValidModeFlags,
+  permissionIdBelongsToSession,
 } from "../dist/electron/ipcValidation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sessions = new Map();
 /** Pending permission prompts, keyed by a request id, resolved by the renderer's reply. */
 const pendingPermissions = new Map();
+
+/**
+ * Reject every pending permission prompt that belongs to this window/session
+ * as "no", so a tool call `await`ing requestPermission doesn't hang forever
+ * when the switch is killed or the window is closed out from under it —
+ * mirrors the Ink CLI's useKillSwitch, which does the same on engage().
+ */
+function rejectPendingPermissions(webContentsId) {
+  for (const [id, resolve] of pendingPermissions) {
+    if (permissionIdBelongsToSession(id, webContentsId)) {
+      resolve("no");
+      pendingPermissions.delete(id);
+    }
+  }
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -40,6 +56,7 @@ function createWindow() {
   win.on("closed", () => {
     const engine = sessions.get(webContentsId);
     sessions.delete(webContentsId);
+    rejectPendingPermissions(webContentsId);
     // engine.dispose() tears down backgroundManager/lspManager — process-wide
     // singletons, not scoped to this window's session. Calling it while other
     // windows still have an active session would kill their background
@@ -211,6 +228,7 @@ ipcMain.handle("kritya:kill", (event, reason) => {
     return { ok: false, error: "Invalid kill reason." };
   }
   engine.agent.kill.engage(reason);
+  rejectPendingPermissions(event.sender.id);
   return { ok: true };
 });
 

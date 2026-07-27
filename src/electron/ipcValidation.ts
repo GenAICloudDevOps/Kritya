@@ -49,3 +49,13 @@ export function isValidModeFlags(value: unknown): value is ModeFlags {
   }
   return true;
 }
+
+/**
+ * Permission request ids are minted as `perm-${webContentsId}-${counter}`
+ * (see the requestPermission handler in electron/main.mjs). Used to find and
+ * reject only the prompts that belong to a given window/session when it's
+ * killed or closed, without disturbing other windows' pending prompts.
+ */
+export function permissionIdBelongsToSession(id: string, webContentsId: number): boolean {
+  return id.startsWith(`perm-${webContentsId}-`);
+}

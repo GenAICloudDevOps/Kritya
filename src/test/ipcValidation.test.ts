@@ -5,6 +5,7 @@ import {
   isValidPermissionDecision,
   isValidStartOpts,
   isValidModeFlags,
+  permissionIdBelongsToSession,
 } from "../electron/ipcValidation.js";
 
 test("isNonEmptyString accepts non-blank strings, rejects everything else", () => {
@@ -47,4 +48,12 @@ test("isValidModeFlags accepts well-shaped boolean flags, rejects malformed ones
   assert.equal(isValidModeFlags({ planMode: "yes" }), false);
   assert.equal(isValidModeFlags({ unknownFlag: true }), false);
   assert.equal(isValidModeFlags([]), false);
+});
+
+test("permissionIdBelongsToSession matches only ids minted for that webContents id", () => {
+  assert.equal(permissionIdBelongsToSession("perm-3-1", 3), true);
+  assert.equal(permissionIdBelongsToSession("perm-3-42", 3), true);
+  assert.equal(permissionIdBelongsToSession("perm-31-1", 3), false);
+  assert.equal(permissionIdBelongsToSession("perm-3-1", 4), false);
+  assert.equal(permissionIdBelongsToSession("not-a-perm-id", 3), false);
 });
