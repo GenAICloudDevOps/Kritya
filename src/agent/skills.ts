@@ -32,8 +32,19 @@ export function parseSkillFrontmatter(
   return { meta, body: body.trim() };
 }
 
-function warn(message: string): void {
+let warnSink: (message: string) => void = (message) => {
   process.stderr.write(`kritya: ${message}\n`);
+};
+
+function warn(message: string): void {
+  warnSink(message);
+}
+
+/** For testing: override the warning sink. Returns the previous sink. */
+export function _setWarnSink(sink: (message: string) => void): (message: string) => void {
+  const prev = warnSink;
+  warnSink = sink;
+  return prev;
 }
 
 /**

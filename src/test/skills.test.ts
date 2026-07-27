@@ -8,6 +8,7 @@ import {
   parseSkillFrontmatter,
   scanSkills,
   skillsDir,
+  _setWarnSink,
 } from "../agent/skills.js";
 
 function tmpWorkspace(): string {
@@ -61,13 +62,21 @@ test("scanSkills finds a valid skill", () => {
 
 test("scanSkills skips a folder missing description, with the rest still found", () => {
   const root = tmpWorkspace();
-  writeSkill(root, "broken", { skipName: false, description: undefined });
-  writeSkill(root, "ok", { description: "fine" });
-  const found = scanSkills([root]);
-  assert.deepEqual(
-    found.map((s) => s.name),
-    ["ok"]
-  );
+  const warnings: string[] = [];
+  const prevSink = _setWarnSink((msg) => warnings.push(msg));
+  try {
+    writeSkill(root, "broken", { skipName: false, description: undefined });
+    writeSkill(root, "ok", { description: "fine" });
+    const found = scanSkills([root]);
+    assert.deepEqual(
+      found.map((s) => s.name),
+      ["ok"]
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /frontmatter must include.*name.*description/);
+  } finally {
+    _setWarnSink(prevSink);
+  }
 });
 
 test("scanSkills skips a folder with no SKILL.md", () => {
@@ -84,11 +93,19 @@ test("scanSkills returns [] for a missing root directory", () => {
 test("scanSkills scans multiple roots and keeps the first match on a name collision", () => {
   const rootA = tmpWorkspace();
   const rootB = tmpWorkspace();
-  writeSkill(rootA, "dup", { description: "from A" });
-  writeSkill(rootB, "dup", { description: "from B" });
-  const found = scanSkills([rootA, rootB]);
-  assert.equal(found.length, 1);
-  assert.equal(found[0].description, "from A");
+  const warnings: string[] = [];
+  const prevSink = _setWarnSink((msg) => warnings.push(msg));
+  try {
+    writeSkill(rootA, "dup", { description: "from A" });
+    writeSkill(rootB, "dup", { description: "from B" });
+    const found = scanSkills([rootA, rootB]);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].description, "from A");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /duplicate skill name/);
+  } finally {
+    _setWarnSink(prevSink);
+  }
 });
 
 test("skillsDir joins the workspace with .kritya/skills", () => {
