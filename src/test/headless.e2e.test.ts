@@ -36,6 +36,20 @@ async function freshWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-e2e-ws-"));
 }
 
+async function writeSkillFixture(
+  workspace: string,
+  name: string,
+  opts: { description?: string; body?: string } = {}
+): Promise<string> {
+  const dir = path.join(workspace, ".kritya", "skills", name);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(
+    path.join(dir, "SKILL.md"),
+    `---\nname: ${name}\ndescription: ${opts.description ?? "a skill"}\n---\n\n${opts.body ?? "Do the thing."}\n`
+  );
+  return dir;
+}
+
 interface RunResult {
   code: number;
   stdout: string;
@@ -192,6 +206,116 @@ test("--output text prints the plain result instead of a JSON object", async () 
       { env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 20_000 }
     );
     assert.equal(stdout.trim(), "plain text reply");
+  } finally {
+    await provider.close();
+  }
+});
+
+test("load_skill happy path: skill is loaded and reflected in the result", async () => {
+  const script: ScriptedTurn[] = [
+    { type: "toolCall", name: "load_skill", argsJson: JSON.stringify({ name: "ratio-analysis" }) },
+    { type: "text", text: "Applied the ratio-analysis skill." },
+  ];
+  const provider = await startFakeProvider(script);
+  try {
+    const home = await freshHome(provider.url);
+    const workspace = await freshWorkspace();
+    await writeSkillFixture(workspace, "ratio-analysis", {
+      body: "current ratio = assets / liabilities",
+    });
+    const { code, stdout } = await runKritya(home, workspace, ["--prompt", "analyze the ratios"]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.result, "Applied the ratio-analysis skill.");
+    assert.deepEqual(
+      parsed.toolCalls.map((t: { name: string; error: boolean }) => ({
+        name: t.name,
+        error: t.error,
+      })),
+      [{ name: "load_skill", error: false }]
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+test("load_skill with an unknown name reports a failed tool call but still completes", async () => {
+  const script: ScriptedTurn[] = [
+    { type: "toolCall", name: "load_skill", argsJson: JSON.stringify({ name: "does-not-exist" }) },
+    { type: "text", text: "That skill isn't available." },
+  ];
+  const provider = await startFakeProvider(script);
+  try {
+    const home = await freshHome(provider.url);
+    const workspace = await freshWorkspace();
+    await writeSkillFixture(workspace, "ratio-analysis");
+    const { code, stdout } = await runKritya(home, workspace, [
+      "--prompt",
+      "use the fictional skill",
+    ]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.result, "That skill isn't available.");
+    assert.deepEqual(
+      parsed.toolCalls.map((t: { name: string; error: boolean }) => ({
+        name: t.name,
+        error: t.error,
+      })),
+      [{ name: "load_skill", error: true }]
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a workspace with no skills directory is unaffected by the feature", async () => {
+  const script: ScriptedTurn[] = [{ type: "text", text: "the answer is 42" }];
+  const provider = await startFakeProvider(script);
+  try {
+    const home = await freshHome(provider.url);
+    const workspace = await freshWorkspace(); // no .kritya/skills at all
+    const { code, stdout } = await runKritya(home, workspace, ["--prompt", "what is the answer?"]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.result, "the answer is 42");
+    assert.equal(parsed.toolCalls.length, 0);
+  } finally {
+    await provider.close();
+  }
+});
+
+test("load_skill followed by reading a bundled reference file works end to end", async () => {
+  const script: ScriptedTurn[] = [
+    { type: "toolCall", name: "load_skill", argsJson: JSON.stringify({ name: "ratio-analysis" }) },
+    {
+      type: "toolCall",
+      name: "read_file",
+      argsJson: JSON.stringify({ path: ".kritya/skills/ratio-analysis/references/formulas.md" }),
+    },
+    { type: "text", text: "Used the referenced formula." },
+  ];
+  const provider = await startFakeProvider(script);
+  try {
+    const home = await freshHome(provider.url);
+    const workspace = await freshWorkspace();
+    const dir = await writeSkillFixture(workspace, "ratio-analysis");
+    await fs.mkdir(path.join(dir, "references"), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, "references", "formulas.md"),
+      "current_ratio = assets / liabilities"
+    );
+    const { code, stdout } = await runKritya(home, workspace, ["--prompt", "compute the ratio"]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.result, "Used the referenced formula.");
+    assert.deepEqual(
+      parsed.toolCalls.map((t: { name: string; error: boolean }) => t.name),
+      ["load_skill", "read_file"]
+    );
   } finally {
     await provider.close();
   }
