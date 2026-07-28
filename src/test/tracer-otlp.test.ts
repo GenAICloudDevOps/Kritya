@@ -45,6 +45,38 @@ test("KRITYA_OTEL_ENDPOINT posts each ended span to /v1/traces", async () => {
   assert.equal(span.name, "agent.turn");
 });
 
+test("KRITYA_OTEL_HEADERS parses Key=Value pairs and skips malformed ones", async () => {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: any) => {
+    calls.push({ url, headers: init.headers });
+    return new Response("", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    await withEnv(
+      {
+        KRITYA_OTEL: undefined,
+        KRITYA_OTEL_ENDPOINT: "http://localhost:4318",
+        KRITYA_OTEL_HEADERS: "Authorization=Bearer abc, X-Foo = bar,malformed-no-equals,Empty=",
+      },
+      () => {
+        const tracer = createTracer("sess-otlp-headers");
+        tracer.startSpan("x").end();
+      }
+    );
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].headers.Authorization, "Bearer abc");
+  assert.equal(calls[0].headers["X-Foo"], "bar");
+  assert.equal(calls[0].headers.Empty, "");
+  assert.equal(calls[0].headers["malformed-no-equals"], undefined);
+});
+
 test("KRITYA_OTEL_ENDPOINT with KRITYA_OTEL=off still exports (endpoint alone enables it)", async () => {
   const calls: any[] = [];
   const realFetch = globalThis.fetch;

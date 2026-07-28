@@ -251,7 +251,14 @@ function parseOtlpHeaders(raw: string | undefined): Record<string, string> | und
 
 function otlpSink(endpoint: string): Sink {
   const headers = parseOtlpHeaders(process.env.KRITYA_OTEL_HEADERS);
-  return (span) => postOtlp(endpoint, "/v1/traces", encodeSpan(span, RESOURCE), headers);
+  return (span) => {
+    try {
+      postOtlp(endpoint, "/v1/traces", encodeSpan(span, RESOURCE), headers);
+    } catch (err) {
+      // best-effort: telemetry must never crash a turn
+      debugLog(`tracer.otlpSink(${endpoint})`, err);
+    }
+  };
 }
 
 /**
