@@ -4,6 +4,7 @@ import type { AgentHandlers, ToolContext, ToolDef } from "../types.js";
 import { classifyDanger } from "../permissions/danger.js";
 import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js";
 import type { Span, Tracer } from "../telemetry/tracer.js";
+import type { Meter } from "../telemetry/metrics.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { isPlanningDocWrite, loadProjectState } from "./workflow.js";
 import type { KillSwitch } from "./killSwitch.js";
@@ -67,6 +68,7 @@ export interface ToolExecutorHost {
   acceptEdits: boolean;
   audit?: AuditLog;
   tracer: Tracer;
+  meter: Meter;
   readonly turnSpan: Span | undefined;
   hooks?: HookRunner;
   onAutoApprove?: () => void;
@@ -186,6 +188,10 @@ export class ToolExecutor {
       span.setAttribute("kritya.wait_ms", waitMs);
       span.setAttribute("kritya.outcome", outcome);
       host.audit?.logTool({ tool: name, summary, outcome, durationMs, waitMs });
+      host.meter.histogram("kritya.tool.duration_ms").record(durationMs, { "kritya.tool": name });
+      host.meter
+        .counter("kritya.tool.calls")
+        .add(1, { "kritya.tool": name, "kritya.outcome": outcome });
     };
     const finishSpan = (code: "OK" | "ERROR", message?: string): void => {
       span.setStatus(code, message).end();

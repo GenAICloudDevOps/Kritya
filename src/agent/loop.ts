@@ -7,6 +7,7 @@ import { estimateHistoryTokens, estimateTokens } from "./tokens.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import type { AuditLog } from "../audit/audit.js";
 import { NOOP_TRACER, type AttrValue, type Span, type Tracer } from "../telemetry/tracer.js";
+import { NOOP_METER, type Meter } from "../telemetry/metrics.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { extractMemoryFacts, mergeProjectMemory, readProjectMemory } from "./memory.js";
 import { KillSwitch, KillSwitchError, linkAbort } from "./killSwitch.js";
@@ -83,6 +84,8 @@ export class Agent {
   audit?: AuditLog;
   /** OpenTelemetry-shaped tracer for the tool loop. No-op unless enabled. */
   tracer: Tracer = NOOP_TRACER;
+  /** OTLP metrics recorder for tool/turn durations. No-op unless enabled. */
+  meter: Meter = NOOP_METER;
   /**
    * Trace id of the most recent turn, so a caller that reports a result
    * elsewhere (headless JSON) can point the reader at the matching spans.
@@ -435,6 +438,7 @@ export class Agent {
         ...this.spanAttributes,
       },
     });
+    const turnStartedAtMs = Date.now();
     this.currentTurnSpan = turnSpan;
     this.lastTraceId = turnSpan.traceId || undefined;
     // Everything below runs against a signal that fires on the caller's cancel
@@ -456,6 +460,7 @@ export class Agent {
       link.dispose();
       this.currentTurnSpan = undefined;
       turnSpan.end();
+      this.meter.histogram("kritya.turn.duration_ms").record(Date.now() - turnStartedAtMs);
       await this.hooks?.runStop(turnSpan);
     }
   }
