@@ -147,3 +147,27 @@ export function postOtlp(
     debugLog(`postOtlp(${path})`, err);
   }
 }
+
+/**
+ * Same as postOtlp, but awaits the request instead of firing-and-forgetting.
+ * Used by shutdown paths that want to give the last export a chance to
+ * actually complete before the process exits — callers are expected to race
+ * this against a short timeout themselves (a hung network call must never
+ * block process shutdown indefinitely).
+ */
+export async function postOtlpAndWait(
+  endpoint: string,
+  path: "/v1/traces" | "/v1/metrics",
+  body: unknown,
+  headers?: Record<string, string>
+): Promise<void> {
+  try {
+    await fetch(`${endpoint.replace(/\/+$/, "")}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(headers ?? {}) },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    debugLog(`postOtlpAndWait(${path})`, err);
+  }
+}

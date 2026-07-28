@@ -46,6 +46,12 @@ for your OS/arch, then:
 
 This listens for OTLP/HTTP on `localhost:4318`, forwards traces to Phoenix,
 and exposes metrics on `localhost:8889` for Prometheus to scrape.
+`observability/otelcol-config.yaml`'s `prometheus:` exporter sets
+`resource_to_telemetry_conversion.enabled: true`, which is required for
+resource attributes like `service.instance.id` (the per-session id that keeps
+concurrent kritya sessions' counters from merging into one series) to appear
+as Prometheus labels — the collector's default `prometheus` exporter drops
+resource attributes otherwise.
 
 ## 3. Point Kritya at the collector
 

@@ -334,6 +334,9 @@ async function main() {
     sessionMeter.flush();
     sessionMeter.stop();
   };
+  // Node ignores async work started inside an "exit" handler, so this last-
+  // resort fallback path stays on the synchronous, fire-and-forget flush()
+  // inside cleanup() — it's best-effort only, not guaranteed to land.
   process.on("exit", cleanup);
   // Same reasoning as the signal handlers below, for the other way the process
   // can die without firing "exit": an error nothing caught. Also hands the
@@ -352,13 +355,23 @@ async function main() {
   // Default signal handling terminates WITHOUT firing "exit", which would
   // orphan background dev servers and MCP children (e.g. when the terminal
   // window closes → SIGHUP). Clean up, then exit with the conventional code.
+  // Give the final metrics export a real chance to land first (capped so a
+  // hung collector can't stall shutdown) — cleanup()'s own sessionMeter.flush()
+  // is fire-and-forget and would otherwise usually be discarded by the
+  // process.exit() that follows it.
   for (const [sig, code] of [
     ["SIGTERM", 143],
     ["SIGHUP", 129],
   ] as const) {
     process.on(sig, () => {
-      cleanup();
-      process.exit(code);
+      void (async () => {
+        await Promise.race([
+          sessionMeter.flushAndWait(),
+          new Promise((resolve) => setTimeout(resolve, 2000).unref()),
+        ]);
+        cleanup();
+        process.exit(code);
+      })();
     });
   }
 

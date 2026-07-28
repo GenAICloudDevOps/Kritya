@@ -6,11 +6,16 @@ receivers:
 
 exporters:
   otlphttp/phoenix:
-    endpoint: http://localhost:6006/v1/traces
-    tls:
-      insecure: true
+    # Base URL only — the collector appends /v1/traces itself. Setting this to
+    # .../v1/traces produces .../v1/traces/v1/traces (404).
+    endpoint: http://localhost:6006
   prometheus:
     endpoint: 0.0.0.0:8889
+    # Without this, resource attributes (e.g. service.instance.id, used to
+    # disambiguate concurrent kritya sessions) are dropped instead of becoming
+    # Prometheus labels.
+    resource_to_telemetry_conversion:
+      enabled: true
 
 processors:
   batch: {}

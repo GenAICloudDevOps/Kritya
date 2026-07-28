@@ -3,4 +3,7 @@ providers:
   - name: kritya
     type: file
     options:
-      path: /etc/grafana/provisioning/dashboards
+      # Relative to the working directory grafana-server is launched from —
+      # per docs/observability.md, that's the repo root (there's no Docker
+      # container here, so /etc/grafana/... would never exist).
+      path: observability/grafana/provisioning/dashboards

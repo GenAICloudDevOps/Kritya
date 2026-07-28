@@ -14,6 +14,7 @@ import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { createTracer, telemetryFileFor, cleanupOldTelemetry } from "./telemetry/tracer.js";
+import { createMeter } from "./telemetry/metrics.js";
 import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
@@ -126,18 +127,25 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   session.start(initialHistory);
 
+  const sessionAudit = AuditLog.forSession(session.id, config.audit);
+  const sessionTracer = createTracer(session.id, config.otel);
+  const sessionMeter = createMeter(session.id, config.otel);
+
   // A crash here orphans MCP children and background processes onto a CI
-  // runner, where nothing will ever reap them. No terminal to restore.
+  // runner, where nothing will ever reap them. No terminal to restore. The
+  // crash path is fire-and-forget best-effort by Node's own constraints (a
+  // crash handler can't reliably await async work), so this uses the
+  // synchronous flush() rather than flushAndWait().
   installCrashHandlers({
     cleanup: () => {
       backgroundManager.killAll();
       lspManager.disposeAll();
       shutdownMcp();
+      sessionMeter.flush();
+      sessionMeter.stop();
     },
     details: () => (session.path ? ["", `Transcript: ${session.path}`] : []),
   });
-  const sessionAudit = AuditLog.forSession(session.id, config.audit);
-  const sessionTracer = createTracer(session.id, config.otel);
 
   // Same best-effort retention as the interactive path — headless/CI runs are
   // often the only way kritya ever runs for a given user, so this can't skip
@@ -200,6 +208,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
   agent.audit = sessionAudit;
   agent.tracer = sessionTracer;
+  agent.meter = sessionMeter;
   agent.hooks.tracer = sessionTracer;
 
   const toolCalls: ToolCallRecord[] = [];
@@ -269,6 +278,15 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     lspManager.disposeAll();
     shutdownMcp();
   }
+
+  // Normal (non-crash) shutdown: give the final metrics export a real chance
+  // to land, capped so a hung collector can't stall the exit code the caller
+  // is waiting on.
+  await Promise.race([
+    sessionMeter.flushAndWait(),
+    new Promise((resolve) => setTimeout(resolve, 2000).unref()),
+  ]);
+  sessionMeter.stop();
 
   return finish(args, startedAt, {
     success,

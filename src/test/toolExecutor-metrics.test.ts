@@ -29,6 +29,7 @@ function makeRecordingMeter(): {
       record: (value, attributes) => histograms.push({ name, value, attributes }),
     }),
     flush() {},
+    async flushAndWait() {},
     stop() {},
   };
   return { meter, histograms, counters };

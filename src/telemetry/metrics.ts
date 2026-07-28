@@ -1,7 +1,13 @@
 import { VERSION } from "../version.js";
 import type { AttrValue } from "./tracer.js";
 import type { OtelMode } from "./tracer.js";
-import { encodeMetricsSnapshot, postOtlp, type MetricPoint, type OtlpResource } from "./otlp.js";
+import {
+  encodeMetricsSnapshot,
+  postOtlp,
+  postOtlpAndWait,
+  type MetricPoint,
+  type OtlpResource,
+} from "./otlp.js";
 
 /**
  * A small cumulative-aggregation metrics API, mirrored on the Tracer/Span
@@ -21,8 +27,16 @@ export interface Histogram {
 export interface Meter {
   counter(name: string): Counter;
   histogram(name: string, bounds?: number[]): Histogram;
-  /** Export the current cumulative snapshot now. */
+  /** Export the current cumulative snapshot now. Fire-and-forget — does not
+   * wait for the export to complete, so a flush right before process.exit
+   * can be discarded mid-flight. Prefer flushAndWait() on normal shutdown
+   * paths; this remains for the periodic timer and for shutdown paths that
+   * truly can't be async (e.g. a Node "exit" handler). */
   flush(): void;
+  /** Same as flush(), but awaits the export before resolving, so a caller on
+   * a normal shutdown path can give the last export a real chance to land
+   * before the process exits. Still best-effort: never throws. */
+  flushAndWait(): Promise<void>;
   /** Stop the periodic flush timer (call on shutdown so the process can exit). */
   stop(): void;
 }
@@ -33,6 +47,7 @@ export const NOOP_METER: Meter = {
   counter: () => NOOP_COUNTER,
   histogram: () => NOOP_HISTOGRAM,
   flush() {},
+  async flushAndWait() {},
   stop() {},
 };
 
@@ -115,46 +130,58 @@ class RealMeter implements Meter {
     };
   }
 
+  /** Build the current cumulative snapshot's OTLP-encoded body, or undefined if there's nothing new to send. */
+  private snapshotBody(): unknown | undefined {
+    const now = nowUnixNano();
+    const points: MetricPoint[] = [];
+    for (const [key, entry] of this.sums) {
+      points.push({
+        name: this.namesByKey.get(key)!,
+        kind: "sum",
+        attributes: entry.attributes,
+        startTimeUnixNano: this.startTimeUnixNano,
+        timeUnixNano: now,
+        sumValue: entry.value,
+        isMonotonic: true,
+      });
+    }
+    for (const [key, entry] of this.histograms) {
+      points.push({
+        name: this.namesByKey.get(key)!,
+        kind: "histogram",
+        attributes: entry.attributes,
+        startTimeUnixNano: this.startTimeUnixNano,
+        timeUnixNano: now,
+        histogram: {
+          count: entry.count,
+          sum: entry.sum,
+          bucketCounts: entry.bucketCounts,
+          explicitBounds: entry.bounds,
+        },
+      });
+    }
+    if (!points.length) return undefined;
+    return encodeMetricsSnapshot(points, this.resource);
+  }
+
   flush(): void {
     // Best-effort like every other telemetry path: a bad snapshot or a down
     // collector must never throw into the caller (setInterval callback here
     // has no caller to catch it, so an uncaught error would crash the process).
     try {
-      const now = nowUnixNano();
-      const points: MetricPoint[] = [];
-      for (const [key, entry] of this.sums) {
-        points.push({
-          name: this.namesByKey.get(key)!,
-          kind: "sum",
-          attributes: entry.attributes,
-          startTimeUnixNano: this.startTimeUnixNano,
-          timeUnixNano: now,
-          sumValue: entry.value,
-          isMonotonic: true,
-        });
-      }
-      for (const [key, entry] of this.histograms) {
-        points.push({
-          name: this.namesByKey.get(key)!,
-          kind: "histogram",
-          attributes: entry.attributes,
-          startTimeUnixNano: this.startTimeUnixNano,
-          timeUnixNano: now,
-          histogram: {
-            count: entry.count,
-            sum: entry.sum,
-            bucketCounts: entry.bucketCounts,
-            explicitBounds: entry.bounds,
-          },
-        });
-      }
-      if (!points.length) return;
-      postOtlp(
-        this.endpoint,
-        "/v1/metrics",
-        encodeMetricsSnapshot(points, this.resource),
-        this.headers
-      );
+      const body = this.snapshotBody();
+      if (body === undefined) return;
+      postOtlp(this.endpoint, "/v1/metrics", body, this.headers);
+    } catch {
+      // best-effort: metrics must never crash the process
+    }
+  }
+
+  async flushAndWait(): Promise<void> {
+    try {
+      const body = this.snapshotBody();
+      if (body === undefined) return;
+      await postOtlpAndWait(this.endpoint, "/v1/metrics", body, this.headers);
     } catch {
       // best-effort: metrics must never crash the process
     }
@@ -190,7 +217,6 @@ export function createMeter(
   _configDefault?: OtelMode,
   flushIntervalMs = 10_000
 ): Meter {
-  void sessionId;
   const endpoint = process.env.KRITYA_OTEL_ENDPOINT;
   if (!endpoint) return NOOP_METER;
   const resource: OtlpResource = {
@@ -198,6 +224,11 @@ export function createMeter(
       "service.name": "kritya",
       "service.version": VERSION,
       "os.type": process.platform,
+      // Distinguishes concurrent kritya sessions so the collector's
+      // Prometheus exporter doesn't merge their cumulative counters into one
+      // corrupted series (requires resource_to_telemetry_conversion.enabled
+      // on the collector's prometheus exporter to surface as a label).
+      "service.instance.id": sessionId,
     },
   };
   return new RealMeter(

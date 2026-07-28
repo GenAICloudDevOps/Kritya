@@ -8,6 +8,7 @@ import { ProviderClient } from "./provider/client.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
+import { createMeter } from "./telemetry/metrics.js";
 import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
@@ -23,7 +24,7 @@ export interface EngineSession {
   provider: string;
   model: string;
   setModel(model: string): void;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 /**
@@ -63,11 +64,17 @@ export async function createEngineSession(
 
   const session = new SessionStore(workspace);
   session.start([]);
+  const sessionMeter = createMeter(session.id, config.otel);
 
+  // The crash path is fire-and-forget best-effort by Node's own constraints
+  // (a crash handler can't reliably await async work), so this uses the
+  // synchronous flush() rather than flushAndWait().
   installCrashHandlers({
     cleanup: () => {
       backgroundManager.killAll();
       lspManager.disposeAll();
+      sessionMeter.flush();
+      sessionMeter.stop();
     },
     details: () => (session.path ? ["", `Transcript: ${session.path}`] : []),
   });
@@ -97,6 +104,7 @@ export async function createEngineSession(
   }
   agent.audit = AuditLog.forSession(session.id, config.audit);
   agent.tracer = createTracer(session.id, config.otel);
+  agent.meter = sessionMeter;
   if (agent.hooks) agent.hooks.tracer = agent.tracer;
 
   return {
@@ -111,9 +119,16 @@ export async function createEngineSession(
       currentModel = next;
       agent.contextWindow = contextWindowFor(next, config);
     },
-    dispose() {
+    async dispose() {
       backgroundManager.killAll();
       lspManager.disposeAll();
+      // Normal (non-crash) shutdown: give the final metrics export a real
+      // chance to land, capped so a hung collector can't stall dispose().
+      await Promise.race([
+        sessionMeter.flushAndWait(),
+        new Promise((resolve) => setTimeout(resolve, 2000).unref()),
+      ]);
+      sessionMeter.stop();
     },
   };
 }

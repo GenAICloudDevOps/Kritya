@@ -19,13 +19,14 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
   }
 }
 
-test("KRITYA_OTEL_ENDPOINT unset yields the no-op meter", () => {
+test("KRITYA_OTEL_ENDPOINT unset yields the no-op meter", async () => {
   withEnv({ KRITYA_OTEL_ENDPOINT: undefined }, () => {
     assert.equal(createMeter("s"), NOOP_METER);
   });
   NOOP_METER.counter("x").add(1);
   NOOP_METER.histogram("y").record(1);
   NOOP_METER.flush();
+  await NOOP_METER.flushAndWait();
   NOOP_METER.stop();
 });
 

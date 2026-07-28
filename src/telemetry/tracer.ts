@@ -234,9 +234,18 @@ function consoleSink(): Sink {
   };
 }
 
-const RESOURCE: OtlpResource = {
-  attributes: { "service.name": "kritya", "service.version": VERSION, "os.type": process.platform },
-};
+function resourceFor(sessionId: string): OtlpResource {
+  return {
+    attributes: {
+      "service.name": "kritya",
+      "service.version": VERSION,
+      "os.type": process.platform,
+      // Same resource-identity fields as metrics.ts's createMeter, so traces
+      // and metrics from the same session agree on resource identity.
+      "service.instance.id": sessionId,
+    },
+  };
+}
 
 function parseOtlpHeaders(raw: string | undefined): Record<string, string> | undefined {
   if (!raw) return undefined;
@@ -249,11 +258,12 @@ function parseOtlpHeaders(raw: string | undefined): Record<string, string> | und
   return headers;
 }
 
-function otlpSink(endpoint: string): Sink {
+function otlpSink(endpoint: string, sessionId: string): Sink {
   const headers = parseOtlpHeaders(process.env.KRITYA_OTEL_HEADERS);
+  const resource = resourceFor(sessionId);
   return (span) => {
     try {
-      postOtlp(endpoint, "/v1/traces", encodeSpan(span, RESOURCE), headers);
+      postOtlp(endpoint, "/v1/traces", encodeSpan(span, resource), headers);
     } catch (err) {
       // best-effort: telemetry must never crash a turn
       debugLog(`tracer.otlpSink(${endpoint})`, err);
@@ -280,7 +290,7 @@ export function createTracer(sessionId: string, configDefault?: OtelMode): Trace
     sinks.push(consoleSink());
   }
   if (endpoint) {
-    sinks.push(otlpSink(endpoint));
+    sinks.push(otlpSink(endpoint, sessionId));
   }
   if (!sinks.length) {
     // Unrecognized value (e.g. "1", "on"): default to a file, which is the
