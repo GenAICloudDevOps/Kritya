@@ -163,7 +163,7 @@ function telemetryDir(): string {
   return process.env.KRITYA_TELEMETRY_DIR || path.join(CONFIG_DIR, "telemetry");
 }
 
-type OtelMode = "off" | "file" | "console" | "both";
+export type OtelMode = "off" | "file" | "console" | "both";
 
 /** KRITYA_OTEL if set, else config.json's persisted `otel` default, else "off". */
 function resolveOtelMode(configDefault?: OtelMode): string {
