@@ -4,6 +4,8 @@ import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
 import { debugLog } from "../config/debug.js";
+import { VERSION } from "../version.js";
+import { encodeSpan, postOtlp, type OtlpResource } from "./otlp.js";
 
 /**
  * A minimal, dependency-free tracer for the agent's tool loop, shaped after
@@ -232,6 +234,26 @@ function consoleSink(): Sink {
   };
 }
 
+const RESOURCE: OtlpResource = {
+  attributes: { "service.name": "kritya", "service.version": VERSION, "os.type": process.platform },
+};
+
+function parseOtlpHeaders(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const headers: Record<string, string> = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+  }
+  return headers;
+}
+
+function otlpSink(endpoint: string): Sink {
+  const headers = parseOtlpHeaders(process.env.KRITYA_OTEL_HEADERS);
+  return (span) => postOtlp(endpoint, "/v1/traces", encodeSpan(span, RESOURCE), headers);
+}
+
 /**
  * Build the tracer configured by the environment for this session. Returns the
  * shared no-op tracer when telemetry is off, so callers can always hold a
@@ -239,7 +261,9 @@ function consoleSink(): Sink {
  */
 export function createTracer(sessionId: string, configDefault?: OtelMode): Tracer {
   const mode = resolveOtelMode(configDefault);
-  if (mode === "off" || mode === "" || mode === "false") return NOOP_TRACER;
+  const endpoint = process.env.KRITYA_OTEL_ENDPOINT;
+  const modeOff = mode === "off" || mode === "" || mode === "false";
+  if (modeOff && !endpoint) return NOOP_TRACER;
 
   const sinks: Sink[] = [];
   if (mode === "file" || mode === "both") {
@@ -247,6 +271,9 @@ export function createTracer(sessionId: string, configDefault?: OtelMode): Trace
   }
   if (mode === "console" || mode === "both") {
     sinks.push(consoleSink());
+  }
+  if (endpoint) {
+    sinks.push(otlpSink(endpoint));
   }
   if (!sinks.length) {
     // Unrecognized value (e.g. "1", "on"): default to a file, which is the
