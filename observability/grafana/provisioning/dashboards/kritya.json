@@ -1,0 +1,49 @@
+{
+  "title": "Kritya",
+  "uid": "kritya-overview",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Tool calls / min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [{ "expr": "sum(rate(kritya_tool_calls_total[1m])) by (kritya_tool)" }]
+    },
+    {
+      "id": 2,
+      "title": "Tool error rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(kritya_tool_calls_total{kritya_outcome!=\"ok\"}[5m])) / sum(rate(kritya_tool_calls_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tool call latency p95 (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(kritya_tool_duration_ms_bucket[5m])) by (le, kritya_tool))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Turn duration p95 (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(kritya_turn_duration_ms_bucket[5m])) by (le))"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}
