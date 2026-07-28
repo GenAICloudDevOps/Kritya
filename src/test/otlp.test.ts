@@ -19,16 +19,15 @@ function sampleSpan(overrides: Partial<SpanExport> = {}): SpanExport {
   };
 }
 
-test("encodeSpan wraps a single span in resourceSpans/scopeSpans and base64-encodes ids", () => {
+test("encodeSpan wraps a single span in resourceSpans/scopeSpans and hex-encodes ids", () => {
   const body = encodeSpan(sampleSpan(), RESOURCE) as any;
   const span = body.resourceSpans[0].scopeSpans[0].spans[0];
   assert.equal(span.name, "tool.write_file");
-  // 16-byte traceId hex -> base64
-  assert.equal(
-    span.traceId,
-    Buffer.from("0102030405060708090a0b0c0d0e0f10", "hex").toString("base64")
-  );
-  assert.equal(span.spanId, Buffer.from("0102030405060708", "hex").toString("base64"));
+  // Trace/span ids are the OTLP JSON spec's one carve-out from base64: they
+  // stay hex, matching every other tracing tool's display convention — a
+  // collector accepts (200) but silently drops base64-encoded ids instead.
+  assert.equal(span.traceId, "0102030405060708090a0b0c0d0e0f10");
+  assert.equal(span.spanId, "0102030405060708");
   assert.equal(span.startTimeUnixNano, "1000000000");
   assert.equal(span.status.code, 1); // STATUS_CODE_OK
   const toolAttr = span.attributes.find((a: any) => a.key === "kritya.tool");

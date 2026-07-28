@@ -5,16 +5,16 @@ import type { AttrValue, SpanExport } from "./tracer.js";
  * Minimal OTLP/HTTP JSON encoding — deliberately not the @opentelemetry/*
  * SDK (see tracer.ts for why). Implements just enough of the JSON mapping
  * (https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding) for a
- * collector to accept: trace/span ids as base64, attributes as typed
- * KeyValue, int64 fields as decimal strings.
+ * collector to accept: trace/span ids as hex strings (the OTLP spec's one
+ * carve-out from the general protobuf-JSON rule that `bytes` fields are
+ * base64 — TraceId/SpanId are hex specifically, matching how every other
+ * tracing tool displays them; a collector silently drops spans sent with
+ * base64 ids instead of erroring, rather than rejecting the request),
+ * attributes as typed KeyValue, int64 fields as decimal strings.
  */
 
 export interface OtlpResource {
   attributes: Record<string, AttrValue>;
-}
-
-function hexToBase64(hex: string): string {
-  return Buffer.from(hex, "hex").toString("base64");
 }
 
 function toAnyValue(value: AttrValue): Record<string, unknown> {
@@ -35,9 +35,9 @@ const STATUS_CODE: Record<SpanExport["status"]["code"], number> = { UNSET: 0, OK
 
 function toOtlpSpan(span: SpanExport): unknown {
   return {
-    traceId: hexToBase64(span.traceId),
-    spanId: hexToBase64(span.spanId),
-    ...(span.parentSpanId ? { parentSpanId: hexToBase64(span.parentSpanId) } : {}),
+    traceId: span.traceId,
+    spanId: span.spanId,
+    ...(span.parentSpanId ? { parentSpanId: span.parentSpanId } : {}),
     name: span.name,
     kind: 1, // SPAN_KIND_INTERNAL — kritya's spans are all local tool-loop work
     startTimeUnixNano: span.startTimeUnixNano,

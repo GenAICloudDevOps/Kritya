@@ -7,3 +7,4 @@ release/
 .claude/
 .kritya/project.json
 ROADMAP.md
+/otelcol
