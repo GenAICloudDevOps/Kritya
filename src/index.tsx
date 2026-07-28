@@ -13,6 +13,7 @@ import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
 import { runSkillsCli } from "./agent/skillsCli.js";
 import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
+import { createMeter } from "./telemetry/metrics.js";
 import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
@@ -313,6 +314,7 @@ async function main() {
   // edits the repo should never do so off the record.
   const sessionAudit = AuditLog.forSession(session.id, config.audit);
   const sessionTracer = createTracer(session.id, config.otel);
+  const sessionMeter = createMeter(session.id, config.otel);
 
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   const initialTasks = args.continue ? SessionStore.loadLatestTasks(workspace) : [];
@@ -329,6 +331,8 @@ async function main() {
     lspManager.disposeAll();
     shutdownMcp();
     undoStack.closeAll();
+    sessionMeter.flush();
+    sessionMeter.stop();
   };
   process.on("exit", cleanup);
   // Same reasoning as the signal handlers below, for the other way the process
@@ -431,6 +435,7 @@ async function main() {
     sub.maxSteps = 15;
     sub.audit = sessionAudit;
     sub.tracer = sessionTracer;
+    sub.meter = sessionMeter;
     // Share the parent's kill switch: a subagent with its own would keep
     // running after the user stopped the session.
     sub.kill = agent.kill;
@@ -494,6 +499,7 @@ async function main() {
       sub.maxSteps = 30;
       sub.audit = sessionAudit;
       sub.tracer = sessionTracer;
+      sub.meter = sessionMeter;
       sub.kill = agent.kill; // see runReadOnlyAgent
       sub.spanParent = agent.turnSpan;
       sub.spanAttributes = {
@@ -642,6 +648,7 @@ async function main() {
   agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
   agent.audit = sessionAudit;
   agent.tracer = sessionTracer;
+  agent.meter = sessionMeter;
   agent.hooks.tracer = sessionTracer;
   // Only the main interactive agent distills durable facts into KRITYA.md on
   // compaction — subagents (read-only or write) never do, even though they
