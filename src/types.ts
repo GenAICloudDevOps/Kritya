@@ -23,7 +23,8 @@ export type ItemBody =
   | { kind: "info"; text: string }
   | { kind: "banner"; subtitle: string };
 
-export type Phase = "input" | "working" | "permission" | "model" | "resume" | "confirmMode";
+export type Phase =
+  "input" | "working" | "permission" | "model" | "resume" | "confirmMode" | "elicitation";
 
 export interface UiBridge {
   onTasksUpdate(tasks: TaskItem[]): void;
@@ -108,6 +109,16 @@ export interface ToolDef {
 
 export type PermissionDecision = "yes" | "always" | "no";
 
+export type ElicitationField =
+  | { name: string; kind: "string"; label: string }
+  | { name: string; kind: "boolean"; label: string }
+  | { name: string; kind: "enum"; label: string; options: string[] };
+
+export type ElicitationResult =
+  | { action: "accept"; content: Record<string, string | boolean> }
+  | { action: "decline" }
+  | { action: "cancel" };
+
 export interface Usage {
   promptTokens: number;
   completionTokens: number;
@@ -144,6 +155,9 @@ export interface AgentHandlers {
     diff?: string,
     warning?: string
   ): Promise<PermissionDecision>;
+  /** Unused by the agent loop itself — surfaced only so MCP elicitation
+   *  wiring (index.tsx) can reach the same prompt UI tool calls use. */
+  requestElicitation?(message: string, fields: ElicitationField[]): Promise<ElicitationResult>;
   onUsage(usage: Usage): void;
   /** A transient provider error is being retried. */
   onRetry?(attempt: number, status?: number): void;

@@ -15,6 +15,7 @@ import type { UndoStack } from "../undo/undo.js";
 import type { AgentHandlers, TaskItem, UiBridge } from "../types.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
+import { ElicitationPrompt } from "./ElicitationPrompt.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
@@ -48,6 +49,10 @@ export interface AppProps {
    *  calls use, so MCP sampling (which can arrive outside any turn) can ask
    *  for approval too, without a second prompt UI. */
   onRequestPermissionReady?(requestPermission: AgentHandlers["requestPermission"]): void;
+  /** Same reasoning as `onRequestPermissionReady`, for MCP elicitation. */
+  onRequestElicitationReady?(
+    requestElicitation: Required<AgentHandlers>["requestElicitation"]
+  ): void;
 }
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
@@ -74,6 +79,7 @@ export function App({
   mcpToolCount = 0,
   onSwitchClient,
   onRequestPermissionReady,
+  onRequestElicitationReady,
 }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -188,6 +194,7 @@ export function App({
     workflow,
     refreshWorkflow,
     permission,
+    elicitation,
     inFlight,
     model,
     provider,
@@ -223,8 +230,10 @@ export function App({
     runAgent,
     runWebSearch,
     onPermissionDecision,
+    onElicitationDecision,
     onResumeSelect,
     requestPermission,
+    requestElicitation,
   } = useAgent({
     agent,
     workspace,
@@ -242,6 +251,10 @@ export function App({
   useEffect(() => {
     onRequestPermissionReady?.(requestPermission);
   }, [onRequestPermissionReady, requestPermission]);
+
+  useEffect(() => {
+    onRequestElicitationReady?.(requestElicitation);
+  }, [onRequestElicitationReady, requestElicitation]);
 
   // Tick an elapsed-seconds counter while the agent is working.
   useEffect(() => {
@@ -599,6 +612,14 @@ export function App({
           diff={permission.diff}
           warning={permission.warning}
           onDecision={onPermissionDecision}
+        />
+      )}
+
+      {phase === "elicitation" && elicitation && (
+        <ElicitationPrompt
+          message={elicitation.message}
+          fields={elicitation.fields}
+          onDecision={onElicitationDecision}
         />
       )}
 
