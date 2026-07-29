@@ -762,6 +762,82 @@ test("an unsupported server request gets an error reply, not silence", async () 
   assert.match(answer, /not supported/);
 });
 
+// ---------- sampling/createMessage ----------
+
+// A server that records whether it saw the sampling capability on
+// initialize, then asks the client to sample a completion right after
+// notifications/initialized, and reports both as the text of its one tool
+// — same shape as ROOTS_SERVER above.
+const SAMPLING_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "let outcome = 'none';",
+  "let sawSampling = false;",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'initialize') {",
+  "    sawSampling = Boolean(m.params.capabilities && m.params.capabilities.sampling);",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+  "      capabilities: { tools: {} }, serverInfo: { name: 'sampling', version: '1' } } });",
+  "  }",
+  "  if (m.method === 'notifications/initialized')",
+  "    return send({ jsonrpc: '2.0', id: 9002, method: 'sampling/createMessage',",
+  "      params: { messages: [{ role: 'user', content: { type: 'text', text: 'hi' } }] } });",
+  "  if (m.id === 9002) { outcome = JSON.stringify(m.result !== undefined ? { result: m.result } : { error: m.error }); return; }",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'check' }] } });",
+  "  if (m.method === 'tools/call')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: JSON.stringify({ sawSampling, outcome }) }] } });",
+  "});",
+].join("\n");
+
+test("initialize declares the sampling capability, and the client forwards sampling/createMessage to onSampling with its result", async () => {
+  const calls: { server: string; req: unknown }[] = [];
+  const tools = await loadMcpTools(
+    { sampler: { command: process.execPath, args: ["-e", SAMPLING_SERVER] } },
+    {
+      tracer: NOOP_TRACER,
+      onSampling: async (server, req) => {
+        calls.push({ server, req });
+        return {
+          ok: true,
+          role: "assistant" as const,
+          content: "the answer",
+          model: "test-model",
+          stopReason: "stop",
+        };
+      },
+    }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  const { sawSampling, outcome } = JSON.parse(answer);
+  assert.equal(sawSampling, true);
+  assert.deepEqual(JSON.parse(outcome).result, {
+    role: "assistant",
+    content: { type: "text", text: "the answer" },
+    model: "test-model",
+    stopReason: "stop",
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual((calls[0].req as { messages: unknown[] }).messages, [
+    { role: "user", content: "hi" },
+  ]);
+});
+
+test("replies with a JSON-RPC error when onSampling declines", async () => {
+  const tools = await loadMcpTools(
+    { sampler2: { command: process.execPath, args: ["-e", SAMPLING_SERVER] } },
+    {
+      tracer: NOOP_TRACER,
+      onSampling: async () => ({ ok: false as const, reason: "user declined" }),
+    }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  const { outcome } = JSON.parse(answer);
+  assert.equal(JSON.parse(outcome).error.message, "user declined");
+});
+
 // ---------- prompts and resources ----------
 
 const FULL_SERVER = [

@@ -19,7 +19,7 @@ import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
-import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
+import { loadMcpTools, shutdownMcp, type SamplingResult } from "./mcp/client.js";
 import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
@@ -184,9 +184,15 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
       }
     }
   }
+  // Headless has no UI to ask the user anything, so sampling always fails
+  // closed rather than silently granting a server free use of the model.
+  const onSampling = async (): Promise<SamplingResult> => ({
+    ok: false,
+    reason: "sampling requires interactive mode (kritya without --headless)",
+  });
   const mcpTools: ToolDef[] = await loadMcpTools(
     mergeMcpServers(config.mcpServers, approvedProjectMcp),
-    { tracer: sessionTracer, audit: sessionAudit, workspace }
+    { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 

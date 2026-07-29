@@ -121,6 +121,39 @@ export function useAgent({
    *  turn's read-only calls are dispatched in parallel. Rendered as live rows. */
   const [inFlight, setInFlight] = useState<{ id: string; name: string; summary: string }[]>([]);
 
+  /**
+   * The phase to restore once a permission prompt resolves. Tool-call
+   * permission requests always arrive mid-turn (phase "working"), but MCP
+   * sampling requests can arrive at any time — including while the user is
+   * simply sitting at the input prompt — so restoring to the phase captured
+   * when the prompt opened (rather than hardcoding "working") keeps the UI
+   * from getting stuck in a false "working" state afterward.
+   */
+  const phaseRef = useRef<Phase>(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+  const previousPhaseRef = useRef<Phase>("input");
+
+  /** Reusable permission prompt, shared by in-turn tool calls and out-of-turn
+   *  callers (e.g. MCP sampling) — same UI, same three-way decision. */
+  const requestPermission = useCallback(
+    (
+      toolName: string,
+      summary: string,
+      diff?: string,
+      warning?: string
+    ): Promise<PermissionDecision> =>
+      new Promise<PermissionDecision>((resolve) => {
+        previousPhaseRef.current = phaseRef.current;
+        setActivity(null);
+        process.stdout.write("\x07"); // ring the terminal bell when input is needed
+        setPermission({ toolName, summary, diff, warning, resolve });
+        setPhase("permission");
+      }),
+    []
+  );
+
   const addItem = useCallback((item: ItemBody) => {
     setItems((prev) => {
       // A model that calls the same tool with the same arguments several times
@@ -378,13 +411,7 @@ export function useAgent({
                 resultSummary,
               });
           },
-          requestPermission: (toolName, summary, diff, warning) =>
-            new Promise<PermissionDecision>((resolve) => {
-              setActivity(null);
-              process.stdout.write("\x07"); // ring the terminal bell when input is needed
-              setPermission({ toolName, summary, diff, warning, resolve });
-              setPhase("permission");
-            }),
+          requestPermission,
           onRetry: (attempt, status) => {
             // Drop the partial text the failed attempt streamed, or the
             // retried answer would appear twice.
@@ -450,7 +477,7 @@ export function useAgent({
   const onPermissionDecision = (decision: PermissionDecision) => {
     const pending = permission;
     setPermission(null);
-    setPhase("working");
+    setPhase(previousPhaseRef.current);
     pending?.resolve(decision);
   };
 
@@ -513,5 +540,6 @@ export function useAgent({
     runWebSearch,
     onPermissionDecision,
     onResumeSelect,
+    requestPermission,
   };
 }

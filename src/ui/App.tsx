@@ -12,7 +12,7 @@ import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
-import type { TaskItem, UiBridge } from "../types.js";
+import type { AgentHandlers, TaskItem, UiBridge } from "../types.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
@@ -44,6 +44,10 @@ export interface AppProps {
   resumeSessions?: SessionMeta[];
   customCommands?: CustomCommand[];
   mcpToolCount?: number;
+  /** Hands the caller a stable reference to the same permission prompt tool
+   *  calls use, so MCP sampling (which can arrive outside any turn) can ask
+   *  for approval too, without a second prompt UI. */
+  onRequestPermissionReady?(requestPermission: AgentHandlers["requestPermission"]): void;
 }
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
@@ -69,6 +73,7 @@ export function App({
   customCommands = [],
   mcpToolCount = 0,
   onSwitchClient,
+  onRequestPermissionReady,
 }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -219,6 +224,7 @@ export function App({
     runWebSearch,
     onPermissionDecision,
     onResumeSelect,
+    requestPermission,
   } = useAgent({
     agent,
     workspace,
@@ -232,6 +238,10 @@ export function App({
     refreshFileList,
     onSwitchClient,
   });
+
+  useEffect(() => {
+    onRequestPermissionReady?.(requestPermission);
+  }, [onRequestPermissionReady, requestPermission]);
 
   // Tick an elapsed-seconds counter while the agent is working.
   useEffect(() => {

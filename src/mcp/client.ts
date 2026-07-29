@@ -58,6 +58,22 @@ interface McpToolAnnotations {
   destructiveHint?: boolean;
 }
 
+/** A server's `sampling/createMessage` request, translated to kritya's own shape. */
+export interface SamplingRequest {
+  server: string;
+  messages: { role: "user" | "assistant"; content: string }[];
+  systemPrompt?: string;
+  maxTokens?: number;
+}
+
+export type SamplingResult =
+  | { ok: true; role: "assistant"; content: string; model: string; stopReason: string }
+  | { ok: false; reason: string };
+
+export interface McpConnectionOptions {
+  onSampling?(server: string, req: SamplingRequest): Promise<SamplingResult>;
+}
+
 export interface McpToolSpec {
   name: string;
   description?: string;
@@ -192,7 +208,8 @@ class McpConnection {
     public readonly name: string,
     private transport: Transport,
     /** The workspace this session is working on — what `roots/list` reports. */
-    private workspace: string
+    private workspace: string,
+    private options: McpConnectionOptions = {}
   ) {
     transport.onMessage = (msg) => this.onMessage(msg);
     transport.onError = (err) => this.fail(new Error(`MCP server "${name}": ${err.message}`));
@@ -211,7 +228,7 @@ class McpConnection {
   private onMessage(msg: JsonRpcMessage): void {
     if (msg.method) {
       // A request from the server (it has an id) or a notification (it doesn't).
-      if (typeof msg.id === "number") this.onServerRequest(msg.id, msg.method);
+      if (typeof msg.id === "number") this.onServerRequest(msg.id, msg.method, msg.params);
       return;
     }
     if (typeof msg.id !== "number") return;
@@ -230,7 +247,7 @@ class McpConnection {
    * other method gets a proper "method not found" rather than silence, so a
    * server can tell the difference between an unsupported client and a hung one.
    */
-  private onServerRequest(id: number, method: string): void {
+  private onServerRequest(id: number, method: string, params?: unknown): void {
     const reply = (body: Partial<JsonRpcMessage>) =>
       this.transport.send({ jsonrpc: "2.0", id, ...body }, CONNECT_TIMEOUT_MS).catch(() => {});
 
@@ -242,6 +259,48 @@ class McpConnection {
       });
       return;
     }
+
+    if (method === "sampling/createMessage") {
+      if (!this.options.onSampling) {
+        reply({
+          error: { code: -32601, message: `method "${method}" is not supported by kritya` },
+        });
+        return;
+      }
+      const p = params as {
+        messages?: { role: string; content: { type: string; text: string } }[];
+        systemPrompt?: string;
+        maxTokens?: number;
+      };
+      const req: SamplingRequest = {
+        server: this.name,
+        messages: (p?.messages ?? []).map((m) => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.content?.text ?? "",
+        })),
+        systemPrompt: p?.systemPrompt,
+        maxTokens: p?.maxTokens,
+      };
+      this.options
+        .onSampling(this.name, req)
+        .then((result) => {
+          if (!result.ok) {
+            reply({ error: { code: -32603, message: result.reason } });
+            return;
+          }
+          reply({
+            result: {
+              role: "assistant",
+              content: { type: "text", text: result.content },
+              model: result.model,
+              stopReason: result.stopReason,
+            },
+          });
+        })
+        .catch((err: Error) => reply({ error: { code: -32603, message: err.message } }));
+      return;
+    }
+
     reply({ error: { code: -32601, message: `method "${method}" is not supported by kritya` } });
   }
 
@@ -314,7 +373,7 @@ class McpConnection {
         protocolVersion: PROTOCOL_VERSION,
         // Declaring roots is what lets a server scope itself to the user's
         // project instead of whatever its own config guessed.
-        capabilities: { roots: {} },
+        capabilities: { roots: {}, sampling: {} },
         clientInfo: { name: "kritya", version: VERSION },
       },
       CONNECT_TIMEOUT_MS
@@ -512,6 +571,7 @@ export interface McpLoadOptions {
   tracer: Tracer;
   audit?: AuditLog;
   workspace?: string;
+  onSampling?(server: string, req: SamplingRequest): Promise<SamplingResult>;
 }
 
 /** What /mcp reports for one configured server. */
@@ -708,7 +768,9 @@ export async function connectServer(
     if (missing.length) {
       throw new Error(`missing env var${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
     }
-    conn = new McpConnection(name, makeTransport(name, cfg, workspace), workspace);
+    conn = new McpConnection(name, makeTransport(name, cfg, workspace), workspace, {
+      onSampling: trace?.onSampling,
+    });
     const listed = await conn.initialize();
     const specs = listed.tools;
     connections.push(conn);
