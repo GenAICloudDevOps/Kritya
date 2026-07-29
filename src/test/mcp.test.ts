@@ -10,6 +10,7 @@ import {
   mcpPrompts,
   mcpResources,
   mcpStatus,
+  PROTOCOL_VERSION,
   shutdownMcp,
   toolAllowed,
 } from "../mcp/client.js";
@@ -25,6 +26,10 @@ import { planSpawn, resolveWindowsCommand } from "../mcp/spawnWin.js";
 import { gatedContentHash, describeGatedContent } from "../trust/trust.js";
 
 after(() => shutdownMcp());
+
+test("PROTOCOL_VERSION matches the 2026-07-28 MCP spec revision", () => {
+  assert.equal(PROTOCOL_VERSION, "2026-07-28");
+});
 
 async function makeWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-mcp-test-"));

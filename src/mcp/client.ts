@@ -28,7 +28,7 @@ import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
  * (untrusted) content.
  */
 
-const PROTOCOL_VERSION = "2025-06-18";
+export const PROTOCOL_VERSION = "2026-07-28";
 const CONNECT_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 120_000;
 
