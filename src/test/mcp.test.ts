@@ -838,6 +838,71 @@ test("replies with a JSON-RPC error when onSampling declines", async () => {
   assert.equal(JSON.parse(outcome).error.message, "user declined");
 });
 
+// ---------- elicitation/create ----------
+
+// A server that, right after initialize, asks the client to elicit a
+// boolean field from the user, and reports whatever came back as the text
+// of its one tool.
+const ELICITATION_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "let outcome = 'none';",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'initialize')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+  "      capabilities: { tools: {} }, serverInfo: { name: 'elicit', version: '1' } } });",
+  "  if (m.method === 'notifications/initialized')",
+  "    return send({ jsonrpc: '2.0', id: 9003, method: 'elicitation/create',",
+  "      params: { message: 'Proceed with deletion?', requestedSchema: { type: 'object',",
+  "        properties: { proceed: { type: 'boolean', title: 'Proceed' } } } } });",
+  "  if (m.id === 9003) { outcome = JSON.stringify(m.result !== undefined ? { result: m.result } : { error: m.error }); return; }",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'check' }] } });",
+  "  if (m.method === 'tools/call')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: outcome }] } });",
+  "});",
+].join("\n");
+
+// Same shape, but the schema has a nested/unsupported field.
+const ELICITATION_SERVER_NESTED = ELICITATION_SERVER.replace(
+  "properties: { proceed: { type: 'boolean', title: 'Proceed' } } } } });",
+  "properties: { nested: { type: 'object', properties: {} } } } } });"
+);
+
+test("declares the elicitation capability and translates a flat schema into ElicitationFields", async () => {
+  const calls: { server: string; message: string; fields: unknown }[] = [];
+  const tools = await loadMcpTools(
+    { elicit: { command: process.execPath, args: ["-e", ELICITATION_SERVER] } },
+    {
+      tracer: NOOP_TRACER,
+      onElicitation: async (server, message, fields) => {
+        calls.push({ server, message, fields });
+        return { action: "accept" as const, content: { proceed: true } };
+      },
+    }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].message, "Proceed with deletion?");
+  assert.deepEqual(calls[0].fields, [{ name: "proceed", kind: "boolean", label: "Proceed" }]);
+  assert.deepEqual(JSON.parse(answer).result, { action: "accept", content: { proceed: true } });
+});
+
+test("rejects a nested/unsupported schema with a JSON-RPC error naming the field", async () => {
+  const onElicitation = async () => {
+    throw new Error("onElicitation must not be called for an unsupported schema");
+  };
+  const tools = await loadMcpTools(
+    { elicitNested: { command: process.execPath, args: ["-e", ELICITATION_SERVER_NESTED] } },
+    { tracer: NOOP_TRACER, onElicitation }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  const { error } = JSON.parse(answer);
+  assert.match(error.message, /nested/);
+});
+
 // ---------- prompts and resources ----------
 
 const FULL_SERVER = [

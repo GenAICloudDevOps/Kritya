@@ -23,7 +23,7 @@ import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
 import { TrustPrompt } from "./ui/TrustPrompt.js";
 import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
-import type { TaskItem, ToolDef } from "./types.js";
+import type { ElicitationField, ElicitationResult, TaskItem, ToolDef } from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import {
@@ -439,9 +439,19 @@ async function main() {
     }
   };
 
+  const elicitationRef: { current?: Required<AgentHandlers>["requestElicitation"] } = {};
+  const onElicitation = async (
+    server: string,
+    message: string,
+    fields: ElicitationField[]
+  ): Promise<ElicitationResult> => {
+    if (!elicitationRef.current) return { action: "cancel" };
+    return elicitationRef.current(`[MCP: ${server}] ${message}`, fields);
+  };
+
   const mcpTools: ToolDef[] = await loadMcpTools(
     mergeMcpServers(config.mcpServers, approvedProjectMcp),
-    { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling }
+    { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling, onElicitation }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
@@ -729,6 +739,9 @@ async function main() {
       }}
       onRequestPermissionReady={(fn) => {
         permissionRef.current = fn;
+      }}
+      onRequestElicitationReady={(fn) => {
+        elicitationRef.current = fn;
       }}
     />
   );

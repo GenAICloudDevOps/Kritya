@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { McpServerConfig, McpToolFilter } from "../config/config.js";
-import type { ToolDef } from "../types.js";
+import type { ElicitationField, ElicitationResult, ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
 import type { AuditLog } from "../audit/audit.js";
 import { NOOP_TRACER, type Tracer } from "../telemetry/tracer.js";
@@ -72,6 +72,11 @@ export type SamplingResult =
 
 export interface McpConnectionOptions {
   onSampling?(server: string, req: SamplingRequest): Promise<SamplingResult>;
+  onElicitation?(
+    server: string,
+    message: string,
+    fields: ElicitationField[]
+  ): Promise<ElicitationResult>;
 }
 
 export interface McpToolSpec {
@@ -301,6 +306,35 @@ class McpConnection {
       return;
     }
 
+    if (method === "elicitation/create") {
+      if (!this.options.onElicitation) {
+        reply({
+          error: { code: -32601, message: `method "${method}" is not supported by kritya` },
+        });
+        return;
+      }
+      const p = params as {
+        message?: string;
+        requestedSchema?: {
+          properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
+        };
+      };
+      let fields: ElicitationField[];
+      try {
+        fields = toElicitationFields(p?.requestedSchema ?? {});
+      } catch (err) {
+        reply({
+          error: { code: -32602, message: err instanceof Error ? err.message : String(err) },
+        });
+        return;
+      }
+      this.options
+        .onElicitation(this.name, p?.message ?? "", fields)
+        .then((result) => reply({ result }))
+        .catch((err: Error) => reply({ error: { code: -32603, message: err.message } }));
+      return;
+    }
+
     reply({ error: { code: -32601, message: `method "${method}" is not supported by kritya` } });
   }
 
@@ -373,7 +407,7 @@ class McpConnection {
         protocolVersion: PROTOCOL_VERSION,
         // Declaring roots is what lets a server scope itself to the user's
         // project instead of whatever its own config guessed.
-        capabilities: { roots: {}, sampling: {} },
+        capabilities: { roots: {}, sampling: {}, elicitation: {} },
         clientInfo: { name: "kritya", version: VERSION },
       },
       CONNECT_TIMEOUT_MS
@@ -572,6 +606,11 @@ export interface McpLoadOptions {
   audit?: AuditLog;
   workspace?: string;
   onSampling?(server: string, req: SamplingRequest): Promise<SamplingResult>;
+  onElicitation?(
+    server: string,
+    message: string,
+    fields: ElicitationField[]
+  ): Promise<ElicitationResult>;
 }
 
 /** What /mcp reports for one configured server. */
@@ -770,6 +809,7 @@ export async function connectServer(
     }
     conn = new McpConnection(name, makeTransport(name, cfg, workspace), workspace, {
       onSampling: trace?.onSampling,
+      onElicitation: trace?.onElicitation,
     });
     const listed = await conn.initialize();
     const specs = listed.tools;
@@ -917,6 +957,26 @@ export function replaceStatus(status: McpServerStatus): void {
  * a tool doesn't change anything. destructiveHint being set overrides it, since
  * a server contradicting itself should get the cautious reading.
  */
+/**
+ * A flat requestedSchema (object of string/boolean/enum properties) becomes
+ * ElicitationFields the UI can render. Anything with nesting or an
+ * unrecognized type is rejected outright, rather than guessed at.
+ */
+function toElicitationFields(schema: {
+  properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
+}): ElicitationField[] {
+  const props = schema.properties ?? {};
+  return Object.entries(props).map(([name, prop]) => {
+    const label = prop.title ?? name;
+    if (prop.enum) return { name, kind: "enum" as const, label, options: prop.enum };
+    if (prop.type === "boolean") return { name, kind: "boolean" as const, label };
+    if (prop.type === "string") return { name, kind: "string" as const, label };
+    throw new Error(
+      `elicitation field "${name}" has an unsupported schema (type: ${prop.type ?? "nested/unknown"})`
+    );
+  });
+}
+
 function isReadOnly(spec: McpToolSpec): boolean {
   const a = spec.annotations;
   return a?.readOnlyHint === true && a.destructiveHint !== true;

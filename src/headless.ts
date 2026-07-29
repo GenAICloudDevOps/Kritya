@@ -25,7 +25,7 @@ import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { installCrashHandlers } from "./crash.js";
-import type { AgentHandlers, ToolDef } from "./types.js";
+import type { AgentHandlers, ElicitationResult, ToolDef } from "./types.js";
 
 export interface HeadlessArgs {
   dir: string;
@@ -190,9 +190,10 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     ok: false,
     reason: "sampling requires interactive mode (kritya without --headless)",
   });
+  const onElicitation = async (): Promise<ElicitationResult> => ({ action: "cancel" });
   const mcpTools: ToolDef[] = await loadMcpTools(
     mergeMcpServers(config.mcpServers, approvedProjectMcp),
-    { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling }
+    { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling, onElicitation }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
