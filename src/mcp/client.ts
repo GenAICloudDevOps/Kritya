@@ -58,7 +58,7 @@ interface McpToolAnnotations {
   destructiveHint?: boolean;
 }
 
-interface McpToolSpec {
+export interface McpToolSpec {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
@@ -722,7 +722,7 @@ export async function connectServer(
     const exposed = specs.filter((s) => toolAllowed(s.name, cfg.tools));
     status.hiddenTools = specs.length - exposed.length;
     for (const spec of exposed) {
-      const def = mcpToolDef(conn, name, spec);
+      const def = mcpToolDef(conn, name, spec, cfg);
       registeredNames.set(def.name, toolIdentity(name, spec.name));
       owned.add(def.name);
       tools.push(def);
@@ -860,12 +860,17 @@ function isReadOnly(spec: McpToolSpec): boolean {
   return a?.readOnlyHint === true && a.destructiveHint !== true;
 }
 
-function mcpToolDef(conn: McpConnection, server: string, spec: McpToolSpec): ToolDef {
+export function mcpToolDef(
+  conn: McpConnection,
+  server: string,
+  spec: McpToolSpec,
+  cfg: Pick<McpServerConfig, "consent"> = {}
+): ToolDef {
   return {
     name: exposedToolName(server, spec.name),
     description: `[MCP: ${server}] ${spec.description ?? spec.name}`,
     parameters: spec.inputSchema ?? { type: "object", properties: {} },
-    requiresPermission: !isReadOnly(spec),
+    requiresPermission: cfg.consent === "always-confirm" ? true : !isReadOnly(spec),
     // Self-managed: every request already carries CALL_TIMEOUT_MS, and the
     // connection rejects in-flight calls when the transport dies.
     timeoutMs: 0,

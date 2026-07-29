@@ -114,6 +114,12 @@ export interface McpServerConfig {
    * matter under ones the user never calls.
    */
   tools?: McpToolFilter;
+  /**
+   * Per-tool-call consent policy. `"always-confirm"` requires user approval
+   * on every call regardless of the tool's read-only annotation; omitted (or
+   * `"trust-hints"`) defers to the server's own read-only hints as today.
+   */
+  consent?: "trust-hints" | "always-confirm";
 }
 
 export interface McpToolFilter {

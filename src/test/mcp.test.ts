@@ -10,10 +10,12 @@ import {
   mcpPrompts,
   mcpResources,
   mcpStatus,
+  mcpToolDef,
   PROTOCOL_VERSION,
   shutdownMcp,
   toolAllowed,
 } from "../mcp/client.js";
+import type { McpToolSpec } from "../mcp/client.js";
 import { NOOP_TRACER } from "../telemetry/tracer.js";
 import {
   expandVars,
@@ -29,6 +31,38 @@ after(() => shutdownMcp());
 
 test("PROTOCOL_VERSION matches the 2026-07-28 MCP spec revision", () => {
   assert.equal(PROTOCOL_VERSION, "2026-07-28");
+});
+
+function makeConsentTestSpec(overrides: Partial<McpToolSpec> = {}): McpToolSpec {
+  return {
+    name: "search",
+    description: "search",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true },
+    ...overrides,
+  };
+}
+
+test("mcpToolDef respects readOnlyHint when consent is trust-hints (default)", () => {
+  const conn = {} as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(conn, "srv", makeConsentTestSpec(), { consent: "trust-hints" });
+  assert.equal(def.requiresPermission, false);
+});
+
+test("mcpToolDef forces requiresPermission when consent is always-confirm, even for a read-only tool", () => {
+  const conn = {} as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(conn, "srv", makeConsentTestSpec(), { consent: "always-confirm" });
+  assert.equal(def.requiresPermission, true);
+});
+
+test("mcpToolDef defaults to trust-hints when consent is omitted", () => {
+  const conn = {} as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(
+    conn,
+    "srv",
+    makeConsentTestSpec({ annotations: { readOnlyHint: false } })
+  );
+  assert.equal(def.requiresPermission, true);
 });
 
 async function makeWorkspace(): Promise<string> {
