@@ -329,6 +329,37 @@ export class ProviderClient {
     }
   }
 
+  /**
+   * A single non-streaming completion, no tools, no retry loop — for
+   * server-initiated MCP sampling requests, which want one answer back, not
+   * a full agentic turn.
+   */
+  async complete(
+    model: string,
+    messages: ChatMessage[],
+    maxTokens?: number,
+    signal?: AbortSignal
+  ): Promise<{ text: string; model: string; stopReason: string }> {
+    const response = await this.client.chat.completions.create(
+      {
+        model,
+        messages,
+        stream: false,
+        max_tokens: maxTokens ?? this.maxTokens,
+        temperature: this.temperature,
+        top_p: this.topP,
+      },
+      { signal }
+    );
+    const choice = response.choices[0];
+    if (!choice) throw new Error("provider returned no completion");
+    return {
+      text: choice.message.content ?? "",
+      model: response.model,
+      stopReason: choice.finish_reason ?? "stop",
+    };
+  }
+
   private async chatOnce(
     model: string,
     messages: ChatMessage[],
