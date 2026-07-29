@@ -681,8 +681,17 @@ content when they reach the model, since the server wrote them.
 Their tools appear as `mcp_<server>_<tool>`, and output is treated as
 untrusted content. Calls need your approval unless the server marks the tool
 `readOnlyHint` — those run without prompting and are also available to
-subagents. A server that fails to start is skipped with a warning; `/mcp`
-shows each server's status and tools.
+subagents. Set `"consent": "always-confirm"` on a server to require approval
+for every call from it regardless of `readOnlyHint`, for a server you trust
+less than its tool annotations claim. A server that fails to start is skipped
+with a warning; `/mcp` shows each server's status and tools.
+
+A server can also ask kritya for help mid-call: `sampling/createMessage` asks
+to run a completion against your configured model, and `elicitation/create`
+asks the user a short structured question (boolean, string, or enum fields).
+Both surface the same prompt UI as a tool call — sampling asks permission
+per server (with a "yes, always this session" option), and both are declined
+automatically in headless/non-interactive mode.
 
 #### Signing in to hosted servers (OAuth)
 
