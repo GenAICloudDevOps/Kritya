@@ -960,16 +960,19 @@ test("a task needing multiple poll rounds still completes", async () => {
   assert.equal(out, "sawTasksMeta:true");
 });
 
-test("the tasks _meta capability is attached only when tasks: true is configured", async () => {
+test("without tasks: true configured, a server returning a task is refused rather than polled", async () => {
   const tools = await loadMcpTools({
     tasker: { command: process.execPath, args: ["-e", tasksServerScript(1)] },
   });
-  // Without tasks:true, kritya never declares support, so per spec the server
-  // shouldn't return a task — but this fake server returns one regardless of
-  // the _meta flag to isolate what we're testing: the _meta block itself.
-  // We assert on sawTasksMeta being false in the result text.
-  const out = await tools[0].execute({}, { workspace: "." });
-  assert.equal(out, "sawTasksMeta:false");
+  // Without tasks:true, kritya never declares support (sawTasksMeta would be
+  // false), and per spec the server shouldn't return a task at all — but this
+  // fake server returns one regardless, to exercise the opt-in gate: kritya
+  // must refuse to poll it rather than silently treating it as a normal
+  // (empty) tool result.
+  await assert.rejects(
+    tools[0].execute({}, { workspace: "." }),
+    /has not declared tasks support|refusing to poll/
+  );
 });
 
 test("onProgress fires once on task creation and again after each poll", async () => {
@@ -978,8 +981,7 @@ test("onProgress fires once on task creation and again after each poll", async (
   });
   const progress: string[] = [];
   await tools[0].execute({}, { workspace: "." }, undefined, (text: string) => progress.push(text));
-  assert.equal(progress[0], "started");
-  assert.equal(progress.length, 4); // initial + 3 polls (2 "working" + 1 "completed" transition consumed internally)
+  assert.deepEqual(progress, ["started", "poll 1", "poll 2", "completed"]);
 });
 
 test("a task that ends failed throws with the server's error message", async () => {
@@ -1031,7 +1033,7 @@ test("a task that ends cancelled (server-initiated) throws a clear error", async
   const tools = await loadMcpTools({
     canceler: { command: process.execPath, args: ["-e", script], tasks: true },
   });
-  await assert.rejects(tools[0].execute({}, { workspace: "." }), /cancelled/);
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /task was cancelled/);
 });
 
 test("a task with an unrecognized status doesn't loop forever — it throws naming the status", async () => {
@@ -1058,6 +1060,34 @@ test("a task with an unrecognized status doesn't loop forever — it throws nami
     weirdo: { command: process.execPath, args: ["-e", script], tasks: true },
   });
   await assert.rejects(tools[0].execute({}, { workspace: "." }), /unrecognized status.*zorped/);
+});
+
+test("a task that never completes is bounded by its ttlMs, not left to hang forever", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'forever', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: 200, pollIntervalMs: 20 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "      statusMessage: 'still working', createdAt: 'now', lastUpdatedAt: 'now', ttlMs: 200, pollIntervalMs: 20 } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    forever: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  const started = Date.now();
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /exceeded its ttlMs/);
+  assert.ok(Date.now() - started < 5_000, "should give up around the ttlMs, not hang");
 });
 
 test("a server reporting a zero/negative pollIntervalMs doesn't busy-loop tasks/get", async () => {
@@ -1168,6 +1198,47 @@ test("a task whose input_required request isn't elicitation-shaped cancels the t
     tools[0].execute({}, { workspace: "." }),
     /unsupported input method "sampling\/createMessage"/
   );
+});
+
+test("a task whose input_required schema is nested/unsupported cancels the task before throwing", async () => {
+  const workspace = await makeWorkspace();
+  const marker = path.join(workspace, "cancel-marker");
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "const nodeFs = require('fs');",
+    `const marker = ${JSON.stringify(marker)};`,
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'nestedinput', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/cancel') { nodeFs.writeFileSync(marker, 'cancelled'); return; }",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'input_required',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      inputRequests: { nested: { method: 'elicitation/create', params: { message: 'Nested?',",
+    "        requestedSchema: { properties: { nested: { type: 'object', properties: {} } } } } } } } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools(
+    { nestedinput: { command: process.execPath, args: ["-e", script], tasks: true } },
+    {
+      tracer: NOOP_TRACER,
+      onElicitation: async () => {
+        throw new Error("onElicitation must not be called for an unsupported schema");
+      },
+    }
+  );
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /nested/);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await fs.readFile(marker, "utf8"), "cancelled");
 });
 
 test("a task that goes to input_required, gets answered via elicitation, then completes", async () => {

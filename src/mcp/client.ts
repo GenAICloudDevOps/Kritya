@@ -601,6 +601,11 @@ class McpConnection {
       McpToolResult | McpCreateTaskResult;
 
     if ((result as McpCreateTaskResult).resultType === "task") {
+      if (!tasksEnabled) {
+        throw new Error(
+          "MCP server returned a task, but this server has not declared tasks support — refusing to poll it"
+        );
+      }
       return this.pollTask(result as McpCreateTaskResult, signal, onProgress);
     }
 
@@ -619,10 +624,25 @@ class McpConnection {
     const taskId = initial.taskId;
     onProgress?.(initial.statusMessage ?? "task created — waiting…");
     let pollIntervalMs = sanitizePollInterval(initial.pollIntervalMs);
+    // `ttlMs: null` means the server explicitly declared no expiry — leave
+    // it unbounded. Any other non-positive/non-finite value is nonsense, not
+    // an instruction, so it's likewise treated as no deadline.
+    const deadline =
+      typeof initial.ttlMs === "number" && Number.isFinite(initial.ttlMs) && initial.ttlMs > 0
+        ? Date.now() + initial.ttlMs
+        : null;
 
     try {
       for (;;) {
+        if (deadline !== null && Date.now() >= deadline) {
+          this.notify("tasks/cancel", { taskId });
+          throw new Error("MCP task exceeded its ttlMs");
+        }
         await sleep(pollIntervalMs, signal);
+        if (deadline !== null && Date.now() >= deadline) {
+          this.notify("tasks/cancel", { taskId });
+          throw new Error("MCP task exceeded its ttlMs");
+        }
 
         const detailed = (await this.request(
           "tasks/get",
@@ -689,18 +709,23 @@ class McpConnection {
       throw new Error("MCP task requires elicitation, but elicitation is not supported here");
     }
     const inputResponses: Record<string, ElicitationResult> = {};
-    for (const [key, req] of entries) {
-      const p = req.params as {
-        message?: string;
-        requestedSchema?: {
-          properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
+    try {
+      for (const [key, req] of entries) {
+        const p = req.params as {
+          message?: string;
+          requestedSchema?: {
+            properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
+          };
         };
-      };
-      const fields = toElicitationFields(p?.requestedSchema ?? {});
-      inputResponses[key] = await raceAbort(
-        this.options.onElicitation(this.name, p?.message ?? "", fields),
-        signal
-      );
+        const fields = toElicitationFields(p?.requestedSchema ?? {});
+        inputResponses[key] = await raceAbort(
+          this.options.onElicitation(this.name, p?.message ?? "", fields),
+          signal
+        );
+      }
+    } catch (err) {
+      this.notify("tasks/cancel", { taskId });
+      throw err;
     }
     await this.request("tasks/update", { taskId, inputResponses }, CALL_TIMEOUT_MS, signal);
   }
