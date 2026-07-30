@@ -120,6 +120,13 @@ export interface McpServerConfig {
    * `"trust-hints"`) defers to the server's own read-only hints as today.
    */
   consent?: "trust-hints" | "always-confirm";
+  /**
+   * Opt in to the `io.modelcontextprotocol/tasks` extension: kritya declares
+   * support for it on every `tools/call` to this server, letting the server
+   * return a durable task handle instead of blocking. Off by default — a
+   * server has no grounds to return a task unless the client declared it.
+   */
+  tasks?: boolean;
 }
 
 export interface McpToolFilter {
