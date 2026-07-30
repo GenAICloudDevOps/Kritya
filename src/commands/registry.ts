@@ -3,6 +3,7 @@ import type { Agent } from "../agent/loop.js";
 import { AuditLog, summarizeAudit } from "../audit/audit.js";
 import { runMcpCommand } from "./mcpCommand.js";
 import { mcpPrompts } from "../mcp/client.js";
+import { scanSkillsDetailed, skillsDir, userSkillsDir } from "../agent/skills.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
@@ -59,6 +60,10 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/mcp",
     description: "MCP servers: status, /mcp add|remove <name>, /mcp login|logout <name>",
+  },
+  {
+    name: "/skills",
+    description: "list discovered skills (project + user-global) and why any were skipped",
   },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
   {
@@ -281,6 +286,37 @@ const handlers: Record<string, CommandHandler> = {
       return;
     }
     return runMcpCommand(ctx);
+  },
+  "/skills": (ctx) => {
+    const projectRoot = skillsDir(ctx.workspace);
+    const userRoot = userSkillsDir();
+    const { loaded, skipped } = scanSkillsDetailed([projectRoot, userRoot]);
+
+    if (!loaded.length && !skipped.length) {
+      ctx.addItem({
+        kind: "info",
+        text: `No skills found under ${projectRoot} or ${userRoot}.`,
+      });
+      return;
+    }
+
+    const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+    const rows = loaded.map((s) => ({
+      name: s.name,
+      source:
+        s.dir.startsWith(projectRoot + path.sep) || s.dir === projectRoot ? "project" : "user",
+      description: truncate(s.description, 60),
+    }));
+    const nameWidth = Math.max(
+      4,
+      ...rows.map((r) => r.name.length),
+      ...skipped.map((s) => s.name.length)
+    );
+    const lines = [
+      ...rows.map((r) => `  ${r.name.padEnd(nameWidth)}   (${r.source})  ${r.description}`),
+      ...skipped.map((s) => `  ${s.name.padEnd(nameWidth)}   SKIPPED: ${s.reason}`),
+    ];
+    ctx.addItem({ kind: "info", text: lines.join("\n") });
   },
   "/web-search": (ctx) => {
     if (!ctx.arg) {
@@ -666,6 +702,7 @@ const ALLOWED_WHILE_KILLED = new Set([
   "/budget",
   "/mcp",
   "/checkpoint",
+  "/skills",
 ]);
 
 /** Dispatch a slash command: built-in, then custom, then MCP prompt, then "unknown". */

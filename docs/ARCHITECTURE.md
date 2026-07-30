@@ -63,14 +63,33 @@ index.tsx                 bootstrap: config, provider, tools, agent, render
   `allow`/`hooks` content and tracks which hashes have been trusted
   (`~/.kritya/trusted.json`), so an untrusted repo can't self-grant
   permissions or run hooks just by being cloned.
-- **`src/mcp/client.ts`** — minimal stdio JSON-RPC MCP client; wraps remote
-  tools as `ToolDef`s (marked external/untrusted).
+- **`src/mcp/`** — `client.ts`, a minimal JSON-RPC MCP client wrapping remote
+  tools as `ToolDef`s (marked external/untrusted); `transport.ts` holds the
+  stdio/HTTP transport plumbing split out of it. Also implements OAuth 2.1
+  login for hosted servers, sampling/elicitation/consent, and the Tasks
+  extension poll loop.
 - **`src/commands/custom.ts`** — loads `.kritya/commands/*.md` as slash commands.
 - **`src/undo/undo.ts`** — per-turn snapshot stack backing `/undo` and `/redo`.
 - **`src/session/store.ts`** — append-only JSONL transcripts; powers `-c`/`-r`.
+- **`src/agent/skills.ts`** / **`skillsCli.ts`** — discovers `SKILL.md` files
+  (project `.kritya/skills/` + user-global `~/.kritya/skills/`), parses their
+  frontmatter (incl. quoted values and `>`/`|` block scalars), and backs both
+  the `load_skill` tool and the standalone `kritya skills` CLI subcommand.
+- **`src/audit/audit.ts`** — append-only, hash-chained audit log
+  (`~/.kritya/audit/<session>.audit.jsonl`) of every permission decision and
+  tool execution; `cli.ts` backs `kritya audit --list/--verify/--show/--summary/--prune`.
+- **`src/telemetry/`** — `tracer.ts` (OTel-shaped spans) and `metrics.ts` (a
+  `Meter` with counters/histograms) for local file/console tracing, plus
+  `otlp.ts`'s encoders for the optional `KRITYA_OTEL_ENDPOINT` export path to
+  a real OpenTelemetry Collector.
 - **`src/ui/`** — Ink components: `App` (the shell), `PermissionPrompt`,
   `TrustPrompt`, `ModelPicker`, `SelectList`, `Markdown`, `Banner`, `Spinner`,
   plus `highlight.ts` for code fences.
+- **`electron/`** — a separate Electron desktop app wrapping the same
+  compiled core (`dist/engine.js`). `main.mjs` runs one agent session per
+  window and exposes it to `renderer/` over IPC (validated in
+  `src/electron/ipcValidation.ts`); not part of the `src/` build, but depends
+  on its output.
 
 ## Tool contract
 

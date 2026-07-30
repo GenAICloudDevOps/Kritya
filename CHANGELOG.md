@@ -4,7 +4,7 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0-beta] — 2026-07-29
 
 ### Added
 
@@ -15,7 +15,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the model knows the skill exists, and it loads the skill's full
   instructions on demand through a new `load_skill` tool — along with the
   contents of any bundled `scripts/`, `references/`, or `assets/`
-  directories the skill ships alongside its `SKILL.md`.
+  directories the skill ships alongside its `SKILL.md`. Skills are also
+  scanned from `~/.kritya/skills` as a user-global root (project skills win
+  on a name collision), can opt out of discovery with `disabled: true`, and
+  the frontmatter parser now accepts quoted values (so a description
+  containing a colon, like "Use when: doing X", no longer breaks the
+  `key: value` split) and YAML's folded (`>`) and literal (`|`) block
+  scalars for a longer multi-line description. A new `kritya skills [dir]
+[--json] [--validate]` subcommand lists project vs. user-global skills,
+  shows why any skill was skipped, and lets CI fail fast on a malformed one.
+- **Electron desktop app** — `electron/` wraps the same agent core in a
+  cross-platform GUI (`npm run electron:dev` / `electron:build`). The
+  renderer has UI parity with the terminal client: live usage/retry status,
+  a Stop/Resume control backed by the same kill switch, the running task
+  checklist, real Markdown rendering, and plan/dry-run/accept-edits mode
+  toggles.
+- **OTLP telemetry export** — the local-only tracer/meter can now also
+  export to a real OpenTelemetry Collector: set `KRITYA_OTEL_ENDPOINT`
+  (optionally with `KRITYA_OTEL_HEADERS`) and spans and a new set of metrics
+  (`kritya.tool.duration_ms`, `kritya.tool.calls`, `kritya.turn.duration_ms`
+  — counters and histograms via a new `Meter`, mirroring the existing
+  `Tracer`) are shipped as OTLP/HTTP JSON. `docs/observability.md` documents
+  a Docker-free local pipeline (`observability/`) — Collector → Phoenix
+  (traces) + Prometheus/Grafana (metrics) — installable as plain binaries.
+  This is opt-in and off unless `KRITYA_OTEL_ENDPOINT` is set; see the
+  Privacy note below.
+- **MCP spec 2026-07-28 alignment** — protocol version bumped, plus three
+  new server-initiated capabilities: `sampling/createMessage` (a server can
+  ask kritya to run a completion against your configured model, gated by
+  the same permission prompt as a tool call, with a "yes, always this
+  session" option), `elicitation/create` (a server can ask the user a short
+  structured question — boolean, string, or enum fields — surfaced as a new
+  prompt phase/component), and per-server `"consent": "always-confirm"` to
+  require approval for every call from a server regardless of its
+  `readOnlyHint`. Both sampling and elicitation are declined automatically
+  in headless/non-interactive mode.
+- **MCP Tasks extension** — a server whose long-running tools (a CI
+  pipeline, a batch job, a human approval step) support the [Tasks
+  extension](https://modelcontextprotocol.io/extensions/tasks/overview) can
+  opt in with `"tasks": true`; kritya then polls a returned task handle in
+  the background instead of blocking, with the spinner growing a live
+  status suffix. A task's own `input_required` step is answered the same
+  way a direct `elicitation/create` request would be; anything else is
+  cancelled with an error naming what it needed. The poll loop is
+  abort-aware (an Esc/kill interrupts the sleep immediately rather than
+  waiting out the interval), sends `tasks/cancel` on abort instead of
+  orphaning the task server-side, clamps `pollIntervalMs` to `[250ms, 60s]`
+  to prevent a busy-poll on a bad value, and errors by name on an
+  unrecognized task status instead of looping forever. Off by default, same
+  reasoning as `consent`: a server has no grounds to return a task the
+  client never said it could handle.
+- **`onToolProgress`** — `ToolDef.execute` can now report incremental
+  progress text through `ToolExecutor`, which is what the Tasks extension's
+  live spinner status is built on.
 
 ### Changed
 
@@ -44,6 +96,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   support it. The matrix is Ubuntu on 22 and 24, with Windows and macOS pinned
   to 22 — the per-OS code paths only ever run on their own runner, so that job
   is the one place they meet the oldest Node we support.
+- **Dependency upgrades**: `openai` 4.104.0 → 6.49.0 (no code changes needed),
+  `pdfjs-dist` 4.10.38 → 6.1.200 (`PDFDocumentProxy.destroy()` moved to
+  `PDFDocumentLoadingTask`, `readPdf()` updated accordingly), `string-width`
+  7.2.0 → 8.2.2, and `react`/`@types/react`/`ink` bumped together to v19/v7
+  (Ink 6+ requires React ≥19). TypeScript held at 6.0.3 since
+  `typescript-eslint` doesn't yet support TS 7.
+- **Internal: `loop.ts`, `App.tsx`, `useAgent.ts`, and `client.ts` split into
+  focused modules** — each had grown to cover several unrelated concerns.
+  Tool-call permission gating/execution moved out of `loop.ts` into
+  `toolExecutor.ts`; stdio/HTTP transport and JSON-RPC plumbing moved out of
+  `client.ts` into `transport.ts`; `useAgent.ts`'s kill-switch, usage/budget,
+  and session-resume state each became their own hook; `App.tsx`'s
+  tool-output preview, transcript-item renderer, and status bar moved into
+  their own files. No behavior change — verified against the full test suite
+  after each extraction.
 
 ### Fixed
 
@@ -115,6 +182,61 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wraps through kritya's own pass rather than Ink's, which carried the space it
   broke on to the front of the next line. It showed up on any paragraph long
   enough to wrap.
+- **PDF tools work on Windows again** — the standard-font path passed to
+  `pdfjs-dist` came from `fileURLToPath`, which returns backslash-separated
+  paths on Windows; `pdfjs-dist`'s own reader does a literal `endsWith("/")`
+  check that backslashes fail. Paths are now normalized to forward slashes.
+- **Electron: Stop button no longer hangs** — pending `requestPermission`
+  promises sat in a global map with nothing to settle them on kill or window
+  teardown, so a tool call awaiting a permission decision hung forever if the
+  user hit Stop or closed the window mid-prompt. They're now rejected as "no"
+  on both paths. Closing a window also now engages the agent's kill switch
+  before teardown (it previously only rejected pending prompts, leaving an
+  in-flight call with no pending prompt free to keep running against a
+  disposed session), and the process-wide background-process/LSP-server
+  managers are only torn down once no window has an active session left, so
+  closing or switching the provider of one window no longer kills background
+  shells/LSP servers belonging to other open windows.
+- **OTLP trace/span ids are hex, not base64** — verified against a real OTel
+  Collector + Phoenix: base64-encoded ids were accepted (`200
+partialSuccess`) but silently dropped before reaching Phoenix. OTLP JSON's
+  `TraceId`/`SpanId` fields are the one carve-out from the general
+  protobuf-JSON bytes-as-base64 rule.
+- **`otlpSink` no longer throws out of `Span.end()`** — it was the only
+  tracer sink without its own try/catch, so an encoding failure would
+  propagate synchronously into the agent loop instead of degrading silently
+  like the other sinks.
+
+### Security
+
+- **SSRF: redirect hops in `fetch_url` are re-validated** — a public URL
+  could 302 to a private/metadata address and bypass the guard, since only
+  the initial target was checked. The response body is also now truncated
+  while streaming rather than fully buffered first, closing a memory-exhaustion
+  path via a large or slow-lying response.
+- **SSRF: DNS rebinding closed** — `fetch_url` and the MCP client's URL guard
+  now re-validate the _resolved_ address (not just the literal hostname)
+  before the initial request and after every redirect hop; the MCP guard
+  also now rejects `https` URLs pointing at private/internal/metadata
+  addresses, not just plain-`http` ones.
+- **SSRF: IPv4-mapped/compatible IPv6 bypass fixed** — the private/loopback
+  classifier matched IPv6 addresses by crude string-prefix checks, missing
+  IPv4-mapped (`::ffff:169.254.169.254`), deprecated IPv4-compatible
+  (`::10.0.0.1`), and non-canonical long-form (`0:0:0:0:0:0:0:1`) addresses —
+  any of which could reach a private/loopback/metadata address through the
+  `fetch_url` and MCP SSRF guards. Replaced with a real IPv6 parser that
+  expands `::` compression and embedded IPv4 tails before classifying.
+  Found by automated security review.
+- **Electron IPC hardened**: `kritya:load-session`'s `filePath` is now
+  validated against the session's own workspace directory (was an
+  arbitrary-file-read via path traversal); `kritya:start`,
+  `kritya:switch-model`, `kritya:switch-provider`, `kritya:prompt`, and
+  `kritya:permission-response` now validate argument type/shape.
+- **Secret-path scanner catches the prefixed form** — the shell-output
+  secret scanner required a word boundary before phrases like
+  `api_key`/`secret`/`password`, which skipped the common prefixed form
+  (`OPENAI_API_KEY=`, `DB_PASSWORD=`) that `.env` files and `cat .env`
+  actually produce.
 
 ## [0.5.0] — 2026-07-22
 

@@ -42,6 +42,9 @@ of:
 
 ## Privacy / telemetry
 
-kritya collects **no telemetry**. It talks only to the model provider you
-configure (and to Tavily if you use web search). See the README's Privacy
-section.
+kritya collects **no telemetry** by default. It talks only to the model
+provider you configure (and to Tavily if you use web search). The one opt-in
+exception is `KRITYA_OTEL_ENDPOINT`: if explicitly set, tracing/metrics spans
+are exported to the OpenTelemetry Collector endpoint you configure — nothing
+leaves the machine unless you set that yourself. See the README's
+Observability and Privacy sections.

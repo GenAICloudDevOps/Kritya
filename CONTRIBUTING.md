@@ -15,7 +15,7 @@ npm test
 npm run dev        # run from source against a scratch project
 ```
 
-You'll need a provider API key (see the README). For most work, the free tier
+You'll need a provider API key (see the README). For most work, the tier
 at [build.nvidia.com](https://build.nvidia.com) is enough.
 
 ## Development workflow
