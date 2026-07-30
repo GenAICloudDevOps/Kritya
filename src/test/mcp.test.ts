@@ -1140,6 +1140,88 @@ test("aborting mid-poll rejects promptly (not after the full poll interval) and 
   assert.equal(await fs.readFile(marker, "utf8"), "cancelled");
 });
 
+test("a task whose input_required request isn't elicitation-shaped cancels the task and throws", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'inputter', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'input_required',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      inputRequests: { r1: { method: 'sampling/createMessage', params: {} } } } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    inputter: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(
+    tools[0].execute({}, { workspace: "." }),
+    /unsupported input method "sampling\/createMessage"/
+  );
+});
+
+test("a task that goes to input_required, gets answered via elicitation, then completes", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "let asked = false;",
+    "let updateResponses = null;",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'asker', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/update') {",
+    "    updateResponses = m.params.inputResponses;",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: {} });",
+    "  }",
+    "  if (m.method === 'tasks/get') {",
+    "    if (!asked) {",
+    "      asked = true;",
+    "      return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'input_required',",
+    "        createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "        inputRequests: { proceed: { method: 'elicitation/create', params: { message: 'Proceed?',",
+    "          requestedSchema: { properties: { ok: { type: 'boolean', title: 'OK' } } } } } } } });",
+    "    }",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'completed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      result: { content: [{ type: 'text', text: 'got:' + JSON.stringify(updateResponses) }] } } });",
+    "  }",
+    "});",
+  ].join("\n");
+  const elicitCalls: { message: string }[] = [];
+  const tools = await loadMcpTools(
+    { asker: { command: process.execPath, args: ["-e", script], tasks: true } },
+    {
+      tracer: NOOP_TRACER,
+      onElicitation: async (_server, message) => {
+        elicitCalls.push({ message });
+        return { action: "accept" as const, content: { ok: true } };
+      },
+    }
+  );
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(elicitCalls.length, 1);
+  assert.equal(elicitCalls[0].message, "Proceed?");
+  assert.match(out, /"proceed":\{"action":"accept","content":\{"ok":true\}\}/);
+});
+
 // ---------- prompts and resources ----------
 
 const FULL_SERVER = [
