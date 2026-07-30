@@ -10,9 +10,12 @@ import {
   mcpPrompts,
   mcpResources,
   mcpStatus,
+  mcpToolDef,
+  PROTOCOL_VERSION,
   shutdownMcp,
   toolAllowed,
 } from "../mcp/client.js";
+import type { McpToolSpec } from "../mcp/client.js";
 import { NOOP_TRACER } from "../telemetry/tracer.js";
 import {
   expandVars,
@@ -25,6 +28,42 @@ import { planSpawn, resolveWindowsCommand } from "../mcp/spawnWin.js";
 import { gatedContentHash, describeGatedContent } from "../trust/trust.js";
 
 after(() => shutdownMcp());
+
+test("PROTOCOL_VERSION matches the 2026-07-28 MCP spec revision", () => {
+  assert.equal(PROTOCOL_VERSION, "2026-07-28");
+});
+
+function makeConsentTestSpec(overrides: Partial<McpToolSpec> = {}): McpToolSpec {
+  return {
+    name: "search",
+    description: "search",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true },
+    ...overrides,
+  };
+}
+
+test("mcpToolDef respects readOnlyHint when consent is trust-hints (default)", () => {
+  const conn = {} as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(conn, "srv", makeConsentTestSpec(), { consent: "trust-hints" });
+  assert.equal(def.requiresPermission, false);
+});
+
+test("mcpToolDef forces requiresPermission when consent is always-confirm, even for a read-only tool", () => {
+  const conn = {} as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(conn, "srv", makeConsentTestSpec(), { consent: "always-confirm" });
+  assert.equal(def.requiresPermission, true);
+});
+
+test("mcpToolDef defaults to trust-hints when consent is omitted", () => {
+  const conn = {} as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(
+    conn,
+    "srv",
+    makeConsentTestSpec({ annotations: { readOnlyHint: false } })
+  );
+  assert.equal(def.requiresPermission, true);
+});
 
 async function makeWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-mcp-test-"));
@@ -721,6 +760,537 @@ test("an unsupported server request gets an error reply, not silence", async () 
   const answer = await tools[0].execute({}, { workspace: "." });
   assert.match(answer, /-32601/);
   assert.match(answer, /not supported/);
+});
+
+// ---------- sampling/createMessage ----------
+
+// A server that records whether it saw the sampling capability on
+// initialize, then asks the client to sample a completion right after
+// notifications/initialized, and reports both as the text of its one tool
+// — same shape as ROOTS_SERVER above.
+const SAMPLING_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "let outcome = 'none';",
+  "let sawSampling = false;",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'initialize') {",
+  "    sawSampling = Boolean(m.params.capabilities && m.params.capabilities.sampling);",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+  "      capabilities: { tools: {} }, serverInfo: { name: 'sampling', version: '1' } } });",
+  "  }",
+  "  if (m.method === 'notifications/initialized')",
+  "    return send({ jsonrpc: '2.0', id: 9002, method: 'sampling/createMessage',",
+  "      params: { messages: [{ role: 'user', content: { type: 'text', text: 'hi' } }] } });",
+  "  if (m.id === 9002) { outcome = JSON.stringify(m.result !== undefined ? { result: m.result } : { error: m.error }); return; }",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'check' }] } });",
+  "  if (m.method === 'tools/call')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: JSON.stringify({ sawSampling, outcome }) }] } });",
+  "});",
+].join("\n");
+
+test("initialize declares the sampling capability, and the client forwards sampling/createMessage to onSampling with its result", async () => {
+  const calls: { server: string; req: unknown }[] = [];
+  const tools = await loadMcpTools(
+    { sampler: { command: process.execPath, args: ["-e", SAMPLING_SERVER] } },
+    {
+      tracer: NOOP_TRACER,
+      onSampling: async (server, req) => {
+        calls.push({ server, req });
+        return {
+          ok: true,
+          role: "assistant" as const,
+          content: "the answer",
+          model: "test-model",
+          stopReason: "stop",
+        };
+      },
+    }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  const { sawSampling, outcome } = JSON.parse(answer);
+  assert.equal(sawSampling, true);
+  assert.deepEqual(JSON.parse(outcome).result, {
+    role: "assistant",
+    content: { type: "text", text: "the answer" },
+    model: "test-model",
+    stopReason: "stop",
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual((calls[0].req as { messages: unknown[] }).messages, [
+    { role: "user", content: "hi" },
+  ]);
+});
+
+test("replies with a JSON-RPC error when onSampling declines", async () => {
+  const tools = await loadMcpTools(
+    { sampler2: { command: process.execPath, args: ["-e", SAMPLING_SERVER] } },
+    {
+      tracer: NOOP_TRACER,
+      onSampling: async () => ({ ok: false as const, reason: "user declined" }),
+    }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  const { outcome } = JSON.parse(answer);
+  assert.equal(JSON.parse(outcome).error.message, "user declined");
+});
+
+// ---------- elicitation/create ----------
+
+// A server that, right after initialize, asks the client to elicit a
+// boolean field from the user, and reports whatever came back as the text
+// of its one tool.
+const ELICITATION_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "let outcome = 'none';",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'initialize')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+  "      capabilities: { tools: {} }, serverInfo: { name: 'elicit', version: '1' } } });",
+  "  if (m.method === 'notifications/initialized')",
+  "    return send({ jsonrpc: '2.0', id: 9003, method: 'elicitation/create',",
+  "      params: { message: 'Proceed with deletion?', requestedSchema: { type: 'object',",
+  "        properties: { proceed: { type: 'boolean', title: 'Proceed' } } } } });",
+  "  if (m.id === 9003) { outcome = JSON.stringify(m.result !== undefined ? { result: m.result } : { error: m.error }); return; }",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'check' }] } });",
+  "  if (m.method === 'tools/call')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: outcome }] } });",
+  "});",
+].join("\n");
+
+// Same shape, but the schema has a nested/unsupported field.
+const ELICITATION_SERVER_NESTED = ELICITATION_SERVER.replace(
+  "properties: { proceed: { type: 'boolean', title: 'Proceed' } } } } });",
+  "properties: { nested: { type: 'object', properties: {} } } } } });"
+);
+
+test("declares the elicitation capability and translates a flat schema into ElicitationFields", async () => {
+  const calls: { server: string; message: string; fields: unknown }[] = [];
+  const tools = await loadMcpTools(
+    { elicit: { command: process.execPath, args: ["-e", ELICITATION_SERVER] } },
+    {
+      tracer: NOOP_TRACER,
+      onElicitation: async (server, message, fields) => {
+        calls.push({ server, message, fields });
+        return { action: "accept" as const, content: { proceed: true } };
+      },
+    }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].message, "Proceed with deletion?");
+  assert.deepEqual(calls[0].fields, [{ name: "proceed", kind: "boolean", label: "Proceed" }]);
+  assert.deepEqual(JSON.parse(answer).result, { action: "accept", content: { proceed: true } });
+});
+
+test("rejects a nested/unsupported schema with a JSON-RPC error naming the field", async () => {
+  const onElicitation = async () => {
+    throw new Error("onElicitation must not be called for an unsupported schema");
+  };
+  const tools = await loadMcpTools(
+    { elicitNested: { command: process.execPath, args: ["-e", ELICITATION_SERVER_NESTED] } },
+    { tracer: NOOP_TRACER, onElicitation }
+  );
+  const answer = await tools[0].execute({}, { workspace: "." });
+  const { error } = JSON.parse(answer);
+  assert.match(error.message, /nested/);
+});
+
+// ---------- Tasks extension (io.modelcontextprotocol/tasks) ----------
+
+// A server whose one tool immediately returns a task, then completes it
+// after N `tasks/get` polls. TASK_POLLS_TO_COMPLETE controls how many
+// "working" replies precede the "completed" one.
+function tasksServerScript(pollsBeforeDone: number): string {
+  return [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "let polls = 0;",
+    `const pollsBeforeDone = ${pollsBeforeDone};`,
+    "let sawTasksMeta = false;",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'tasker', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call') {",
+    "    sawTasksMeta = Boolean(m.params._meta && m.params._meta['io.modelcontextprotocol/clientCapabilities']",
+    "      && m.params._meta['io.modelcontextprotocol/clientCapabilities'].extensions",
+    "      && m.params._meta['io.modelcontextprotocol/clientCapabilities'].extensions['io.modelcontextprotocol/tasks']);",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1',",
+    "      status: 'working', statusMessage: 'started', createdAt: 'now', lastUpdatedAt: 'now',",
+    "      ttlMs: null, pollIntervalMs: 5 } });",
+    "  }",
+    "  if (m.method === 'tasks/get') {",
+    "    polls++;",
+    "    if (polls < pollsBeforeDone)",
+    "      return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "        statusMessage: 'poll ' + polls, createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'completed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      result: { content: [{ type: 'text', text: 'sawTasksMeta:' + sawTasksMeta }] } } });",
+    "  }",
+    "});",
+  ].join("\n");
+}
+
+test("a task that completes on the first poll returns the same result a sync call would", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(1)], tasks: true },
+  });
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(out, "sawTasksMeta:true");
+});
+
+test("a task needing multiple poll rounds still completes", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(4)], tasks: true },
+  });
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(out, "sawTasksMeta:true");
+});
+
+test("without tasks: true configured, a server returning a task is refused rather than polled", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(1)] },
+  });
+  // Without tasks:true, kritya never declares support (sawTasksMeta would be
+  // false), and per spec the server shouldn't return a task at all — but this
+  // fake server returns one regardless, to exercise the opt-in gate: kritya
+  // must refuse to poll it rather than silently treating it as a normal
+  // (empty) tool result.
+  await assert.rejects(
+    tools[0].execute({}, { workspace: "." }),
+    /has not declared tasks support|refusing to poll/
+  );
+});
+
+test("onProgress fires once on task creation and again after each poll", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(3)], tasks: true },
+  });
+  const progress: string[] = [];
+  await tools[0].execute({}, { workspace: "." }, undefined, (text: string) => progress.push(text));
+  assert.deepEqual(progress, ["started", "poll 1", "poll 2", "completed"]);
+});
+
+test("a task that ends failed throws with the server's error message", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'failer', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'failed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, error: { message: 'build step failed' } } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    failer: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /build step failed/);
+});
+
+test("a task that ends cancelled (server-initiated) throws a clear error", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'canceler', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'cancelled',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    canceler: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /task was cancelled/);
+});
+
+test("a task with an unrecognized status doesn't loop forever — it throws naming the status", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'weirdo', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'zorped',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    weirdo: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /unrecognized status.*zorped/);
+});
+
+test("a task that never completes is bounded by its ttlMs, not left to hang forever", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'forever', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: 200, pollIntervalMs: 20 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "      statusMessage: 'still working', createdAt: 'now', lastUpdatedAt: 'now', ttlMs: 200, pollIntervalMs: 20 } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    forever: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  const started = Date.now();
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /exceeded its ttlMs/);
+  assert.ok(Date.now() - started < 5_000, "should give up around the ttlMs, not hang");
+});
+
+test("a server reporting a zero/negative pollIntervalMs doesn't busy-loop tasks/get", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "let polls = 0;",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'hammer', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 0 } });",
+    "  if (m.method === 'tasks/get') {",
+    "    polls++;",
+    "    if (polls < 3)",
+    "      return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "        createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: -5 } });",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'completed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      result: { content: [{ type: 'text', text: 'done after ' + polls } ] } } });",
+    "  }",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    hammer: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  const started = Date.now();
+  const out = await tools[0].execute({}, { workspace: "." });
+  const elapsed = Date.now() - started;
+  assert.equal(out, "done after 3");
+  // With a 250ms floor and 3 polls, this should take at least ~500ms — a
+  // busy-poll bug (0/negative interval trusted verbatim) would finish near-instantly.
+  assert.ok(elapsed >= 500, `expected clamped poll spacing, only took ${elapsed}ms`);
+});
+
+test("aborting mid-poll rejects promptly (not after the full poll interval) and tells the server to cancel the task", async () => {
+  const workspace = await makeWorkspace();
+  const marker = path.join(workspace, "cancel-marker");
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "const nodeFs = require('fs');",
+    `const marker = ${JSON.stringify(marker)};`,
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'slowtasker', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      statusMessage: 'started', createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 30000 } });",
+    "  if (m.method === 'tasks/cancel') { nodeFs.writeFileSync(marker, 'cancelled'); return; }",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 30000 } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    slowtasker: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  const ctrl = new AbortController();
+  const started = Date.now();
+  const call = tools[0].execute({}, { workspace: "." }, ctrl.signal);
+  setTimeout(() => ctrl.abort(), 50);
+  await assert.rejects(call, /cancelled by user/);
+  // Not the 30s pollIntervalMs the server asked for.
+  assert.ok(Date.now() - started < 5_000, "abort should not wait out the full poll interval");
+
+  // Give the fire-and-forget tasks/cancel notification a moment to land.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await fs.readFile(marker, "utf8"), "cancelled");
+});
+
+test("a task whose input_required request isn't elicitation-shaped cancels the task and throws", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'inputter', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'input_required',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      inputRequests: { r1: { method: 'sampling/createMessage', params: {} } } } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    inputter: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(
+    tools[0].execute({}, { workspace: "." }),
+    /unsupported input method "sampling\/createMessage"/
+  );
+});
+
+test("a task whose input_required schema is nested/unsupported cancels the task before throwing", async () => {
+  const workspace = await makeWorkspace();
+  const marker = path.join(workspace, "cancel-marker");
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "const nodeFs = require('fs');",
+    `const marker = ${JSON.stringify(marker)};`,
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'nestedinput', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/cancel') { nodeFs.writeFileSync(marker, 'cancelled'); return; }",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'input_required',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      inputRequests: { nested: { method: 'elicitation/create', params: { message: 'Nested?',",
+    "        requestedSchema: { properties: { nested: { type: 'object', properties: {} } } } } } } } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools(
+    { nestedinput: { command: process.execPath, args: ["-e", script], tasks: true } },
+    {
+      tracer: NOOP_TRACER,
+      onElicitation: async () => {
+        throw new Error("onElicitation must not be called for an unsupported schema");
+      },
+    }
+  );
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /nested/);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await fs.readFile(marker, "utf8"), "cancelled");
+});
+
+test("a task that goes to input_required, gets answered via elicitation, then completes", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "let asked = false;",
+    "let updateResponses = null;",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'asker', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/update') {",
+    "    updateResponses = m.params.inputResponses;",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: {} });",
+    "  }",
+    "  if (m.method === 'tasks/get') {",
+    "    if (!asked) {",
+    "      asked = true;",
+    "      return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'input_required',",
+    "        createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "        inputRequests: { proceed: { method: 'elicitation/create', params: { message: 'Proceed?',",
+    "          requestedSchema: { properties: { ok: { type: 'boolean', title: 'OK' } } } } } } } });",
+    "    }",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'completed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      result: { content: [{ type: 'text', text: 'got:' + JSON.stringify(updateResponses) }] } } });",
+    "  }",
+    "});",
+  ].join("\n");
+  const elicitCalls: { message: string }[] = [];
+  const tools = await loadMcpTools(
+    { asker: { command: process.execPath, args: ["-e", script], tasks: true } },
+    {
+      tracer: NOOP_TRACER,
+      onElicitation: async (_server, message) => {
+        elicitCalls.push({ message });
+        return { action: "accept" as const, content: { ok: true } };
+      },
+    }
+  );
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(elicitCalls.length, 1);
+  assert.equal(elicitCalls[0].message, "Proceed?");
+  assert.match(out, /"proceed":\{"action":"accept","content":\{"ok":true\}\}/);
 });
 
 // ---------- prompts and resources ----------

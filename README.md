@@ -681,8 +681,29 @@ content when they reach the model, since the server wrote them.
 Their tools appear as `mcp_<server>_<tool>`, and output is treated as
 untrusted content. Calls need your approval unless the server marks the tool
 `readOnlyHint` — those run without prompting and are also available to
-subagents. A server that fails to start is skipped with a warning; `/mcp`
-shows each server's status and tools.
+subagents. Set `"consent": "always-confirm"` on a server to require approval
+for every call from it regardless of `readOnlyHint`, for a server you trust
+less than its tool annotations claim. A server that fails to start is skipped
+with a warning; `/mcp` shows each server's status and tools.
+
+A server can also ask kritya for help mid-call: `sampling/createMessage` asks
+to run a completion against your configured model, and `elicitation/create`
+asks the user a short structured question (boolean, string, or enum fields).
+Both surface the same prompt UI as a tool call — sampling asks permission
+per server (with a "yes, always this session" option), and both are declined
+automatically in headless/non-interactive mode.
+
+Set `"tasks": true` on a server whose long-running tools (a CI pipeline, a
+batch job, a human approval step) support the
+[Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview):
+kritya declares support for it on every call to that server, and a tool that
+returns a task handle instead of blocking is polled in the background — the
+spinner grows a live status suffix (e.g. "running pipeline — waiting for
+build…") instead of just sitting there. A task's own `input_required` step is
+answered the same way a direct `elicitation/create` request would be; a task
+that asks for anything else is cancelled with an error naming what it needed.
+Off by default, same reasoning as `consent`: a server has no grounds to
+return a task the client never said it could handle.
 
 #### Signing in to hosted servers (OAuth)
 

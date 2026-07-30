@@ -23,10 +23,15 @@ import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
 import { TrustPrompt } from "./ui/TrustPrompt.js";
 import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
-import type { TaskItem, ToolDef } from "./types.js";
+import type { ElicitationField, ElicitationResult, TaskItem, ToolDef } from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
-import { loadMcpTools, shutdownMcp } from "./mcp/client.js";
+import {
+  loadMcpTools,
+  shutdownMcp,
+  type SamplingRequest,
+  type SamplingResult,
+} from "./mcp/client.js";
 import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadCustomCommands } from "./commands/custom.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
@@ -397,9 +402,56 @@ async function main() {
   // takes effect once the workspace is trusted.
   const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
   const approvedProjectMcp = await resolveMcpServerTrust(projectMcp);
+
+  // Filled in once <App> mounts (below) — sampling requests only ever arrive
+  // after that, so the callback can safely read it lazily at call time (same
+  // pattern as modelRef/providerRef above).
+  const permissionRef: { current?: AgentHandlers["requestPermission"] } = {};
+  const samplingApprovedServers = new Set<string>();
+  const onSampling = async (server: string, req: SamplingRequest): Promise<SamplingResult> => {
+    if (!samplingApprovedServers.has(server)) {
+      if (!permissionRef.current) return { ok: false, reason: "sampling approval unavailable" };
+      const decision = await permissionRef.current(
+        `mcp:sampling:${server}`,
+        `Server "${server}" wants to use your model to generate text.`
+      );
+      if (decision === "always") samplingApprovedServers.add(server);
+      else if (decision !== "yes") return { ok: false, reason: "user declined" };
+    }
+    try {
+      const result = await client.complete(
+        modelRef.current,
+        [
+          ...(req.systemPrompt ? [{ role: "system" as const, content: req.systemPrompt }] : []),
+          ...req.messages.map((m) => ({ role: m.role, content: m.content })),
+        ],
+        req.maxTokens
+      );
+      return {
+        ok: true,
+        role: "assistant",
+        content: result.text,
+        model: result.model,
+        stopReason: result.stopReason,
+      };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  };
+
+  const elicitationRef: { current?: Required<AgentHandlers>["requestElicitation"] } = {};
+  const onElicitation = async (
+    server: string,
+    message: string,
+    fields: ElicitationField[]
+  ): Promise<ElicitationResult> => {
+    if (!elicitationRef.current) return { action: "cancel" };
+    return elicitationRef.current(`[MCP: ${server}] ${message}`, fields);
+  };
+
   const mcpTools: ToolDef[] = await loadMcpTools(
     mergeMcpServers(config.mcpServers, approvedProjectMcp),
-    { tracer: sessionTracer, audit: sessionAudit, workspace }
+    { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling, onElicitation }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
@@ -684,6 +736,12 @@ async function main() {
       mcpToolCount={mcpTools.length}
       onSwitchClient={(newClient) => {
         client = newClient;
+      }}
+      onRequestPermissionReady={(fn) => {
+        permissionRef.current = fn;
+      }}
+      onRequestElicitationReady={(fn) => {
+        elicitationRef.current = fn;
       }}
     />
   );

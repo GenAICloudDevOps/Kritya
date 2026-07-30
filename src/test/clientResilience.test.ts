@@ -162,3 +162,43 @@ test("a stream that keeps producing is never cut off by the idle timeout", async
   assert.equal(result.text, "abcd");
   assert.deepEqual(retries, [], "a healthy stream is never abandoned mid-answer");
 });
+
+test("complete returns the assistant text from a non-streaming completion", async () => {
+  const client = new ProviderClient("test-key", "https://example.test/v1");
+  let seenArgs: unknown;
+  (client as unknown as { client: { chat: { completions: { create: unknown } } } }).client = {
+    chat: {
+      completions: {
+        create: async (args: unknown) => {
+          seenArgs = args;
+          return {
+            model: "test-model",
+            choices: [{ message: { content: "hello from the model" }, finish_reason: "stop" }],
+          };
+        },
+      },
+    },
+  };
+
+  const result = await client.complete("test-model", [{ role: "user", content: "hi" }]);
+
+  assert.deepEqual(result, {
+    text: "hello from the model",
+    model: "test-model",
+    stopReason: "stop",
+  });
+  assert.equal((seenArgs as { model: string }).model, "test-model");
+  assert.equal((seenArgs as { stream: boolean }).stream, false);
+});
+
+test("complete throws when the provider returns no choices", async () => {
+  const client = new ProviderClient("test-key", "https://example.test/v1");
+  (client as unknown as { client: { chat: { completions: { create: unknown } } } }).client = {
+    chat: { completions: { create: async () => ({ model: "m", choices: [] }) } },
+  };
+
+  await assert.rejects(
+    () => client.complete("m", [{ role: "user", content: "hi" }]),
+    /provider returned no completion/i
+  );
+});

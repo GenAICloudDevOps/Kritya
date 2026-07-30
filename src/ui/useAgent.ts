@@ -15,7 +15,15 @@ import {
 } from "../agent/workflow.js";
 import type { SessionMeta } from "../session/store.js";
 import { tavilySearch } from "../tools/webSearch.js";
-import type { ItemBody, Phase, PermissionDecision, TaskItem, UiBridge } from "../types.js";
+import type {
+  ElicitationField,
+  ElicitationResult,
+  ItemBody,
+  Phase,
+  PermissionDecision,
+  TaskItem,
+  UiBridge,
+} from "../types.js";
 import { killActiveNotice, useKillSwitch } from "./useKillSwitch.js";
 import { useUsageBudget } from "./useUsageBudget.js";
 import { useSessionResume } from "./useSessionResume.js";
@@ -28,6 +36,12 @@ export interface PendingPermission {
   diff?: string;
   warning?: string;
   resolve(decision: PermissionDecision): void;
+}
+
+export interface PendingElicitation {
+  message: string;
+  fields: ElicitationField[];
+  resolve(result: ElicitationResult): void;
 }
 
 export interface UseAgentParams {
@@ -105,6 +119,7 @@ export function useAgent({
   /** The active project workflow, for the statusline. Persists between turns. */
   const [workflow, setWorkflow] = useState<ProjectState | null>(() => loadProjectState(workspace));
   const [permission, setPermission] = useState<PendingPermission | null>(null);
+  const [elicitation, setElicitation] = useState<PendingElicitation | null>(null);
   const [model, setModel] = useState(modelRef.current);
   const [provider, setProvider] = useState(providerRef.current);
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks ?? []);
@@ -119,7 +134,56 @@ export function useAgent({
   const abortRef = useRef<AbortController | null>(null);
   /** Tool calls currently running, keyed by call id — more than one when a
    *  turn's read-only calls are dispatched in parallel. Rendered as live rows. */
-  const [inFlight, setInFlight] = useState<{ id: string; name: string; summary: string }[]>([]);
+  const [inFlight, setInFlight] = useState<
+    { id: string; name: string; summary: string; status?: string }[]
+  >([]);
+
+  /**
+   * The phase to restore once a permission prompt resolves. Tool-call
+   * permission requests always arrive mid-turn (phase "working"), but MCP
+   * sampling requests can arrive at any time — including while the user is
+   * simply sitting at the input prompt — so restoring to the phase captured
+   * when the prompt opened (rather than hardcoding "working") keeps the UI
+   * from getting stuck in a false "working" state afterward.
+   */
+  const phaseRef = useRef<Phase>(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+  const previousPhaseRef = useRef<Phase>("input");
+
+  /** Reusable permission prompt, shared by in-turn tool calls and out-of-turn
+   *  callers (e.g. MCP sampling) — same UI, same three-way decision. */
+  const requestPermission = useCallback(
+    (
+      toolName: string,
+      summary: string,
+      diff?: string,
+      warning?: string
+    ): Promise<PermissionDecision> =>
+      new Promise<PermissionDecision>((resolve) => {
+        previousPhaseRef.current = phaseRef.current;
+        setActivity(null);
+        process.stdout.write("\x07"); // ring the terminal bell when input is needed
+        setPermission({ toolName, summary, diff, warning, resolve });
+        setPhase("permission");
+      }),
+    []
+  );
+
+  /** Same out-of-turn reasoning as `requestPermission` — MCP elicitation
+   *  requests can arrive at any time, not just mid-turn. */
+  const requestElicitation = useCallback(
+    (message: string, fields: ElicitationField[]): Promise<ElicitationResult> =>
+      new Promise<ElicitationResult>((resolve) => {
+        previousPhaseRef.current = phaseRef.current;
+        setActivity(null);
+        process.stdout.write("\x07");
+        setElicitation({ message, fields, resolve });
+        setPhase("elicitation");
+      }),
+    []
+  );
 
   const addItem = useCallback((item: ItemBody) => {
     setItems((prev) => {
@@ -378,13 +442,11 @@ export function useAgent({
                 resultSummary,
               });
           },
-          requestPermission: (toolName, summary, diff, warning) =>
-            new Promise<PermissionDecision>((resolve) => {
-              setActivity(null);
-              process.stdout.write("\x07"); // ring the terminal bell when input is needed
-              setPermission({ toolName, summary, diff, warning, resolve });
-              setPhase("permission");
-            }),
+          onToolProgress: (id, text) => {
+            setInFlight((prev) => prev.map((t) => (t.id === id ? { ...t, status: text } : t)));
+          },
+          requestPermission,
+          requestElicitation,
           onRetry: (attempt, status) => {
             // Drop the partial text the failed attempt streamed, or the
             // retried answer would appear twice.
@@ -450,8 +512,15 @@ export function useAgent({
   const onPermissionDecision = (decision: PermissionDecision) => {
     const pending = permission;
     setPermission(null);
-    setPhase("working");
+    setPhase(previousPhaseRef.current);
     pending?.resolve(decision);
+  };
+
+  const onElicitationDecision = (result: ElicitationResult) => {
+    const pending = elicitation;
+    setElicitation(null);
+    setPhase(previousPhaseRef.current);
+    pending?.resolve(result);
   };
 
   const { onResumeSelect } = useSessionResume({
@@ -476,6 +545,7 @@ export function useAgent({
     workflow,
     refreshWorkflow,
     permission,
+    elicitation,
     inFlight,
     model,
     provider,
@@ -512,6 +582,9 @@ export function useAgent({
     runAgent,
     runWebSearch,
     onPermissionDecision,
+    onElicitationDecision,
     onResumeSelect,
+    requestPermission,
+    requestElicitation,
   };
 }

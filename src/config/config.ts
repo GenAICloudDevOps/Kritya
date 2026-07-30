@@ -114,6 +114,19 @@ export interface McpServerConfig {
    * matter under ones the user never calls.
    */
   tools?: McpToolFilter;
+  /**
+   * Per-tool-call consent policy. `"always-confirm"` requires user approval
+   * on every call regardless of the tool's read-only annotation; omitted (or
+   * `"trust-hints"`) defers to the server's own read-only hints as today.
+   */
+  consent?: "trust-hints" | "always-confirm";
+  /**
+   * Opt in to the `io.modelcontextprotocol/tasks` extension: kritya declares
+   * support for it on every `tools/call` to this server, letting the server
+   * return a durable task handle instead of blocking. Off by default — a
+   * server has no grounds to return a task unless the client declared it.
+   */
+  tasks?: boolean;
 }
 
 export interface McpToolFilter {

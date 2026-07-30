@@ -310,6 +310,22 @@ test("a tool call in flight is tracked and cleared when it ends", async () => {
   assert.equal(toolItem.resultSummary, "wrote foo.txt");
 });
 
+test("onToolProgress updates the matching inFlight entry's status", async () => {
+  const agent = fakeAgent();
+  let capturedInFlight: { id: string; name: string; summary: string; status?: string }[] = [];
+  agent.runTurn = (async (_text, handlers) => {
+    handlers.onToolStart("1", "mcp_ci_run_pipeline", "running pipeline");
+    handlers.onToolProgress?.("1", "waiting for build…");
+    await tick();
+    capturedInFlight = api.inFlight;
+  }) as FakeRunTurn;
+  const { api } = await setup({ agent });
+  await api.runAgent("run the pipeline");
+  await tick();
+  const entry = capturedInFlight.find((t) => t.id === "1");
+  assert.equal(entry?.status, "waiting for build…");
+});
+
 test("update_tasks tool calls don't clutter the transcript", async () => {
   const agent = fakeAgent();
   agent.runTurn = (async (_text, handlers) => {
