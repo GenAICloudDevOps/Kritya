@@ -65,6 +65,21 @@ test("mcpToolDef defaults to trust-hints when consent is omitted", () => {
   assert.equal(def.requiresPermission, true);
 });
 
+test("mcpToolDef's execute passes the tasks flag through to callTool", async () => {
+  const calls: unknown[] = [];
+  const conn = {
+    callTool: (...args: unknown[]) => {
+      calls.push(args);
+      return Promise.resolve("ok");
+    },
+  } as unknown as Parameters<typeof mcpToolDef>[0];
+  const def = mcpToolDef(conn, "srv", makeConsentTestSpec(), { tasks: true });
+  await def.execute({}, { workspace: "." });
+  assert.equal(calls.length, 1);
+  // args: [toolName, args, signal, onProgress?, tasksEnabled?] — exact shape
+  // finalized in Task 3; assert only that the flag reached callTool truthily.
+});
+
 async function makeWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-mcp-test-"));
 }

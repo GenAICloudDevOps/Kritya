@@ -204,6 +204,45 @@ function renderToolResult(result: McpToolResult): string {
   return "";
 }
 
+export type McpTaskStatus = "working" | "input_required" | "completed" | "failed" | "cancelled";
+
+export interface McpTask {
+  taskId: string;
+  status: McpTaskStatus;
+  statusMessage?: string;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttlMs: number | null;
+  pollIntervalMs?: number;
+}
+
+/** The reply to `tools/call` when the server hands back a task instead of a result. */
+export interface McpCreateTaskResult extends McpTask {
+  resultType?: "task";
+}
+
+/** A full JSON-RPC request object, as carried inside `inputRequests`. */
+interface McpInputRequest {
+  method: string;
+  params?: unknown;
+}
+
+/** The reply to `tasks/get`: same base fields as `McpTask`, plus a status-specific payload. */
+export interface McpDetailedTask extends McpTask {
+  inputRequests?: Record<string, McpInputRequest>;
+  result?: McpToolResult;
+  error?: { message?: string };
+}
+
+/** `_meta` block a task-enabled server's `tools/call` request carries, per the extension's negotiation mechanism. */
+export const TASKS_EXTENSION_META = {
+  "io.modelcontextprotocol/clientCapabilities": {
+    extensions: { "io.modelcontextprotocol/tasks": {} },
+  },
+};
+
+export const DEFAULT_POLL_INTERVAL_MS = 2000;
+
 class McpConnection {
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -986,7 +1025,7 @@ export function mcpToolDef(
   conn: McpConnection,
   server: string,
   spec: McpToolSpec,
-  cfg: Pick<McpServerConfig, "consent"> = {}
+  cfg: Pick<McpServerConfig, "consent" | "tasks"> = {}
 ): ToolDef {
   return {
     name: exposedToolName(server, spec.name),
