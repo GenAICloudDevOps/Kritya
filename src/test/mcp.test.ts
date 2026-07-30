@@ -1034,6 +1034,112 @@ test("a task that ends cancelled (server-initiated) throws a clear error", async
   await assert.rejects(tools[0].execute({}, { workspace: "." }), /cancelled/);
 });
 
+test("a task with an unrecognized status doesn't loop forever — it throws naming the status", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'weirdo', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'zorped',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    weirdo: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /unrecognized status.*zorped/);
+});
+
+test("a server reporting a zero/negative pollIntervalMs doesn't busy-loop tasks/get", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "let polls = 0;",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'hammer', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 0 } });",
+    "  if (m.method === 'tasks/get') {",
+    "    polls++;",
+    "    if (polls < 3)",
+    "      return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "        createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: -5 } });",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'completed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      result: { content: [{ type: 'text', text: 'done after ' + polls } ] } } });",
+    "  }",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    hammer: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  const started = Date.now();
+  const out = await tools[0].execute({}, { workspace: "." });
+  const elapsed = Date.now() - started;
+  assert.equal(out, "done after 3");
+  // With a 250ms floor and 3 polls, this should take at least ~500ms — a
+  // busy-poll bug (0/negative interval trusted verbatim) would finish near-instantly.
+  assert.ok(elapsed >= 500, `expected clamped poll spacing, only took ${elapsed}ms`);
+});
+
+test("aborting mid-poll rejects promptly (not after the full poll interval) and tells the server to cancel the task", async () => {
+  const workspace = await makeWorkspace();
+  const marker = path.join(workspace, "cancel-marker");
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "const nodeFs = require('fs');",
+    `const marker = ${JSON.stringify(marker)};`,
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'slowtasker', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      statusMessage: 'started', createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 30000 } });",
+    "  if (m.method === 'tasks/cancel') { nodeFs.writeFileSync(marker, 'cancelled'); return; }",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 30000 } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    slowtasker: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  const ctrl = new AbortController();
+  const started = Date.now();
+  const call = tools[0].execute({}, { workspace: "." }, ctrl.signal);
+  setTimeout(() => ctrl.abort(), 50);
+  await assert.rejects(call, /cancelled by user/);
+  // Not the 30s pollIntervalMs the server asked for.
+  assert.ok(Date.now() - started < 5_000, "abort should not wait out the full poll interval");
+
+  // Give the fire-and-forget tasks/cancel notification a moment to land.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await fs.readFile(marker, "utf8"), "cancelled");
+});
+
 // ---------- prompts and resources ----------
 
 const FULL_SERVER = [

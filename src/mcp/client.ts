@@ -243,6 +243,60 @@ export const TASKS_EXTENSION_META = {
 
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
 
+/** Floor and ceiling for a server-reported `pollIntervalMs` — never trust
+ *  untrusted server data to schedule a busy-loop or an effectively-infinite sleep. */
+const MIN_POLL_INTERVAL_MS = 250;
+const MAX_POLL_INTERVAL_MS = 60_000;
+
+/** Clamp a server-reported poll interval into a sane range, falling back to the
+ *  default for anything non-finite (missing, zero, negative, NaN). */
+function sanitizePollInterval(ms: number | undefined): number {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return DEFAULT_POLL_INTERVAL_MS;
+  return Math.min(Math.max(ms, MIN_POLL_INTERVAL_MS), MAX_POLL_INTERVAL_MS);
+}
+
+/** Sleep that rejects promptly on abort instead of running the full duration,
+ *  and `unref`s its timer so it never holds the event loop open. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    timer.unref?.();
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Race an arbitrary promise (e.g. a UI callback we can't otherwise interrupt)
+ *  against abort, so a hung callback can't stall a cancellation. */
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new Error("aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error("aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      }
+    );
+  });
+}
+
 class McpConnection {
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -564,42 +618,54 @@ class McpConnection {
   ): Promise<string> {
     const taskId = initial.taskId;
     onProgress?.(initial.statusMessage ?? "task created — waiting…");
-    let pollIntervalMs = initial.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    let pollIntervalMs = sanitizePollInterval(initial.pollIntervalMs);
 
-    for (;;) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    try {
+      for (;;) {
+        await sleep(pollIntervalMs, signal);
+
+        const detailed = (await this.request(
+          "tasks/get",
+          { taskId },
+          CALL_TIMEOUT_MS,
+          signal
+        )) as McpDetailedTask;
+        pollIntervalMs = sanitizePollInterval(detailed.pollIntervalMs ?? pollIntervalMs);
+
+        switch (detailed.status) {
+          case "working":
+            onProgress?.(detailed.statusMessage ?? "working…");
+            continue;
+          case "input_required": {
+            onProgress?.(detailed.statusMessage ?? "waiting for input…");
+            await this.answerInputRequired(taskId, detailed.inputRequests ?? {}, signal);
+            continue;
+          }
+          case "completed": {
+            onProgress?.(detailed.statusMessage ?? "completed");
+            const text = renderToolResult(detailed.result ?? {});
+            if (detailed.result?.isError) throw new Error(text || "MCP tool reported an error");
+            return text || "(no output)";
+          }
+          case "failed":
+            throw new Error(detailed.error?.message ?? "MCP task failed");
+          case "cancelled":
+            throw new Error("MCP task was cancelled");
+          default:
+            throw new Error(`MCP task entered unrecognized status "${String(detailed.status)}"`);
+        }
+      }
+    } catch (err) {
+      // Whatever went wrong — the sleep was interrupted, a request was cut
+      // short, an elicitation callback never returned — if it's because the
+      // caller aborted, make sure the server hears about it (best-effort,
+      // fire-and-forget) and surface one clear, consistent message rather
+      // than whichever request happened to be in flight at the time.
       if (signal?.aborted) {
         this.notify("tasks/cancel", { taskId });
-        throw new Error("MCP task cancelled by user");
+        throw new Error("MCP task cancelled by user", { cause: err });
       }
-      const detailed = (await this.request(
-        "tasks/get",
-        { taskId },
-        CALL_TIMEOUT_MS,
-        signal
-      )) as McpDetailedTask;
-      pollIntervalMs = detailed.pollIntervalMs ?? pollIntervalMs;
-
-      switch (detailed.status) {
-        case "working":
-          onProgress?.(detailed.statusMessage ?? "working…");
-          continue;
-        case "input_required": {
-          onProgress?.(detailed.statusMessage ?? "waiting for input…");
-          await this.answerInputRequired(taskId, detailed.inputRequests ?? {});
-          continue;
-        }
-        case "completed": {
-          onProgress?.(detailed.statusMessage ?? "completed");
-          const text = renderToolResult(detailed.result ?? {});
-          if (detailed.result?.isError) throw new Error(text || "MCP tool reported an error");
-          return text || "(no output)";
-        }
-        case "failed":
-          throw new Error(detailed.error?.message ?? "MCP task failed");
-        case "cancelled":
-          throw new Error("MCP task was cancelled");
-      }
+      throw err;
     }
   }
 
@@ -607,7 +673,8 @@ class McpConnection {
    *  and throw if any entry isn't elicitation-shaped. */
   private async answerInputRequired(
     taskId: string,
-    inputRequests: Record<string, McpInputRequest>
+    inputRequests: Record<string, McpInputRequest>,
+    signal?: AbortSignal
   ): Promise<void> {
     const entries = Object.entries(inputRequests);
     const unsupported = entries.find(([, req]) => req.method !== "elicitation/create");
@@ -630,9 +697,12 @@ class McpConnection {
         };
       };
       const fields = toElicitationFields(p?.requestedSchema ?? {});
-      inputResponses[key] = await this.options.onElicitation(this.name, p?.message ?? "", fields);
+      inputResponses[key] = await raceAbort(
+        this.options.onElicitation(this.name, p?.message ?? "", fields),
+        signal
+      );
     }
-    await this.request("tasks/update", { taskId, inputResponses }, CALL_TIMEOUT_MS);
+    await this.request("tasks/update", { taskId, inputResponses }, CALL_TIMEOUT_MS, signal);
   }
 
   close(): void {
