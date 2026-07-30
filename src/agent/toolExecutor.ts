@@ -344,7 +344,8 @@ export class ToolExecutor {
     handlers.onToolStart(id, name, summary);
     execStartedAt = Date.now();
     try {
-      let output = await this.executeWithTimeout(tool, args, signal);
+      const onProgress = (text: string) => handlers.onToolProgress?.(id, text);
+      let output = await this.executeWithTimeout(tool, args, signal, onProgress);
       if (tool.external) {
         output = fenceExternal(output);
       }
@@ -395,10 +396,11 @@ export class ToolExecutor {
   private async executeWithTimeout(
     tool: ToolDef,
     args: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: (text: string) => void
   ): Promise<string> {
     const limit = tool.timeoutMs ?? this.host.toolTimeoutMs;
-    const work = tool.execute(args, this.host.ctx, signal);
+    const work = tool.execute(args, this.host.ctx, signal, onProgress);
     if (!Number.isFinite(limit) || limit <= 0) return work;
 
     // Settling via the timer leaves this promise unobserved; a late rejection

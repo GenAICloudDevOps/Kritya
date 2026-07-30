@@ -146,6 +146,9 @@ export interface AgentHandlers {
   /** `id` is the tool call's unique id, so the UI can track each concurrent
    *  call independently (a turn's read-only calls run in parallel). */
   onToolStart(id: string, name: string, summary: string): void;
+  /** Fires while a tool is running that supports progress updates (currently
+   *  only MCP Tasks-backed calls) — zero or more times before onToolEnd. */
+  onToolProgress?(id: string, text: string): void;
   onToolEnd(
     id: string,
     name: string,
