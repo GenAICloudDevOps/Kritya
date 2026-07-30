@@ -104,7 +104,12 @@ export interface ToolDef {
    */
   failed?(output: string): boolean;
   /** `signal` aborts when the user cancels; long-running tools should honor it. */
-  execute(args: Record<string, unknown>, ctx: ToolContext, signal?: AbortSignal): Promise<string>;
+  execute(
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+    signal?: AbortSignal,
+    onProgress?: (text: string) => void
+  ): Promise<string>;
 }
 
 export type PermissionDecision = "yes" | "always" | "no";

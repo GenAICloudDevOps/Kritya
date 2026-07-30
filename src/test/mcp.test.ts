@@ -65,21 +65,6 @@ test("mcpToolDef defaults to trust-hints when consent is omitted", () => {
   assert.equal(def.requiresPermission, true);
 });
 
-test("mcpToolDef's execute passes the tasks flag through to callTool", async () => {
-  const calls: unknown[] = [];
-  const conn = {
-    callTool: (...args: unknown[]) => {
-      calls.push(args);
-      return Promise.resolve("ok");
-    },
-  } as unknown as Parameters<typeof mcpToolDef>[0];
-  const def = mcpToolDef(conn, "srv", makeConsentTestSpec(), { tasks: true });
-  await def.execute({}, { workspace: "." });
-  assert.equal(calls.length, 1);
-  // args: [toolName, args, signal, onProgress?, tasksEnabled?] — exact shape
-  // finalized in Task 3; assert only that the flag reached callTool truthily.
-});
-
 async function makeWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-mcp-test-"));
 }
@@ -916,6 +901,137 @@ test("rejects a nested/unsupported schema with a JSON-RPC error naming the field
   const answer = await tools[0].execute({}, { workspace: "." });
   const { error } = JSON.parse(answer);
   assert.match(error.message, /nested/);
+});
+
+// ---------- Tasks extension (io.modelcontextprotocol/tasks) ----------
+
+// A server whose one tool immediately returns a task, then completes it
+// after N `tasks/get` polls. TASK_POLLS_TO_COMPLETE controls how many
+// "working" replies precede the "completed" one.
+function tasksServerScript(pollsBeforeDone: number): string {
+  return [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "let polls = 0;",
+    `const pollsBeforeDone = ${pollsBeforeDone};`,
+    "let sawTasksMeta = false;",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'tasker', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call') {",
+    "    sawTasksMeta = Boolean(m.params._meta && m.params._meta['io.modelcontextprotocol/clientCapabilities']",
+    "      && m.params._meta['io.modelcontextprotocol/clientCapabilities'].extensions",
+    "      && m.params._meta['io.modelcontextprotocol/clientCapabilities'].extensions['io.modelcontextprotocol/tasks']);",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1',",
+    "      status: 'working', statusMessage: 'started', createdAt: 'now', lastUpdatedAt: 'now',",
+    "      ttlMs: null, pollIntervalMs: 5 } });",
+    "  }",
+    "  if (m.method === 'tasks/get') {",
+    "    polls++;",
+    "    if (polls < pollsBeforeDone)",
+    "      return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'working',",
+    "        statusMessage: 'poll ' + polls, createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'completed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null,",
+    "      result: { content: [{ type: 'text', text: 'sawTasksMeta:' + sawTasksMeta }] } } });",
+    "  }",
+    "});",
+  ].join("\n");
+}
+
+test("a task that completes on the first poll returns the same result a sync call would", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(1)], tasks: true },
+  });
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(out, "sawTasksMeta:true");
+});
+
+test("a task needing multiple poll rounds still completes", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(4)], tasks: true },
+  });
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(out, "sawTasksMeta:true");
+});
+
+test("the tasks _meta capability is attached only when tasks: true is configured", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(1)] },
+  });
+  // Without tasks:true, kritya never declares support, so per spec the server
+  // shouldn't return a task — but this fake server returns one regardless of
+  // the _meta flag to isolate what we're testing: the _meta block itself.
+  // We assert on sawTasksMeta being false in the result text.
+  const out = await tools[0].execute({}, { workspace: "." });
+  assert.equal(out, "sawTasksMeta:false");
+});
+
+test("onProgress fires once on task creation and again after each poll", async () => {
+  const tools = await loadMcpTools({
+    tasker: { command: process.execPath, args: ["-e", tasksServerScript(3)], tasks: true },
+  });
+  const progress: string[] = [];
+  await tools[0].execute({}, { workspace: "." }, undefined, (text: string) => progress.push(text));
+  assert.equal(progress[0], "started");
+  assert.equal(progress.length, 4); // initial + 3 polls (2 "working" + 1 "completed" transition consumed internally)
+});
+
+test("a task that ends failed throws with the server's error message", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'failer', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'failed',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, error: { message: 'build step failed' } } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    failer: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /build step failed/);
+});
+
+test("a task that ends cancelled (server-initiated) throws a clear error", async () => {
+  const script = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'canceler', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'longjob' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'task', taskId: 't1', status: 'working',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null, pollIntervalMs: 5 } });",
+    "  if (m.method === 'tasks/get')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { taskId: 't1', status: 'cancelled',",
+    "      createdAt: 'now', lastUpdatedAt: 'now', ttlMs: null } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools({
+    canceler: { command: process.execPath, args: ["-e", script], tasks: true },
+  });
+  await assert.rejects(tools[0].execute({}, { workspace: "." }), /cancelled/);
 });
 
 // ---------- prompts and resources ----------

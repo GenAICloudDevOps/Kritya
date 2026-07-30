@@ -535,17 +535,104 @@ class McpConnection {
   async callTool(
     toolName: string,
     args: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    tasksEnabled?: boolean,
+    onProgress?: (text: string) => void
   ): Promise<string> {
-    const result = (await this.request(
-      "tools/call",
-      { name: toolName, arguments: args },
-      CALL_TIMEOUT_MS,
-      signal
-    )) as McpToolResult;
-    const text = renderToolResult(result);
-    if (result.isError) throw new Error(text || "MCP tool reported an error");
+    const params: Record<string, unknown> = { name: toolName, arguments: args };
+    if (tasksEnabled) {
+      params._meta = TASKS_EXTENSION_META;
+    }
+    const result = (await this.request("tools/call", params, CALL_TIMEOUT_MS, signal)) as
+      McpToolResult | McpCreateTaskResult;
+
+    if ((result as McpCreateTaskResult).resultType === "task") {
+      return this.pollTask(result as McpCreateTaskResult, signal, onProgress);
+    }
+
+    const text = renderToolResult(result as McpToolResult);
+    if ((result as McpToolResult).isError) throw new Error(text || "MCP tool reported an error");
     return text || "(no output)";
+  }
+
+  /** Poll `tasks/get` until a task reaches a terminal status, answering
+   *  elicitation-shaped `input_required` requests along the way. */
+  private async pollTask(
+    initial: McpCreateTaskResult,
+    signal?: AbortSignal,
+    onProgress?: (text: string) => void
+  ): Promise<string> {
+    const taskId = initial.taskId;
+    onProgress?.(initial.statusMessage ?? "task created — waiting…");
+    let pollIntervalMs = initial.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      if (signal?.aborted) {
+        this.notify("tasks/cancel", { taskId });
+        throw new Error("MCP task cancelled by user");
+      }
+      const detailed = (await this.request(
+        "tasks/get",
+        { taskId },
+        CALL_TIMEOUT_MS,
+        signal
+      )) as McpDetailedTask;
+      pollIntervalMs = detailed.pollIntervalMs ?? pollIntervalMs;
+
+      switch (detailed.status) {
+        case "working":
+          onProgress?.(detailed.statusMessage ?? "working…");
+          continue;
+        case "input_required": {
+          onProgress?.(detailed.statusMessage ?? "waiting for input…");
+          await this.answerInputRequired(taskId, detailed.inputRequests ?? {});
+          continue;
+        }
+        case "completed": {
+          onProgress?.(detailed.statusMessage ?? "completed");
+          const text = renderToolResult(detailed.result ?? {});
+          if (detailed.result?.isError) throw new Error(text || "MCP tool reported an error");
+          return text || "(no output)";
+        }
+        case "failed":
+          throw new Error(detailed.error?.message ?? "MCP task failed");
+        case "cancelled":
+          throw new Error("MCP task was cancelled");
+      }
+    }
+  }
+
+  /** Answer every `input_required` entry via elicitation, or cancel the task
+   *  and throw if any entry isn't elicitation-shaped. */
+  private async answerInputRequired(
+    taskId: string,
+    inputRequests: Record<string, McpInputRequest>
+  ): Promise<void> {
+    const entries = Object.entries(inputRequests);
+    const unsupported = entries.find(([, req]) => req.method !== "elicitation/create");
+    if (unsupported) {
+      this.notify("tasks/cancel", { taskId });
+      throw new Error(
+        `MCP task requires unsupported input method "${unsupported[1].method}" — cancelled`
+      );
+    }
+    if (!this.options.onElicitation) {
+      this.notify("tasks/cancel", { taskId });
+      throw new Error("MCP task requires elicitation, but elicitation is not supported here");
+    }
+    const inputResponses: Record<string, ElicitationResult> = {};
+    for (const [key, req] of entries) {
+      const p = req.params as {
+        message?: string;
+        requestedSchema?: {
+          properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
+        };
+      };
+      const fields = toElicitationFields(p?.requestedSchema ?? {});
+      inputResponses[key] = await this.options.onElicitation(this.name, p?.message ?? "", fields);
+    }
+    await this.request("tasks/update", { taskId, inputResponses }, CALL_TIMEOUT_MS);
   }
 
   close(): void {
@@ -1039,7 +1126,8 @@ export function mcpToolDef(
     // wrapped as untrusted — a lookup tool is a prime injection vector.
     external: true,
     summarize: (args) => `${server}/${spec.name}(${JSON.stringify(args).slice(0, 80)})`,
-    execute: (args, _ctx, signal) => conn.callTool(spec.name, args, signal),
+    execute: (args, _ctx, signal, onProgress) =>
+      conn.callTool(spec.name, args, signal, cfg.tasks, onProgress),
   };
 }
 
