@@ -693,6 +693,18 @@ Both surface the same prompt UI as a tool call — sampling asks permission
 per server (with a "yes, always this session" option), and both are declined
 automatically in headless/non-interactive mode.
 
+Set `"tasks": true` on a server whose long-running tools (a CI pipeline, a
+batch job, a human approval step) support the
+[Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview):
+kritya declares support for it on every call to that server, and a tool that
+returns a task handle instead of blocking is polled in the background — the
+spinner grows a live status suffix (e.g. "running pipeline — waiting for
+build…") instead of just sitting there. A task's own `input_required` step is
+answered the same way a direct `elicitation/create` request would be; a task
+that asks for anything else is cancelled with an error naming what it needed.
+Off by default, same reasoning as `consent`: a server has no grounds to
+return a task the client never said it could handle.
+
 #### Signing in to hosted servers (OAuth)
 
 Hosted MCP servers — Linear, Notion, Sentry, GitHub, Atlassian — authenticate
