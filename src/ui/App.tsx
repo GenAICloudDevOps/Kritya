@@ -563,7 +563,7 @@ export function App({
               (inFlight.length > 1
                 ? `${inFlight.length} tools running (Esc to cancel)`
                 : inFlight.length === 1
-                  ? `${inFlight[0].summary} (Esc to cancel)`
+                  ? `${inFlight[0].status ? `${inFlight[0].summary} — ${inFlight[0].status}` : inFlight[0].summary} (Esc to cancel)`
                   : activity
                     ? activity
                     : thinking
@@ -575,7 +575,7 @@ export function App({
             <Box flexDirection="column" marginLeft={2}>
               {inFlight.map((t) => (
                 <Text key={t.id} dimColor>
-                  · {t.summary}
+                  · {t.status ? `${t.summary} — ${t.status}` : t.summary}
                 </Text>
               ))}
             </Box>

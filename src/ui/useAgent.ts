@@ -134,7 +134,9 @@ export function useAgent({
   const abortRef = useRef<AbortController | null>(null);
   /** Tool calls currently running, keyed by call id — more than one when a
    *  turn's read-only calls are dispatched in parallel. Rendered as live rows. */
-  const [inFlight, setInFlight] = useState<{ id: string; name: string; summary: string }[]>([]);
+  const [inFlight, setInFlight] = useState<
+    { id: string; name: string; summary: string; status?: string }[]
+  >([]);
 
   /**
    * The phase to restore once a permission prompt resolves. Tool-call
@@ -439,6 +441,9 @@ export function useAgent({
                 output: preview,
                 resultSummary,
               });
+          },
+          onToolProgress: (id, text) => {
+            setInFlight((prev) => prev.map((t) => (t.id === id ? { ...t, status: text } : t)));
           },
           requestPermission,
           requestElicitation,
