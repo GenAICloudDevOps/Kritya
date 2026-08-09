@@ -1,6 +1,3 @@
 {
-  "mcpServers": {
-    "deepwiki": { "url": "https://mcp.deepwiki.com/mcp" },
-    "context7": { "url": "https://mcp.context7.com/mcp" }
-  }
+  "mcpServers": {}
 }
