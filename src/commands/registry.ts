@@ -1,10 +1,18 @@
+import fs from "node:fs";
 import path from "node:path";
 import type { Agent } from "../agent/loop.js";
 import { AuditLog, summarizeAudit } from "../audit/audit.js";
 import { runMcpCommand } from "./mcpCommand.js";
 import { mcpPrompts } from "../mcp/client.js";
 import { scanSkillsDetailed, skillsDir, userSkillsDir } from "../agent/skills.js";
-import { pluginsDir, pluginSkillsRoots, scanPlugins, userPluginsDir } from "../plugins/discover.js";
+import {
+  pluginsDir,
+  pluginSkillsRoots,
+  scanPlugins,
+  scanPluginsDetailed,
+  userPluginsDir,
+} from "../plugins/discover.js";
+import { scanPluginMcpServers } from "../plugins/mcp.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
@@ -65,6 +73,10 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/skills",
     description: "list discovered skills (project + user-global) and why any were skipped",
+  },
+  {
+    name: "/plugins",
+    description: "list discovered Agent Plugins, what each contributes, and why any were skipped",
   },
   { name: "/undo", description: "revert the file changes from the agent's last turn" },
   {
@@ -330,6 +342,48 @@ const handlers: Record<string, CommandHandler> = {
       ...skipped.map((s) => `  ${s.name.padEnd(nameWidth)}   SKIPPED: ${s.reason}`),
     ];
     ctx.addItem({ kind: "info", text: lines.join("\n") });
+  },
+  "/plugins": (ctx) => {
+    const workspaceRoot = pluginsDir(ctx.workspace);
+    const userRoot = userPluginsDir();
+    const { loaded, skipped } = scanPluginsDetailed([workspaceRoot, userRoot]);
+
+    if (!loaded.length && !skipped.length) {
+      ctx.addItem({
+        kind: "info",
+        text: `No plugins found under ${workspaceRoot} or ${userRoot}.`,
+      });
+      return;
+    }
+
+    const rows = loaded.map((p) => {
+      const source =
+        p.dir.startsWith(workspaceRoot + path.sep) || p.dir === workspaceRoot
+          ? "workspace"
+          : "user";
+      const version = typeof p.manifest.version === "string" ? p.manifest.version : "?";
+      const { loaded: skillsLoaded } = scanSkillsDetailed([path.join(p.dir, "skills")]);
+      const { loaded: mcpLoaded, skipped: mcpSkipped } = scanPluginMcpServers([p]);
+      let commandCount = 0;
+      try {
+        commandCount = fs
+          .readdirSync(path.join(p.dir, "commands"))
+          .filter((f) => f.endsWith(".md")).length;
+      } catch {
+        // No commands/ subfolder -- not a mistake, just nothing to count.
+      }
+      const contributions = [
+        skillsLoaded.length ? `${skillsLoaded.length} skill(s)` : "",
+        mcpLoaded.length ? `${mcpLoaded.length} MCP server(s)` : "",
+        commandCount ? `${commandCount} command(s)` : "",
+      ].filter(Boolean);
+      const mcpSkipNote = mcpSkipped.length
+        ? ` — skipped MCP server(s): ${mcpSkipped.map((s) => `${s.name} (${s.reason})`).join("; ")}`
+        : "";
+      return `  ${p.name}@${version} (${source})  ${contributions.join(", ") || "(nothing)"}${mcpSkipNote}`;
+    });
+    const skipLines = skipped.map((s) => `  ${s.name}  SKIPPED: ${s.reason}`);
+    ctx.addItem({ kind: "info", text: [...rows, ...skipLines].join("\n") });
   },
   "/web-search": (ctx) => {
     if (!ctx.arg) {
@@ -716,6 +770,7 @@ const ALLOWED_WHILE_KILLED = new Set([
   "/mcp",
   "/checkpoint",
   "/skills",
+  "/plugins",
 ]);
 
 /** Dispatch a slash command: built-in, then custom, then MCP prompt, then "unknown". */
