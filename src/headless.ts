@@ -21,11 +21,14 @@ import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS } from "./tools/index.js";
 import { loadMcpTools, shutdownMcp, type SamplingResult } from "./mcp/client.js";
 import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
+import { pluginsDir, scanPlugins, userPluginsDir } from "./plugins/discover.js";
+import { loadPluginMcpServers } from "./plugins/mcp.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { installCrashHandlers } from "./crash.js";
 import type { AgentHandlers, ElicitationResult, ToolDef } from "./types.js";
+import type { McpServerConfig } from "./config/config.js";
 
 export interface HeadlessArgs {
   dir: string;
@@ -77,6 +80,31 @@ function emit(args: HeadlessArgs, r: HeadlessResult): void {
   }
   if (r.result) console.log(r.result);
   if (r.error) console.error(`Error: ${r.error}`);
+}
+
+/**
+ * Headless has no terminal to prompt for new MCP server approvals, so a
+ * server only loads if it was already approved in a past interactive
+ * session, unless --trust opts in (same escape hatch as workspace trust).
+ * `source` names where these servers came from, for the skip message.
+ */
+function approveHeadlessMcp(
+  servers: Record<string, McpServerConfig> | undefined,
+  trust: boolean,
+  source: string
+): Record<string, McpServerConfig> | undefined {
+  if (!servers) return undefined;
+  const { trusted, pending } = partitionByTrust(servers);
+  if (Object.keys(pending).length === 0) return trusted;
+  if (trust) {
+    for (const [name, cfg] of Object.entries(pending)) trustServer(name, serverFingerprint(cfg));
+    return { ...trusted, ...pending };
+  }
+  process.stderr.write(
+    `kritya: skipping unapproved MCP server(s) from ${source}: ${Object.keys(pending).join(", ")} ` +
+      `(approve them once interactively, or pass --trust)\n`
+  );
+  return trusted;
 }
 
 /**
@@ -164,26 +192,22 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   // processes / contacts endpoints on the user's behalf the moment we load it.
   const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
   // On top of that, each individual server needs its own prior approval (see
-  // trust/mcpTrust.ts) — there's no terminal here to prompt for new ones, so
-  // headless mode only loads servers already approved in a past interactive
-  // session, unless --trust opts in (same escape hatch as workspace trust).
-  let approvedProjectMcp = projectMcp;
-  if (projectMcp) {
-    const { trusted, pending } = partitionByTrust(projectMcp);
-    if (Object.keys(pending).length > 0) {
-      if (args.trust) {
-        for (const [name, cfg] of Object.entries(pending))
-          trustServer(name, serverFingerprint(cfg));
-        approvedProjectMcp = { ...trusted, ...pending };
-      } else {
-        approvedProjectMcp = trusted;
-        process.stderr.write(
-          `kritya: skipping unapproved MCP server(s) from .mcp.json: ${Object.keys(pending).join(", ")} ` +
-            `(approve them once interactively, or pass --trust)\n`
-        );
-      }
-    }
-  }
+  // trust/mcpTrust.ts) — approveHeadlessMcp below.
+  const approvedProjectMcp = approveHeadlessMcp(projectMcp, args.trust, ".mcp.json");
+
+  // Agent Plugins: the workspace's own plugins/ folder is part of the same
+  // trust gate as .mcp.json above; user-global plugins are always
+  // discovered, same as ~/.kritya/config.json. Each plugin-declared server
+  // still needs its own prior approval, same as a project server.
+  const plugins = scanPlugins(
+    trustWorkspace ? [pluginsDir(workspace), userPluginsDir()] : [userPluginsDir()]
+  );
+  const { servers: pluginMcp } = loadPluginMcpServers(plugins);
+  const approvedPluginMcp = approveHeadlessMcp(
+    Object.keys(pluginMcp).length ? pluginMcp : undefined,
+    args.trust,
+    "a plugin's mcp.json"
+  );
   // Headless has no UI to ask the user anything, so sampling always fails
   // closed rather than silently granting a server free use of the model.
   const onSampling = async (): Promise<SamplingResult> => ({
@@ -192,7 +216,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   });
   const onElicitation = async (): Promise<ElicitationResult> => ({ action: "cancel" });
   const mcpTools: ToolDef[] = await loadMcpTools(
-    mergeMcpServers(config.mcpServers, approvedProjectMcp),
+    mergeMcpServers(config.mcpServers, approvedProjectMcp, approvedPluginMcp),
     { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling, onElicitation }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];

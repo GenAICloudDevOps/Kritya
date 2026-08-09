@@ -34,6 +34,8 @@ import {
 } from "./mcp/client.js";
 import { loadProjectMcpServers, mergeMcpServers } from "./mcp/servers.js";
 import { loadCustomCommands } from "./commands/custom.js";
+import { pluginsDir, scanPlugins, userPluginsDir } from "./plugins/discover.js";
+import { loadPluginMcpServers } from "./plugins/mcp.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
@@ -403,6 +405,19 @@ async function main() {
   const projectMcp = trustWorkspace ? loadProjectMcpServers(workspace) : undefined;
   const approvedProjectMcp = await resolveMcpServerTrust(projectMcp);
 
+  // Agent Plugins (.kritya/plugins/, ~/.kritya/plugins/). The workspace's own
+  // plugins/ folder is part of the same trust gate as .mcp.json above -- a
+  // plugin dropped into a cloned repo is just as capable of declaring a
+  // server that runs on the user's behalf. User-global plugins are always
+  // discovered, same as ~/.kritya/config.json.
+  const plugins = scanPlugins(
+    trustWorkspace ? [pluginsDir(workspace), userPluginsDir()] : [userPluginsDir()]
+  );
+  const { servers: pluginMcp } = loadPluginMcpServers(plugins);
+  const approvedPluginMcp = await resolveMcpServerTrust(
+    Object.keys(pluginMcp).length ? pluginMcp : undefined
+  );
+
   // Filled in once <App> mounts (below) — sampling requests only ever arrive
   // after that, so the callback can safely read it lazily at call time (same
   // pattern as modelRef/providerRef above).
@@ -450,7 +465,7 @@ async function main() {
   };
 
   const mcpTools: ToolDef[] = await loadMcpTools(
-    mergeMcpServers(config.mcpServers, approvedProjectMcp),
+    mergeMcpServers(config.mcpServers, approvedProjectMcp, approvedPluginMcp),
     { tracer: sessionTracer, audit: sessionAudit, workspace, onSampling, onElicitation }
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
@@ -732,7 +747,7 @@ async function main() {
       undoStack={undoStack}
       uiBridge={uiBridge}
       resumeSessions={resumeSessions.length ? resumeSessions : undefined}
-      customCommands={loadCustomCommands(workspace, trustWorkspace)}
+      customCommands={loadCustomCommands(workspace, trustWorkspace, plugins)}
       mcpToolCount={mcpTools.length}
       onSwitchClient={(newClient) => {
         client = newClient;
