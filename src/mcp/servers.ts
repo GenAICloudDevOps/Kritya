@@ -102,14 +102,17 @@ export function loadProjectMcpServers(
 }
 
 /**
- * Combine project and global server definitions, expanding ${VAR} in both.
- * On a name clash the user's global config wins over the repo's .mcp.json.
+ * Combine plugin, project, and global server definitions, expanding ${VAR} in
+ * each. Precedence on a name clash: global wins over project, which wins over
+ * a plugin -- a plugin is third-party-contributed, so anything the user or
+ * the workspace declares explicitly takes priority.
  */
 export function mergeMcpServers(
   global: Record<string, McpServerConfig> | undefined,
-  project: Record<string, McpServerConfig> | undefined
+  project: Record<string, McpServerConfig> | undefined,
+  plugin?: Record<string, McpServerConfig>
 ): Record<string, McpServerConfig> {
-  const merged = { ...project, ...global };
+  const merged = { ...plugin, ...project, ...global };
   const out: Record<string, McpServerConfig> = {};
   for (const [name, cfg] of Object.entries(merged)) out[name] = expandServerConfig(cfg);
   return out;

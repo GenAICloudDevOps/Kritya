@@ -11,6 +11,8 @@ import { beginLogin, logout, pendingLogin } from "../mcp/login.js";
 import { loadAuth } from "../mcp/tokens.js";
 import { expandServerConfig, loadProjectMcpServers } from "../mcp/servers.js";
 import { loadConfig, saveConfig, type McpServerConfig } from "../config/config.js";
+import { pluginsDir, scanPlugins, userPluginsDir } from "../plugins/discover.js";
+import { loadPluginMcpServers } from "../plugins/mcp.js";
 import {
   isServerTrusted,
   loadMcpAllowlist,
@@ -92,6 +94,8 @@ export async function runMcpCommand(ctx: CommandContext): Promise<void> {
 
 function showStatus(ctx: CommandContext): void {
   const statuses = mcpStatus();
+  const plugins = scanPlugins([pluginsDir(ctx.workspace), userPluginsDir()]);
+  const { provenance } = loadPluginMcpServers(plugins, () => {});
   if (statuses.length === 0) {
     ctx.addItem({
       kind: "info",
@@ -106,7 +110,8 @@ function showStatus(ctx: CommandContext): void {
   }
   const lines = statuses.map((s) => {
     const mark = s.ok ? "✔" : s.needsAuth ? "○" : "✘";
-    const head = `${mark} ${s.name} (${s.transport}) — ${s.target}`;
+    const plugin = provenance[s.name] ? ` (plugin: ${provenance[s.name]})` : "";
+    const head = `${mark} ${s.name} (${s.transport})${plugin} — ${s.target}`;
     if (s.ok) {
       const auth = s.transport === "http" && loadAuth(s.target) ? " · signed in" : "";
       const hidden = s.hiddenTools ? ` · ${s.hiddenTools} hidden by config` : "";

@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { resolveServer, runMcpCommand } from "../commands/mcpCommand.js";
 import type { CommandContext } from "../commands/registry.js";
 import type { Agent } from "../agent/loop.js";
+import { forgetStatus, replaceStatus } from "../mcp/client.js";
+import { pluginsDir } from "../plugins/discover.js";
 
 /**
  * These tests deliberately stay on branches of mcpCommand.ts that never call
@@ -179,4 +181,34 @@ test("/mcp trust with an unrecognized sub-action shows usage", async () => {
   const ctx = fakeCtx({ arg: "trust not-a-real-action", workspace: workspace() });
   await runMcpCommand(ctx);
   assert.match(lastText(ctx), /Usage: \/mcp trust/);
+});
+
+test("/mcp status labels a server contributed by a plugin with its plugin name", async () => {
+  const ws = workspace();
+  const pluginDir = path.join(pluginsDir(ws), "finance-tools");
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(pluginDir, "plugin.json"),
+    JSON.stringify({ name: "finance-tools", version: "1.0.0" })
+  );
+  fs.writeFileSync(
+    path.join(pluginDir, "mcp.json"),
+    JSON.stringify({ mcpServers: { ratios: { command: "node", args: ["server.js"] } } })
+  );
+  replaceStatus({
+    name: "ratios",
+    transport: "stdio",
+    target: "node server.js",
+    ok: true,
+    tools: [],
+    prompts: [],
+    resources: [],
+  });
+  try {
+    const ctx = fakeCtx({ arg: "", workspace: ws });
+    await runMcpCommand(ctx);
+    assert.match(lastText(ctx), /ratios \(stdio\) \(plugin: finance-tools\)/);
+  } finally {
+    forgetStatus("ratios");
+  }
 });
