@@ -13,6 +13,7 @@ import {
   _setWarnSink,
 } from "../agent/skills.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
+import { pluginsDir } from "../plugins/discover.js";
 
 function tmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "kritya-skills-"));
@@ -262,6 +263,28 @@ test("buildSkillsSection lists discovered skills", () => {
 test("buildSkillsSection returns empty string when there are no skills", () => {
   const ws = tmpWorkspace();
   assert.equal(buildSkillsSection(ws, []), "");
+});
+
+test("buildSystemPrompt includes a skill contributed by a workspace plugin", () => {
+  const ws = tmpWorkspace();
+  const prevHome = os.homedir();
+  process.env.HOME = tmpWorkspace();
+  try {
+    const pluginDir = path.join(pluginsDir(ws), "finance-tools");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, "plugin.json"),
+      JSON.stringify({ name: "finance-tools", version: "1.0.0" })
+    );
+    writeSkill(path.join(pluginDir, "skills"), "ratio-analysis", {
+      description: "Compute financial ratios",
+    });
+    const prompt = buildSystemPrompt(ws);
+    assert.match(prompt, /# Available skills/);
+    assert.match(prompt, /ratio-analysis: Compute financial ratios/);
+  } finally {
+    process.env.HOME = prevHome;
+  }
 });
 
 test("buildSystemPrompt includes the skills section when a skill exists", () => {

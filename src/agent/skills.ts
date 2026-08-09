@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pluginsDir, pluginSkillsRoots, scanPlugins, userPluginsDir } from "../plugins/discover.js";
 
 export interface DiscoveredSkill {
   name: string;
@@ -205,6 +206,15 @@ export function userSkillsDir(): string {
 }
 
 /**
+ * Skill roots contributed by discovered Agent Plugins (workspace, then
+ * user-global), in addition to the plain skills dirs.
+ */
+export function defaultExtraSkillRoots(workspace: string): string[] {
+  const plugins = scanPlugins([pluginsDir(workspace), userPluginsDir()]);
+  return [userSkillsDir(), ...pluginSkillsRoots(plugins).map((r) => r.dir)];
+}
+
+/**
  * The system-prompt fragment listing discovered skills by name+description
  * only (progressive disclosure -- full instructions load via load_skill).
  * Returns "" when there are none, so non-skill workspaces pay zero prompt cost.
@@ -213,7 +223,7 @@ export function userSkillsDir(): string {
  */
 export function buildSkillsSection(
   workspace: string,
-  extraRoots: string[] = [userSkillsDir()]
+  extraRoots: string[] = defaultExtraSkillRoots(workspace)
 ): string {
   const skills = scanSkills([skillsDir(workspace), ...extraRoots]);
   if (!skills.length) return "";

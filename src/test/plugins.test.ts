@@ -7,6 +7,7 @@ import {
   scanPluginsDetailed,
   pluginsDir,
   userPluginsDir,
+  pluginSkillsRoots,
   _setWarnSink,
 } from "../plugins/discover.js";
 
@@ -105,6 +106,18 @@ test("pluginsDir returns <workspace>/.kritya/plugins", () => {
 
 test("userPluginsDir returns ~/.kritya/plugins", () => {
   assert.equal(userPluginsDir(), path.join(os.homedir(), ".kritya", "plugins"));
+});
+
+test("pluginSkillsRoots maps each plugin to its skills/ subfolder and name", () => {
+  const root = tmpWorkspace();
+  writePlugin(root, "finance-tools", { name: "finance-tools", version: "1.0.0" });
+  const { loaded } = scanPluginsDetailed([root]);
+
+  const roots = pluginSkillsRoots(loaded);
+
+  assert.equal(roots.length, 1);
+  assert.equal(roots[0].pluginName, "finance-tools");
+  assert.equal(roots[0].dir, path.join(root, "finance-tools", "skills"));
 });
 
 void _setWarnSink;

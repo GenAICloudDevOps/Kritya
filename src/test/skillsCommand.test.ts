@@ -6,6 +6,7 @@ import { test } from "node:test";
 import type { Agent } from "../agent/loop.js";
 import { runCommand, type CommandContext } from "../commands/registry.js";
 import type { ItemBody } from "../types.js";
+import { pluginsDir } from "../plugins/discover.js";
 
 /** A CommandContext stub with just enough wired up for /skills. */
 function harness(): { ctx: CommandContext; workspace: string; said: string[] } {
@@ -80,6 +81,29 @@ test("/skills reports why a malformed skill was skipped", () =>
     await runCommand("/skills", h.ctx);
     assert.equal(h.said.length, 1);
     assert.match(h.said[0], /broken\s+SKIPPED: missing frontmatter block/);
+  }));
+
+test("/skills labels a skill contributed by a plugin with its plugin name", () =>
+  withIsolatedHome(async () => {
+    const h = harness();
+    const pluginDir = path.join(pluginsDir(h.workspace), "finance-tools");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, "plugin.json"),
+      JSON.stringify({ name: "finance-tools", version: "1.0.0" })
+    );
+    const skillDir = path.join(pluginDir, "skills", "ratio-analysis");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: ratio-analysis\ndescription: Compute financial ratios\n---\n\nInstructions.\n"
+    );
+    await runCommand("/skills", h.ctx);
+    assert.equal(h.said.length, 1);
+    assert.match(
+      h.said[0],
+      /ratio-analysis\s+\(plugin: finance-tools\)\s+Compute financial ratios/
+    );
   }));
 
 test("/skills works while the kill switch is engaged (read-only)", () =>

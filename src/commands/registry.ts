@@ -4,6 +4,7 @@ import { AuditLog, summarizeAudit } from "../audit/audit.js";
 import { runMcpCommand } from "./mcpCommand.js";
 import { mcpPrompts } from "../mcp/client.js";
 import { scanSkillsDetailed, skillsDir, userSkillsDir } from "../agent/skills.js";
+import { pluginsDir, pluginSkillsRoots, scanPlugins, userPluginsDir } from "../plugins/discover.js";
 import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
@@ -290,7 +291,13 @@ const handlers: Record<string, CommandHandler> = {
   "/skills": (ctx) => {
     const projectRoot = skillsDir(ctx.workspace);
     const userRoot = userSkillsDir();
-    const { loaded, skipped } = scanSkillsDetailed([projectRoot, userRoot]);
+    const plugins = scanPlugins([pluginsDir(ctx.workspace), userPluginsDir()]);
+    const pluginRoots = pluginSkillsRoots(plugins);
+    const { loaded, skipped } = scanSkillsDetailed([
+      projectRoot,
+      userRoot,
+      ...pluginRoots.map((r) => r.dir),
+    ]);
 
     if (!loaded.length && !skipped.length) {
       ctx.addItem({
@@ -301,12 +308,15 @@ const handlers: Record<string, CommandHandler> = {
     }
 
     const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
-    const rows = loaded.map((s) => ({
-      name: s.name,
-      source:
-        s.dir.startsWith(projectRoot + path.sep) || s.dir === projectRoot ? "project" : "user",
-      description: truncate(s.description, 60),
-    }));
+    const rows = loaded.map((s) => {
+      const plugin = pluginRoots.find((r) => s.dir === r.dir || s.dir.startsWith(r.dir + path.sep));
+      const source = plugin
+        ? `plugin: ${plugin.pluginName}`
+        : s.dir.startsWith(projectRoot + path.sep) || s.dir === projectRoot
+          ? "project"
+          : "user";
+      return { name: s.name, source, description: truncate(s.description, 60) };
+    });
     const nameWidth = Math.max(
       4,
       ...rows.map((r) => r.name.length),

@@ -126,3 +126,14 @@ export function pluginsDir(workspace: string): string {
 export function userPluginsDir(): string {
   return path.join(os.homedir(), ".kritya", "plugins");
 }
+
+export interface PluginSkillsRoot {
+  /** Absolute path to the plugin's skills/ subfolder, for feeding into scanSkills. */
+  dir: string;
+  pluginName: string;
+}
+
+/** Maps each discovered plugin to its skills/ subfolder, for use as extra skill roots. */
+export function pluginSkillsRoots(plugins: DiscoveredPlugin[]): PluginSkillsRoot[] {
+  return plugins.map((p) => ({ dir: path.join(p.dir, "skills"), pluginName: p.name }));
+}
