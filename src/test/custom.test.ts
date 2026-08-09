@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { expandCommand, loadCustomCommands } from "../commands/custom.js";
+import type { DiscoveredPlugin } from "../plugins/discover.js";
 
 function workspace(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kritya-custom-cmd-test-"));
@@ -71,6 +72,55 @@ test("loadCustomCommands returns [] for a workspace with no commands directory",
   const withWorkspace = loadCustomCommands(ws, true);
   const withoutWorkspace = loadCustomCommands(ws, false);
   assert.deepEqual(withWorkspace, withoutWorkspace);
+});
+
+function writePluginCommand(pluginDir: string, file: string, body: string): DiscoveredPlugin {
+  const dir = path.join(pluginDir, "commands");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, file), body);
+  return { name: path.basename(pluginDir), dir: pluginDir, manifest: {} };
+}
+
+test("loadCustomCommands includes a plugin's commands/ when the workspace is trusted, labeled with its plugin name", () => {
+  const ws = workspace();
+  const plugin = writePluginCommand(
+    path.join(ws, "plugin-dir"),
+    "kritya-test-plugin-cmd.md",
+    "description: from a plugin\n\nDo the plugin thing.\n"
+  );
+  const commands = loadCustomCommands(ws, true, [plugin]);
+  const cmd = commands.find((c) => c.name === "/kritya-test-plugin-cmd");
+  assert.ok(cmd, "the plugin's command file is loaded");
+  assert.equal(cmd!.description, "from a plugin");
+  assert.equal(cmd!.pluginName, plugin.name);
+});
+
+test("loadCustomCommands skips plugin commands when the workspace is untrusted", () => {
+  const ws = workspace();
+  const plugin = writePluginCommand(
+    path.join(ws, "plugin-dir"),
+    "kritya-test-plugin-untrusted.md",
+    "Should not load.\n"
+  );
+  const commands = loadCustomCommands(ws, false, [plugin]);
+  assert.equal(
+    commands.find((c) => c.name === "/kritya-test-plugin-untrusted"),
+    undefined
+  );
+});
+
+test("loadCustomCommands: a workspace-declared command overrides a same-named plugin command", () => {
+  const ws = workspace();
+  const plugin = writePluginCommand(
+    path.join(ws, "plugin-dir"),
+    "kritya-test-override.md",
+    "From the plugin.\n"
+  );
+  writeCommand(ws, "kritya-test-override.md", "From the workspace.\n");
+  const commands = loadCustomCommands(ws, true, [plugin]);
+  const cmd = commands.find((c) => c.name === "/kritya-test-override");
+  assert.equal(cmd!.body, "From the workspace.");
+  assert.equal(cmd!.pluginName, undefined);
 });
 
 test("expandCommand substitutes $ARGUMENTS and {{args}} placeholders", () => {

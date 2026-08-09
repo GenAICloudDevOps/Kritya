@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { debugLog } from "../config/debug.js";
+import type { DiscoveredPlugin } from "../plugins/discover.js";
 
 /**
  * User-defined slash commands. Each markdown file under .kritya/commands/
@@ -15,6 +16,8 @@ export interface CustomCommand {
   name: string; // includes leading slash, e.g. "/deploy"
   description: string;
   body: string;
+  /** Set when this command was contributed by an Agent Plugin, not loaded directly. */
+  pluginName?: string;
 }
 
 function readCommandsFrom(dir: string): CustomCommand[] {
@@ -51,18 +54,28 @@ function parseCommand(raw: string): { description: string; body: string } {
 }
 
 /**
- * Load custom commands; workspace entries override global ones by name.
- * Workspace commands are attacker-controllable prompts in a cloned repo, so
- * they're only loaded once the workspace has been trusted (see
- * src/trust/trust.ts); global (~/.kritya/commands/) commands are always
- * trusted.
+ * Load custom commands; workspace entries override plugin entries, which
+ * override global ones, by name. Workspace and plugin commands are
+ * attacker-controllable prompts (a plugin can be dropped into a cloned repo
+ * just like a .kritya/commands file), so both are only loaded once the
+ * workspace has been trusted (see src/trust/trust.ts); global
+ * (~/.kritya/commands/) commands are always trusted.
  */
-export function loadCustomCommands(workspace: string, trustWorkspace = true): CustomCommand[] {
+export function loadCustomCommands(
+  workspace: string,
+  trustWorkspace = true,
+  plugins: DiscoveredPlugin[] = []
+): CustomCommand[] {
   const byName = new Map<string, CustomCommand>();
   for (const cmd of readCommandsFrom(path.join(CONFIG_DIR, "commands"))) {
     byName.set(cmd.name, cmd);
   }
   if (trustWorkspace) {
+    for (const plugin of plugins) {
+      for (const cmd of readCommandsFrom(path.join(plugin.dir, "commands"))) {
+        byName.set(cmd.name, { ...cmd, pluginName: plugin.name });
+      }
+    }
     for (const cmd of readCommandsFrom(path.join(workspace, ".kritya", "commands"))) {
       byName.set(cmd.name, cmd);
     }

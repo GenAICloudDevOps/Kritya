@@ -245,7 +245,10 @@ const handlers: Record<string, CommandHandler> = {
   "/help": (ctx) => {
     const customList = ctx.customCommands.length
       ? `\n\nCustom commands (from .kritya/commands/):\n${ctx.customCommands
-          .map((c) => `  ${c.name.padEnd(14)} ${c.description}`)
+          .map(
+            (c) =>
+              `  ${c.name.padEnd(14)} ${c.description}${c.pluginName ? ` (plugin: ${c.pluginName})` : ""}`
+          )
           .join("\n")}`
       : "";
     const mcpNote = ctx.mcpToolCount > 0 ? `\n\n${ctx.mcpToolCount} MCP tool(s) loaded.` : "";
