@@ -40,6 +40,28 @@ function isSensitivePath(relPath: string): boolean {
   return SENSITIVE_PATH_PATTERNS.some((re) => re.test(relPath));
 }
 
+/** Splits a shell command into path-like tokens, stripping quotes/metacharacters. */
+const COMMAND_TOKEN_SPLIT_RE = /[\s|;&<>()"'`$]+/;
+
+/**
+ * Best-effort check for whether a shell command references a sensitive file
+ * (.env, credentials, private keys, etc.) by name — e.g. `cat .env` or
+ * `grep foo .env`. Mirrors {@link isSensitivePath}, which already gates
+ * read_file/write_file, so the shell tool gets the same filename-based
+ * defense instead of relying solely on post-hoc output redaction.
+ *
+ * This is necessarily heuristic (arbitrary shell quoting/expansion can't be
+ * fully parsed without a real shell), so it only catches the literal
+ * filename appearing in the command text.
+ */
+export function commandTouchesSensitivePath(command: string): string | null {
+  const tokens = command.split(COMMAND_TOKEN_SPLIT_RE).filter(Boolean);
+  for (const token of tokens) {
+    if (isSensitivePath(token)) return token;
+  }
+  return null;
+}
+
 /**
  * Resolve a user/model-supplied path against the workspace root and refuse
  * anything that escapes it, including via a symlink inside the workspace

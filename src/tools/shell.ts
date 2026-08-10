@@ -8,7 +8,7 @@ import {
   shouldSandbox,
 } from "../shell/sandbox.js";
 import type { ToolDef } from "../types.js";
-import { truncateTail } from "./common.js";
+import { commandTouchesSensitivePath, truncateTail } from "./common.js";
 import { redactSecrets } from "./secretScan.js";
 
 const DEFAULT_TIMEOUT_S = 120;
@@ -64,6 +64,13 @@ export const shellTool: ToolDef = {
   },
   execute(args, ctx, signal) {
     const command = String(args.command);
+
+    const sensitivePath = commandTouchesSensitivePath(command);
+    if (sensitivePath) {
+      throw new Error(
+        `Command references "${sensitivePath}", which looks like a secret file, and is blocked from tool access`
+      );
+    }
 
     if (args.background) {
       const { id } = backgroundManager.start(command, ctx.workspace, ctx.sandboxMode);

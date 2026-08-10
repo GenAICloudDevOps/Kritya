@@ -17,6 +17,26 @@ test("truncateTail keeps the end of long output", () => {
   assert.ok(!out.includes("start"));
 });
 
+test("shell blocks commands that reference a sensitive file by name", async () => {
+  await assert.rejects(
+    async () => shellTool.execute({ command: "cat .env" }, ctx),
+    /looks like a secret file/
+  );
+  await assert.rejects(
+    async () => shellTool.execute({ command: "grep DATABASE_URL .env" }, ctx),
+    /looks like a secret file/
+  );
+  await assert.rejects(
+    async () => shellTool.execute({ command: "cat ~/.ssh/id_rsa" }, ctx),
+    /looks like a secret file/
+  );
+});
+
+test("shell does not block ordinary commands that merely mention 'secret' as a word", async () => {
+  const out = await shellTool.execute({ command: "echo hello" }, ctx);
+  assert.match(out, /hello/);
+});
+
 test("shell honors timeout_seconds", async () => {
   const sleeper = os.platform() === "win32" ? "ping -n 6 127.0.0.1 >NUL" : "sleep 5";
   const start = Date.now();
