@@ -23,7 +23,8 @@ of:
   flags like `--recursive --force`, or obfuscation via `$(...)`, `eval`, or a
   base64-encoded payload). Don't rely on it as the sole safeguard for a
   blanket `shell(*)` allow rule.
-- **Sandboxed execution** (`sandboxExec` in config — see README) adds an
+- **Sandboxed execution** (`sandboxExec` in config — see
+  [Sandboxed execution](docs/CONFIGURATION.md#sandboxed-execution)) adds an
   OS-enforced backstop for the case above: shell commands run under `bwrap`
   (Linux) or `sandbox-exec` (macOS) with writes confined to the workspace, so
   evading the regex no longer means unrestricted write access to the rest of
@@ -35,15 +36,58 @@ of:
   of an evasion, not eliminating one. `"auto"` and `"always"` fall back to an
   unsandboxed run (with a warning) if the sandbox binary isn't available;
   `"strict"` refuses to run the command at all in that case instead.
-- **File access is confined** to the workspace root, and paths that look like
+- **File access is confined** to the workspace root — including via a symlink
+  inside the workspace that points outside it — and paths that look like
   secrets (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys)
   are blocked from being read or written by tools, regardless of allowlist
-  rules.
+  rules. The `shell` tool gets the same filename-based check: a command whose
+  text references a sensitive path (`cat .env`, `grep foo .env`) is refused
+  rather than relying on output redaction alone. That check can only see the
+  literal filename in the command text, so shell expansion or unusual quoting
+  can slip past it.
+- **Secret scanning on write.** Filename checks only cover secrets kept in
+  files that _look_ sensitive; they do nothing to stop the model writing a
+  real key it saw in some tool output into an ordinary file like `README.md`.
+  So `write_file` and `edit_file` also scan the **content** being written for
+  known key formats (AWS, GitHub, GitLab, Slack, Stripe, Google, OpenAI,
+  Anthropic, private key blocks, …) and high-entropy secret-shaped
+  assignments, and block the write. Shell and background-process output is
+  redacted with the same patterns before it reaches the transcript. Both are
+  heuristics — they can miss a novel key format and can false-positive on
+  random-looking fixtures.
+- **SSRF guard.** `fetch_url` and the MCP HTTP transport share one host check
+  that refuses private, loopback, link-local, and carrier-grade-NAT ranges, so
+  neither can be steered into your internal network or a cloud metadata
+  endpoint.
+- **Workspace trust.** A repository's own `.kritya/settings.json` allow rules,
+  hooks, `.env`, custom commands, `.mcp.json`, and `.kritya/plugins/` are all
+  inert until you trust that workspace, so cloning a hostile repo can't
+  self-grant permissions or run code just by being opened. Trust is keyed on a
+  hash of the gated content, so changing it re-prompts. In headless/CI mode
+  this is off unless `--trust` is passed, since CI often checks out untrusted
+  branches and PRs.
+- **Per-server MCP trust.** Every MCP server is arbitrary code (stdio) or a
+  remote endpoint (HTTP) running with your credentials, so each one _also_
+  gets its own first-use confirmation on top of workspace trust — approving a
+  repo's `.mcp.json` once does not blanket-approve servers a later commit
+  adds. The fingerprint covers the declared, pre-expansion config (never
+  expanded env/header values, which may hold live secrets); if a server's
+  command, args, cwd, url, tool filter, or env/header key names change, it
+  counts as new and re-prompts. `/mcp trust` lists approvals and
+  `/mcp trust revoke <name>` withdraws them.
+- **Agent Plugins** are covered by both gates: a workspace plugin is only
+  discovered once the workspace is trusted, and any MCP server it declares
+  still needs its own per-server approval. See
+  [Agent Plugins](docs/CONFIGURATION.md#agent-plugins).
 - **Untrusted content** from web search and MCP tools is wrapped in explicit
   markers, and the system prompt instructs the model to treat all tool output
   as data, never as instructions. Prompt injection via file/command/web content
   is nonetheless a real risk with any LLM agent — review changes before trusting
   them, and use plan mode (`/plan`) for unfamiliar repositories.
+- **Subagents** inherit these limits rather than escaping them. Read-only
+  subagents get no write, edit, or shell tool at all; write-capable subagents
+  are isolated on their own git worktree/branch and have destructive commands
+  blocked outright, since there's no one present to confirm a prompt.
 
 ## Privacy / telemetry
 
@@ -52,4 +96,23 @@ provider you configure (and to Tavily if you use web search). The one opt-in
 exception is `KRITYA_OTEL_ENDPOINT`: if explicitly set, tracing/metrics spans
 are exported to the OpenTelemetry Collector endpoint you configure — nothing
 leaves the machine unless you set that yourself. See the README's
-Observability and Privacy sections.
+[Privacy](README.md#privacy) section,
+[Audit log & telemetry](docs/CONFIGURATION.md#audit-log--telemetry), and
+[docs/observability.md](docs/observability.md) for the local collector setup.
+
+### Data at rest
+
+Everything kritya keeps — config, session transcripts, the audit log, MCP
+OAuth tokens, and trust manifests — lives under `~/.kritya/`.
+
+- Those files are created `0600` inside `0700` directories. Because POSIX mode
+  bits are a no-op on NTFS, on Windows kritya additionally strips inherited
+  ACEs from `~/.kritya/` and grants full control to only the current user and
+  SYSTEM, so the same owner-only isolation applies there.
+- Session transcripts, audit logs, and telemetry files are auto-deleted after
+  **15 days** by default (`retentionDays` in config, or
+  `KRITYA_RETENTION_DAYS`). Set it to `0` to keep everything indefinitely. See
+  [Audit log & telemetry](docs/CONFIGURATION.md#audit-log--telemetry).
+
+Note that the audit log is a local, user-owned record rather than telemetry —
+it is never transmitted anywhere.

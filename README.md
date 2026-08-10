@@ -50,34 +50,35 @@ kritya [directory] [options]
 
 In-session commands (type `/` to see them with autocomplete; letters filter the list):
 
-| Command               | What it does                                                                                                                   |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `/model`              | interactive model picker (`/model <id>` sets any model ID directly)                                                            |
-| `/provider`           | list providers, or `/provider <name>` to switch mid-session ([more](docs/CONFIGURATION.md#providers))                          |
-| `/brainstorm <idea>`  | start the staged new-project workflow (see below)                                                                              |
-| `/spec`               | project workflow: write the spec from the approved brainstorm                                                                  |
-| `/plan`               | project workflow: plan from the spec (`/plan on`/`off` toggles the mode)                                                       |
-| `/build`              | project workflow: implement the plan, with tests                                                                               |
-| `/review`             | project workflow: spec-compliance and security review of the build                                                             |
-| `/project`            | workflow status; `goto <phase>`, `rename <name>`, `clear` to end it                                                            |
-| `/diff`               | show the cumulative git diff of this session's changes                                                                         |
-| `/init`               | scan the repo and generate a `KRITYA.md` project-memory file                                                                   |
-| `/commit`             | have the agent review, stage, and commit the current git changes                                                               |
-| `/web-search <query>` | search the web via Tavily; results are shown and added to context                                                              |
-| `/mcp`                | MCP server status; `/mcp add\|remove <name>`, `/mcp login\|logout <name>` ([more](docs/CONFIGURATION.md#mcp-servers))          |
-| `/skills`             | list discovered skills (project + user-global) and why any were skipped                                                        |
-| `/undo`               | revert all file changes from the agent's last turn                                                                             |
-| `/redo`               | reapply the change most recently undone                                                                                        |
-| `/checkpoint <name>`  | save a named point in the session (`/checkpoint` alone lists saved ones)                                                       |
-| `/rewind <name>`      | rewind both the conversation and the files to a checkpoint                                                                     |
-| `/compact`            | summarize older conversation to free context space                                                                             |
-| `/clear`              | start a fresh conversation                                                                                                     |
-| `/cost`               | token usage and estimated $ (see Pricing below)                                                                                |
-| `/audit`              | show this session's permission decisions and verify the audit log's chain ([more](docs/CONFIGURATION.md#audit-log--telemetry)) |
-| `/budget`             | show session token budget; `/budget reset` or `/budget <number>`                                                               |
-| `/kill`               | emergency stop: `/kill [reason]` halts everything; `/kill off` releases                                                        |
-| `/help`               | command list                                                                                                                   |
-| `/exit`               | quit                                                                                                                           |
+| Command               | What it does                                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `/model`              | interactive model picker (`/model <id>` sets any model ID directly)                                                                 |
+| `/provider`           | list providers, or `/provider <name>` to switch mid-session ([more](docs/CONFIGURATION.md#providers))                               |
+| `/brainstorm <idea>`  | start the staged new-project workflow (see below)                                                                                   |
+| `/spec`               | project workflow: write the spec from the approved brainstorm                                                                       |
+| `/plan`               | project workflow: plan from the spec (`/plan on`/`off` toggles the mode)                                                            |
+| `/build`              | project workflow: implement the plan, with tests                                                                                    |
+| `/review`             | project workflow: spec-compliance and security review of the build                                                                  |
+| `/project`            | workflow status; `goto <phase>`, `rename <name>`, `clear` to end it                                                                 |
+| `/diff`               | show the cumulative git diff of this session's changes                                                                              |
+| `/init`               | scan the repo and generate a `KRITYA.md` project-memory file                                                                        |
+| `/commit`             | have the agent review, stage, and commit the current git changes                                                                    |
+| `/web-search <query>` | search the web via Tavily; results are shown and added to context                                                                   |
+| `/mcp`                | MCP server status; `/mcp add\|remove <name>`, `/mcp login\|logout <name>`, `/mcp trust` ([more](docs/CONFIGURATION.md#mcp-servers)) |
+| `/skills`             | list discovered skills (project + user-global) and why any were skipped                                                             |
+| `/plugins`            | list discovered Agent Plugins, what each contributes, and why any were skipped ([more](docs/CONFIGURATION.md#agent-plugins))        |
+| `/undo`               | revert all file changes from the agent's last turn                                                                                  |
+| `/redo`               | reapply the change most recently undone                                                                                             |
+| `/checkpoint <name>`  | save a named point in the session (`/checkpoint` alone lists saved ones)                                                            |
+| `/rewind <name>`      | rewind both the conversation and the files to a checkpoint                                                                          |
+| `/compact`            | summarize older conversation to free context space                                                                                  |
+| `/clear`              | start a fresh conversation                                                                                                          |
+| `/cost`               | token usage and estimated $ (see Pricing below)                                                                                     |
+| `/audit`              | show this session's permission decisions and verify the audit log's chain ([more](docs/CONFIGURATION.md#audit-log--telemetry))      |
+| `/budget`             | show session token budget; `/budget reset` or `/budget <number>`                                                                    |
+| `/kill`               | emergency stop: `/kill [reason]` halts everything; `/kill off` releases                                                             |
+| `/help`               | command list                                                                                                                        |
+| `/exit`               | quit                                                                                                                                |
 
 Custom `/commands` you define (see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#custom-slash-commands)) also appear here.
 
@@ -159,7 +160,7 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   working tree — review the diff and merge the branch yourself when ready.
   Destructive commands (`rm -rf`, force push, etc.) are always blocked inside
   a write subagent, since there's no one there to confirm them; each subagent
-  also has a hard time limit and no more than 3 (read) / 4 (write) run in one
+  also has a hard time limit and no more than 6 (read) / 4 (write) run in one
   call.
 - **Image attachments** — `@screenshot.png` sends the image to vision-capable
   models alongside your message.
@@ -219,16 +220,39 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   it needs current information (needs `TAVILY_API_KEY` in `.env`, free at
   tavily.com). Web content is delimited as untrusted so pages can't inject
   instructions into the agent.
+- **Reading the web, not just searching it** — `fetch_url` pulls the full text
+  of one known URL (docs page, raw file, JSON endpoint), where search only
+  returns snippets; `deep_research` takes several focused sub-queries, reads
+  the top result pages for each, and returns one consolidated cited bundle for
+  broad comparison questions. Both refuse local and private-network addresses,
+  so neither can be steered at your internal network.
+- **Office documents and notebooks** — `read_document`/`write_document` handle
+  Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), and PDF, with
+  `edit_spreadsheet` for targeted cell changes and `edit_pdf` for page
+  operations (delete, rotate, reorder, extract). Jupyter notebooks get
+  `read_notebook`/`edit_notebook`, which work cell-by-cell instead of forcing
+  the agent to rewrite the whole `.ipynb` JSON.
+- **Agent Plugins** — bundle skills, slash commands, and MCP servers into one
+  versioned folder under `.kritya/plugins/` (project) or `~/.kritya/plugins/`
+  (global), so a capability you want everywhere is one folder to copy rather
+  than three things to wire up. `/plugins` shows what loaded, what each
+  contributes, and why anything was skipped. A workspace plugin only loads
+  once you've trusted that workspace, and any MCP server it declares still
+  needs its own approval ([more](docs/CONFIGURATION.md#agent-plugins)).
 - **Prompt-caching awareness** — the system prompt is ordered stable-first
   (identity and rules → project memory → volatile git status/listing last) so
   providers can reuse their cached prompt prefix across turns instead of
   re-reading everything. `/cost` and the statusline show how many prompt
   tokens were served from the provider's cache; add an optional
   `"cachedInput"` rate to your `pricing` config to see the dollar savings.
-- **LSP integration** — the agent gets go-to-definition, find-references, and
-  live diagnostics from real language servers (`lsp_definition`,
-  `lsp_references`, `lsp_diagnostics`), resolved semantically instead of by
-  text search. Supports TypeScript/JavaScript, Python, Go, Rust, and C/C++ —
+- **LSP integration** — the agent gets go-to-definition, find-references,
+  hover type info, live diagnostics, and project-wide rename from real language
+  servers (`lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_diagnostics`,
+  `lsp_rename`), resolved semantically instead of by text search. `lsp_rename`
+  renames only the actual occurrences of that symbol — never a same-named but
+  unrelated variable, and never text in comments or strings — and asks for
+  permission like any other mutating tool.
+  Supports TypeScript/JavaScript, Python, Go, Rust, and C/C++ —
   it uses whichever servers you have installed (`typescript-language-server`,
   `pyright`, `gopls`, `rust-analyzer`, `clangd`) and tells the agent the
   install command when one is missing. Servers spawn on first use, stay warm
@@ -282,13 +306,16 @@ they're built for.
 ## Permissions & Configuration
 
 Permission rules, sandboxing, the audit log and tracing, the config file,
-provider fallback, custom slash commands, skills, hooks, and MCP servers
-(including OAuth login to hosted servers) are all covered in
-**[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
+provider fallback, custom slash commands, skills, hooks, MCP servers
+(including OAuth login to hosted servers), and Agent Plugins are all covered in
+**[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**. The threat model and what
+each safeguard does and doesn't guarantee are in
+**[SECURITY.md](SECURITY.md)**.
 
 The short version: mutating tools (`write_file`, `edit_file`, `shell`) prompt
 for permission unless allowlisted in `.kritya/settings.json`; destructive
-commands (`rm -rf`, force-push, etc.) always prompt regardless. Provider and
+commands (`rm -rf`, force-push, etc.) always prompt regardless, and shell
+commands are sandboxed by default on Linux/macOS. Provider and
 model config lives in `~/.kritya/config.json`.
 
 ## Privacy
@@ -332,10 +359,13 @@ npm run format       # prettier --write
 
 Architecture: `src/provider` (OpenAI-compatible streaming client) → `src/agent`
 (the tool-call loop, compaction, system prompt) → `src/tools` (plain-object
-tools) → `src/ui` (Ink/React terminal UI), with `src/permissions`, `src/hooks`,
-`src/mcp`, `src/commands`, `src/session`, `src/shell` (background processes), and
-`src/git` supporting. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a full
-tour and [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+tools) → `src/ui` (Ink/React terminal UI), with `src/permissions`, `src/trust`,
+`src/hooks`, `src/mcp`, `src/plugins`, `src/lsp`, `src/commands`, `src/session`,
+`src/shell` (background processes + sandboxing), `src/audit`, `src/telemetry`,
+and `src/git` supporting. `src/headless.ts` and `src/engine.ts` are the CI and
+Electron entry points onto the same core. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a full tour and
+[CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
 ## License
 

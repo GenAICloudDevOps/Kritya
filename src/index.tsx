@@ -66,7 +66,7 @@ Options:
 Headless / CI mode (no terminal UI, exits with 0 on success / 1 on failure):
   --prompt <text>     run this one prompt to completion, then exit
   --output <fmt>      text (default) or json — a single JSON object on stdout
-                      with {success, result, error, toolCalls, usage, durationMs}
+                      with {success, result, error, toolCalls, usage, durationMs, model}
   --allow-all         auto-approve tool calls that would otherwise prompt
                       (destructive commands are still always denied — there's
                       no terminal to confirm them)

@@ -2,8 +2,8 @@
 
 Everything for tuning an already-installed kritya: permission rules, sandboxing,
 the audit log and tracing, `~/.kritya/config.json`, providers, custom slash
-commands, skills, hooks, and MCP servers. For install/quick-start, CLI flags,
-and the in-session command list, see the [README](../README.md).
+commands, skills, hooks, MCP servers, and Agent Plugins. For install/quick-start,
+CLI flags, and the in-session command list, see the [README](../README.md).
 
 ## Permissions
 
@@ -46,7 +46,7 @@ Separately, destructive commands (`rm -rf`, `git push --force`,
 red warning prompt and can't be "always allowed" — even if a broad `shell(*)`
 rule would otherwise cover them.
 
-### Sandboxed execution (opt-in)
+### Sandboxed execution
 
 The danger guard above is regex-based pattern matching on the command text —
 it can be evaded (obfuscated flags, `eval`, base64, etc.). `sandboxExec` in
@@ -58,20 +58,31 @@ the workspace, regardless of what the command text looks like.
 { "sandboxExec": "auto" }
 ```
 
-- `"auto"` (recommended) — only commands the danger guard flags get
-  sandboxed; ordinary commands run exactly as before.
-- `"always"` — every shell command is sandboxed.
-- `"off"` (default) — unchanged behavior.
+- `"auto"` (**default**) — sandbox every command on Linux/macOS when the
+  sandbox binary is present. On Windows there is no sandbox binary to use, so
+  `"auto"` falls back to sandboxing only the commands the danger guard flags,
+  which avoids a fallback note on every single shell call.
+- `"always"` — sandbox every command on every platform, Windows included
+  (where each one then takes the unavailable-fallback path below).
+- `"strict"` — like `"always"`, but **fail-closed**: if no sandbox binary is
+  available, the command is refused outright instead of running unsandboxed.
+  Use this when the sandbox is a hard requirement rather than a best-effort
+  one.
+- `"off"` — disables sandboxing entirely.
 
 Backed by `bwrap`/bubblewrap on Linux and `sandbox-exec` on macOS; not yet
-available on Windows. If the required binary isn't on `PATH`, kritya falls
-back to an unsandboxed run and says so in the output rather than failing
-silently. The sandbox confines **writes** to the workspace (plus system temp
-dirs) — reads and network access are left open, since restricting those
-breaks most ordinary tooling (dynamic linking, package manager caches, `git
-push`, etc.). It contains accidental or malicious damage outside your
-project; it isn't a full read-confinement or network isolation sandbox.
-Background processes (`background: true`) aren't sandboxed yet.
+available on Windows. If the required binary isn't on `PATH`, `"auto"` and
+`"always"` fall back to an unsandboxed run and say so in the output rather
+than failing silently; `"strict"` refuses the command instead. The sandbox
+confines **writes** to the workspace (plus system temp dirs) — reads and
+network access are left open, since restricting those breaks most ordinary
+tooling (dynamic linking, package manager caches, `git push`, etc.). It
+contains accidental or malicious damage outside your project; it isn't a full
+read-confinement or network isolation sandbox.
+
+Background processes (`background: true`) run under the same policy, including
+`"strict"`'s fail-closed behavior — kritya refuses to start an unconfined
+background process rather than silently downgrading it.
 
 ### Audit log & telemetry
 
@@ -512,3 +523,87 @@ it says so rather than implying the token is gone.
 A literal `Authorization` header in config still works and takes precedence —
 if you've pasted a personal access token, kritya uses it and never overrides it
 with a stored grant.
+
+## Agent Plugins
+
+A plugin bundles skills, custom slash commands, and MCP servers into one
+shareable, versioned folder, so a capability you want in several projects is
+one directory to copy (or one repo to clone) instead of three separate
+configuration steps.
+
+Plugins are discovered from two roots:
+
+- `.kritya/plugins/` in the workspace — shared with a project via its repo.
+- `~/.kritya/plugins/` — your own, available in every workspace.
+
+Each plugin is a folder containing a `plugin.json` manifest:
+
+```text
+~/.kritya/plugins/
+└── acme-toolkit/
+    ├── plugin.json          # required: { "name", "version" }
+    ├── skills/              # optional: <skill-name>/SKILL.md, as in Skills above
+    │   └── ratio-analysis/SKILL.md
+    ├── commands/            # optional: *.md, as in Custom slash commands above
+    │   └── audit.md
+    └── mcp.json             # optional: { "mcpServers": { … } }, as in MCP servers above
+```
+
+```json
+{ "name": "acme-toolkit", "version": "1.2.0" }
+```
+
+`name` and `version` are both required, and `name` must match the folder name —
+a mismatch is a common symptom of a half-renamed plugin, so kritya skips it and
+says why rather than loading something under an unexpected identity. Extra
+fields in the manifest are preserved and ignored, so a plugin written for a
+later version of kritya still loads. Plugins load in name order, workspace root
+first; on a name collision the first one found wins and the duplicate is
+skipped with a reason.
+
+Every subfolder is optional — a plugin that ships only skills needs no
+`mcp.json`, and a folder without a `plugin.json` isn't a plugin at all and is
+passed over silently.
+
+Run `/plugins` to see what loaded, what each one contributes, and why anything
+was skipped:
+
+```text
+acme-toolkit@1.2.0 (user)       2 skill(s), 1 MCP server(s), 1 command(s)
+repo-helpers@0.3.0 (workspace)  1 command(s)
+broken-plugin                   SKIPPED: plugin.json must include "name" and "version"
+```
+
+### Precedence
+
+Contributions merge with the same rule everywhere: **the more specific source
+wins.**
+
+| Contribution   | Precedence (lowest → highest)                                       |
+| -------------- | ------------------------------------------------------------------- |
+| Slash commands | `~/.kritya/commands/` → plugin `commands/` → `.kritya/commands/`    |
+| Skills         | plugin `skills/` and `~/.kritya/skills/` → `.kritya/skills/`        |
+| MCP servers    | plugin `mcp.json` → workspace `.mcp.json` → `~/.kritya/config.json` |
+
+So a workspace can always override something a plugin ships, and your own
+global config always wins over a plugin-declared MCP server of the same name.
+
+### Trust
+
+Plugins run code, so both trust gates apply:
+
+- A **workspace** plugin (`.kritya/plugins/`) is only discovered once you've
+  trusted that workspace — a plugin dropped into a cloned repo is exactly as
+  capable as a hostile `.mcp.json`. User-global plugins are always discovered,
+  same as `~/.kritya/config.json`. In headless/CI mode, workspace plugins
+  require `--trust`.
+- An MCP server a plugin declares still needs its own per-server approval on
+  first use, and appears in `/mcp trust` like any other. Installing a plugin
+  is not the same as approving every server it names.
+
+Plugin-contributed slash commands additionally require workspace trust, even
+for user-global plugins.
+
+An `mcp.json` entry requesting the legacy HTTP+SSE transport is skipped with a
+reason — kritya's MCP client speaks stdio and Streamable HTTP, and that older
+transport is deprecated in the MCP spec itself.
