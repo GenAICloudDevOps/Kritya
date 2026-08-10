@@ -3,6 +3,7 @@ import { Box, Text, useStdout } from "ink";
 import stringWidth from "string-width";
 import { tokenizeLine, type TokenKind } from "./highlight.js";
 import { parseInline, tokensWidth, wrapInline, type InlineToken } from "./inline.js";
+import { parseMermaidTree, renderMermaidTree } from "./mermaid.js";
 import { terminalColumns } from "./viewport.js";
 import {
   COLUMN_GAP,
@@ -107,36 +108,57 @@ function renderBlocks(text: string, width: number, streaming: boolean): React.Re
 
   const blocks: React.ReactNode[] = [];
   let inCode = false;
+  let codeLang = "";
   let codeLines: string[] = [];
   let key = 0;
 
   const flushCode = () => {
-    if (codeLines.length) {
-      // Size the frame to the code, not to the terminal — a two-line snippet
-      // in a wide terminal was drawing a box the full width of the screen.
-      const longest = Math.max(...codeLines.map((l) => stringWidth(l)));
-      blocks.push(
-        <Box
-          key={key++}
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="gray"
-          paddingX={1}
-          width={Math.min(width, longest + 4)}
-        >
-          {codeLines.map((l, i) => (
-            <CodeLine key={i} line={l} />
-          ))}
-        </Box>
-      );
-      codeLines = [];
+    if (!codeLines.length) return;
+
+    if (codeLang === "mermaid") {
+      const tree = parseMermaidTree(codeLines);
+      if (tree) {
+        const treeLines = renderMermaidTree(tree);
+        blocks.push(
+          <Box key={key++} flexDirection="column">
+            {treeLines.map((l, i) => (
+              <Text key={i}>{l}</Text>
+            ))}
+          </Box>
+        );
+        codeLines = [];
+        return;
+      }
     }
+
+    // Size the frame to the code, not to the terminal — a two-line snippet
+    // in a wide terminal was drawing a box the full width of the screen.
+    const longest = Math.max(...codeLines.map((l) => stringWidth(l)));
+    blocks.push(
+      <Box
+        key={key++}
+        flexDirection="column"
+        borderStyle="round"
+        borderColor="gray"
+        paddingX={1}
+        width={Math.min(width, longest + 4)}
+      >
+        {codeLines.map((l, i) => (
+          <CodeLine key={i} line={l} />
+        ))}
+      </Box>
+    );
+    codeLines = [];
   };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.trimStart().startsWith("```")) {
-      if (inCode) flushCode();
+      if (inCode) {
+        flushCode();
+      } else {
+        codeLang = line.trim().slice(3).trim().toLowerCase();
+      }
       inCode = !inCode;
       continue;
     }
