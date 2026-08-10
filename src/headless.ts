@@ -226,7 +226,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     client,
     () => model,
     tools,
-    { workspace, sandboxMode: config.sandboxExec ?? "auto" },
+    { workspace, sandboxMode: config.sandboxExec ?? "auto", trustWorkspace },
     permissions,
     session,
     initialHistory

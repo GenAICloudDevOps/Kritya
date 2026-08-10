@@ -208,9 +208,19 @@ export function userSkillsDir(): string {
 /**
  * Skill roots contributed by discovered Agent Plugins (workspace, then
  * user-global), in addition to the plain skills dirs.
+ *
+ * `trustWorkspace` gates the workspace-controlled sources only (the
+ * workspace's own .kritya/skills — added by the caller, not here — and any
+ * plugins it ships under .kritya/plugins): a full skill or plugin body is
+ * arbitrary instructions the model then follows, so an untrusted workspace
+ * (e.g. a freshly cloned repo) must not be able to smuggle one in before the
+ * user has approved it. Defaults to true so existing callers that don't pass
+ * it (tests, ad-hoc scans) keep today's behavior.
  */
-export function defaultExtraSkillRoots(workspace: string): string[] {
-  const plugins = scanPlugins([pluginsDir(workspace), userPluginsDir()]);
+export function defaultExtraSkillRoots(workspace: string, trustWorkspace = true): string[] {
+  const plugins = scanPlugins(
+    trustWorkspace ? [pluginsDir(workspace), userPluginsDir()] : [userPluginsDir()]
+  );
   return [userSkillsDir(), ...pluginSkillsRoots(plugins).map((r) => r.dir)];
 }
 
@@ -223,9 +233,11 @@ export function defaultExtraSkillRoots(workspace: string): string[] {
  */
 export function buildSkillsSection(
   workspace: string,
-  extraRoots: string[] = defaultExtraSkillRoots(workspace)
+  extraRoots: string[] = defaultExtraSkillRoots(workspace),
+  trustWorkspace = true
 ): string {
-  const skills = scanSkills([skillsDir(workspace), ...extraRoots]);
+  // .kritya/skills is workspace-controlled -- same trust gate as KRITYA.md.
+  const skills = scanSkills([...(trustWorkspace ? [skillsDir(workspace)] : []), ...extraRoots]);
   if (!skills.length) return "";
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n");
   return `\n# Available skills\n${lines}\nCall load_skill with the skill name when a task matches one of these.\n`;

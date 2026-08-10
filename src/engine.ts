@@ -89,7 +89,7 @@ export async function createEngineSession(
     client,
     () => currentModel,
     ALL_TOOLS,
-    { workspace, sandboxMode: config.sandboxExec ?? "auto" },
+    { workspace, sandboxMode: config.sandboxExec ?? "auto", trustWorkspace },
     permissions,
     session,
     []

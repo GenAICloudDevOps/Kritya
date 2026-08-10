@@ -21,17 +21,27 @@ function realpathAllowMissing(p: string): string {
  */
 const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /(^|[\\/])\.env(\..*)?$/i,
-  /(^|[\\/])\.git[\\/]config$/i,
+  // The whole .git/ directory, not just .git/config: .git/hooks/* runs
+  // automatically on the next commit/checkout/push, so a write anywhere in
+  // there is arbitrary code execution disguised as a file edit.
+  /(^|[\\/])\.git[\\/]/i,
+  /(^|[\\/])\.gitconfig$/i,
   /(^|[\\/])[^\\/]*credentials[^\\/]*$/i,
   /(^|[\\/])[^\\/]*secret[^\\/]*$/i,
   /(^|[\\/])id_rsa(\.[^\\/]*)?$/i,
   /(^|[\\/])id_ed25519(\.[^\\/]*)?$/i,
+  /(^|[\\/])id_ecdsa(\.[^\\/]*)?$/i,
+  /(^|[\\/])id_dsa(\.[^\\/]*)?$/i,
   /\.pem$/i,
   /\.key$/i,
+  /\.ppk$/i,
+  /\.jks$/i,
   /(^|[\\/])\.npmrc$/i,
   /(^|[\\/])\.netrc$/i,
   /(^|[\\/])\.pypirc$/i,
   /(^|[\\/])\.git-credentials$/i,
+  /(^|[\\/])\.kube[\\/]config$/i,
+  /(^|[\\/])\.docker[\\/]config\.json$/i,
   /\.p12$/i,
   /\.pfx$/i,
 ];

@@ -61,6 +61,37 @@ const PATTERNS: DangerPattern[] = [
   { re: /\bshutdown\b|\breboot\b|\bhalt\b|\bpoweroff\b/i, label: "system power state change" },
   { re: /\bnpm\s+publish\b|\byarn\s+publish\b/i, label: "publishing a package" },
   { re: /\bkillall\b|\bkill\s+-9\s+-1\b/i, label: "mass process kill" },
+
+  // Exfiltration: every prior pattern above is about local destruction —
+  // none of them catch a command whose actual purpose is sending local files
+  // (credentials, source, secrets) to a remote host. classifyDanger forces a
+  // warning prompt even under an allowlist, so these need the same coverage.
+  {
+    re: /\bcurl\b[^|]*(-d|--data(-raw|-binary|-urlencode)?|-F|--form|-T|--upload-file)\b/i,
+    label: "uploading data to a remote server (curl)",
+  },
+  {
+    re: /\bwget\b[^|]*(--post-data|--post-file)\b/i,
+    label: "uploading data to a remote server (wget)",
+  },
+  { re: /\bscp\b\s+\S+\s+\S+@/i, label: "copying files to a remote host (scp)" },
+  { re: /\brsync\b.*\S+@\S+:/i, label: "syncing files to a remote host (rsync)" },
+  { re: /\bnc\b|\bncat\b|\bnetcat\b/i, label: "raw network connection (nc/ncat)" },
+  {
+    re: /\bcurl\b[^|]*\|\s*\S|\bwget\b\s+-[^|]*-O\s*-[^|]*\|\s*\S/i,
+    label: "piping downloaded content into another command",
+  },
+
+  // Interpreter/eval evasion: a way to run arbitrary code that doesn't spell
+  // out a recognizable destructive command, so the patterns above can't see
+  // it — e.g. `eval "$(echo cm0gLXJmIC8=|base64 -d)"` or `python -c "..."`.
+  { re: /\beval\b/i, label: "dynamic code evaluation (eval)" },
+  { re: /\bbase64\b.*(-d|--decode)\b/i, label: "decoding base64 (often obfuscated payload)" },
+  {
+    re: /\b(python3?|node|ruby|perl)\b\s+(-c|-e)\b/i,
+    label: "running an inline script (bypasses command-text inspection)",
+  },
+  { re: /\bexec\s+\d*[<>]/i, label: "redirecting a shell's own file descriptors (exec)" },
 ];
 
 /** Returns a human-readable danger label if the command is destructive, else null. */

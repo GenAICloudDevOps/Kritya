@@ -507,7 +507,7 @@ async function main() {
       client,
       () => modelRef.current,
       readOnlySubTools,
-      { workspace, sandboxMode },
+      { workspace, sandboxMode, trustWorkspace },
       new PermissionManager(),
       new SessionStore(workspace, true),
       []
@@ -571,7 +571,7 @@ async function main() {
         client,
         () => modelRef.current,
         writeSubTools,
-        { workspace: wt.dir, sandboxMode },
+        { workspace: wt.dir, sandboxMode, trustWorkspace },
         new PermissionManager({ allow: ["write_file", "edit_file", "shell(*)"], deny: [] }),
         new SessionStore(wt.dir, true),
         []
@@ -708,6 +708,7 @@ async function main() {
     {
       workspace,
       sandboxMode,
+      trustWorkspace,
       undo: undoStack,
       onTasksUpdate: (t) => {
         uiBridge.onTasksUpdate(t);

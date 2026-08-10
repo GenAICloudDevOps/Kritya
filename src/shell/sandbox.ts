@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { classifyDanger } from "../permissions/danger.js";
 
-export type SandboxMode = "auto" | "always" | "off";
+export type SandboxMode = "auto" | "always" | "strict" | "off";
 
 export interface SandboxedCommand {
   cmd: string;
@@ -56,17 +56,27 @@ export function sandboxUnavailableReason(): string {
 /** Whether `command` should run sandboxed under the given mode. */
 export function shouldSandbox(mode: SandboxMode | undefined, command: string): boolean {
   if (!mode || mode === "off") return false;
-  // "always" means always, on every platform — including Windows, where
-  // there's no sandbox binary to back it, so every command falls back to
-  // the "[sandbox unavailable]" note. That's deliberate: it's the mode for
-  // someone who wants maximum enforcement/visibility even without a real
-  // sandbox backing it.
-  if (mode === "always") return true;
+  // "always"/"strict" mean always, on every platform — including Windows,
+  // where there's no sandbox binary to back it, so every command falls back
+  // to the "[sandbox unavailable]" note ("always") or is refused outright
+  // ("strict"). That's deliberate: these are the modes for someone who wants
+  // maximum enforcement/visibility even without a real sandbox backing it.
+  if (mode === "always" || mode === "strict") return true;
   // "auto": Windows has no sandbox binary at all — falling back to "only
   // flagged commands" (today's behavior) avoids a spurious fallback note on
   // every single shell call, which "sandbox everything" would otherwise cause.
   if (os.platform() === "win32") return classifyDanger(command) !== null;
   return true;
+}
+
+/**
+ * Whether a command that `shouldSandbox` flagged, but for which no sandbox
+ * binary is available on this platform, must be refused outright rather than
+ * falling back to an unsandboxed run. Only "strict" has this fail-closed
+ * behavior; "auto" and "always" fail open with a warning note instead.
+ */
+export function requiresSandbox(mode: SandboxMode | undefined): boolean {
+  return mode === "strict";
 }
 
 /**
@@ -369,21 +379,27 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   }
 
   // sandbox-exec (macOS) takes its policy as a profile file, not inline args.
-  const profilePath = path.join(os.tmpdir(), `kritya-sandbox-${process.pid}-${Date.now()}.sb`);
+  // Named with the same pid+timestamp+random suffix as runDir below, so a
+  // local attacker can't pre-create/symlink the path before this call reaches
+  // it (the profile itself isn't secret, but a symlinked write target could
+  // otherwise redirect the profile write elsewhere via TOCTOU). `wx` makes
+  // the create atomic and fails loudly on any pre-existing path — including a
+  // symlink — instead of silently following it, and 0o600 keeps it
+  // unreadable/unwritable by other local users in the meantime.
+  const runSuffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const profilePath = path.join(os.tmpdir(), `kritya-sandbox-${runSuffix}.sb`);
   // A fresh, uniquely-named scratch dir for this invocation alone — exposed
   // to the command via $TMPDIR so ordinary tools that write scratch files
   // keep working even though the rest of the real temp dirs are now hidden
   // (see macSandboxProfile). Read by sandbox-exec's own profile loader before
   // confinement takes effect, so it isn't subject to the tmp-root read-deny
   // it's about to create.
-  const runDir = path.join(
-    os.tmpdir(),
-    `kritya-sandbox-run-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  );
+  const runDir = path.join(os.tmpdir(), `kritya-sandbox-run-${runSuffix}`);
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     profilePath,
-    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir)
+    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir),
+    { mode: 0o600, flag: "wx" }
   );
   return {
     cmd: "sandbox-exec",

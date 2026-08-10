@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gitStatusShort } from "../git/git.js";
-import { buildSkillsSection } from "./skills.js";
+import { buildSkillsSection, defaultExtraSkillRoots } from "./skills.js";
 import {
   artifactPath,
   loadProjectState,
@@ -27,7 +27,12 @@ const MEMORY_MAX_CHARS = 4000;
  * Keep it that way: adding anything volatile (dates, git output, listings)
  * above the memory section throws away the cached prefix on every turn.
  */
-export function buildSystemPrompt(workspace: string, planMode = false, dryRunMode = false): string {
+export function buildSystemPrompt(
+  workspace: string,
+  planMode = false,
+  dryRunMode = false,
+  trustWorkspace = true
+): string {
   const planSection = planMode
     ? "\n# PLAN MODE (read-only)\nYou are in plan mode. Do NOT write, edit, or run shell commands — those are blocked. " +
       "Investigate with read-only tools and present a concrete, step-by-step plan for the user to approve. " +
@@ -63,16 +68,24 @@ export function buildSystemPrompt(workspace: string, planMode = false, dryRunMod
     // keep placeholder
   }
 
+  // KRITYA.md is read straight into the system prompt and followed as an
+  // instruction, so an untrusted workspace (e.g. a freshly cloned repo the
+  // user hasn't approved yet) must not have its KRITYA.md loaded — that would
+  // make it the highest-leverage prompt injection surface in the app, bigger
+  // than the allow rules / hooks / .env it sits alongside in the trust gate
+  // (see src/trust/trust.ts). Skip it entirely until the workspace is trusted.
   let memory = "";
-  for (const name of MEMORY_FILES) {
-    try {
-      const raw = fs.readFileSync(path.join(workspace, name), "utf8").trim();
-      if (raw) {
-        memory = `\n# Project instructions (from ${name} — always follow these)\n${raw.slice(0, MEMORY_MAX_CHARS)}\n`;
-        break;
+  if (trustWorkspace) {
+    for (const name of MEMORY_FILES) {
+      try {
+        const raw = fs.readFileSync(path.join(workspace, name), "utf8").trim();
+        if (raw) {
+          memory = `\n# Project instructions (from ${name} — always follow these)\n${raw.slice(0, MEMORY_MAX_CHARS)}\n`;
+          break;
+        }
+      } catch {
+        // no memory file — fine
       }
-    } catch {
-      // no memory file — fine
     }
   }
 
@@ -111,7 +124,7 @@ ${PHASE_ORDER.map((p, i) => {
 }).join("\n")}
 Each phase reads the artifact immediately before it and does not redo that phase's work: the spec owns requirements, contracts and numbered acceptance criteria; the plan owns architecture and the milestone order, citing criteria by number rather than restating them. Keep artifacts dense — every later phase pays to read them.
 Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. After writing a phase's artifact, summarize it and ask the user to approve — never advance past a phase on your own. The user may also drive phases manually with ${PHASE_ORDER.map((p) => PHASE_COMMAND[p]).join(", ")}; when they do, that command sets the phase for you.
-${memory}${buildSkillsSection(workspace)}
+${memory}${buildSkillsSection(workspace, defaultExtraSkillRoots(workspace, trustWorkspace), trustWorkspace)}
 # Environment
 - OS: ${os.platform()} (${os.release()})
 - Workspace root: ${workspace}

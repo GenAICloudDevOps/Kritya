@@ -45,7 +45,18 @@ export const loadSkillTool: ToolDef = {
     // Re-scan on every call (no session-start caching) so a skill added
     // mid-session is usable immediately -- cheap since these are a handful
     // of small file reads.
-    const skills = scanSkills([skillsDir(ctx.workspace), ...defaultExtraSkillRoots(ctx.workspace)]);
+    // Workspace-controlled skill roots (.kritya/skills, workspace plugin
+    // skills) are the same trust-gated surface as KRITYA.md -- a full skill
+    // body is arbitrary instructions the model then follows, so an untrusted
+    // workspace's own skills/plugins are excluded from the scan (user-global
+    // ones under ~/.kritya still apply). `trustWorkspace` undefined (tool
+    // contexts that don't go through the trust flow) is treated as trusted,
+    // matching the rest of the codebase's convention.
+    const trustWorkspace = ctx.trustWorkspace !== false;
+    const skills = scanSkills([
+      ...(trustWorkspace ? [skillsDir(ctx.workspace)] : []),
+      ...defaultExtraSkillRoots(ctx.workspace, trustWorkspace),
+    ]);
     const skill = skills.find((s) => s.name === name);
     if (!skill) {
       const available = skills.map((s) => s.name).join(", ") || "(none)";

@@ -56,6 +56,15 @@ export interface ToolContext {
   workspace: string;
   /** OS-level sandboxing policy for the `shell` tool (see config's sandboxExec). Default "auto". */
   sandboxMode?: SandboxMode;
+  /**
+   * Whether this workspace's gated content (see src/trust/trust.ts) has been
+   * explicitly trusted. Undefined is treated as trusted, for callers (tests,
+   * ad-hoc tool contexts) that don't go through the trust flow at all.
+   * Threaded through so KRITYA.md — read straight into the system prompt —
+   * isn't loaded from an untrusted workspace, the same gate already applied
+   * to allow rules, hooks, .env, and MCP servers.
+   */
+  trustWorkspace?: boolean;
   /** Records file states before mutation so /undo can revert them. */
   undo?: { snapshot(absPath: string, relPath: string): void; beginTurn?(): void };
   /** Lets the update_tasks tool push checklist changes to the UI. */

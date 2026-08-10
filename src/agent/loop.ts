@@ -427,7 +427,12 @@ export class Agent {
 
     const systemMsg: ChatMessage = {
       role: "system",
-      content: buildSystemPrompt(this.ctx.workspace, this.planMode, this.dryRunMode),
+      content: buildSystemPrompt(
+        this.ctx.workspace,
+        this.planMode,
+        this.dryRunMode,
+        this.ctx.trustWorkspace !== false
+      ),
     };
 
     const turnSpan = this.tracer.startSpan("agent.turn", {

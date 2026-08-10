@@ -223,7 +223,14 @@ test("load_skill happy path: skill is loaded and reflected in the result", async
     await writeSkillFixture(workspace, "ratio-analysis", {
       body: "current ratio = assets / liabilities",
     });
-    const { code, stdout } = await runKritya(home, workspace, ["--prompt", "analyze the ratios"]);
+    // --trust: a workspace-local skill is gated content (see src/trust/trust.ts),
+    // same as .mcp.json or a custom command — headless needs the same opt-in
+    // an interactive session would get via the trust prompt.
+    const { code, stdout } = await runKritya(home, workspace, [
+      "--prompt",
+      "analyze the ratios",
+      "--trust",
+    ]);
     assert.equal(code, 0);
     const parsed = JSON.parse(stdout);
     assert.equal(parsed.success, true);
@@ -307,7 +314,12 @@ test("load_skill followed by reading a bundled reference file works end to end",
       path.join(dir, "references", "formulas.md"),
       "current_ratio = assets / liabilities"
     );
-    const { code, stdout } = await runKritya(home, workspace, ["--prompt", "compute the ratio"]);
+    // --trust: workspace-local skills are gated content, see comment above.
+    const { code, stdout } = await runKritya(home, workspace, [
+      "--prompt",
+      "compute the ratio",
+      "--trust",
+    ]);
     assert.equal(code, 0);
     const parsed = JSON.parse(stdout);
     assert.equal(parsed.success, true);

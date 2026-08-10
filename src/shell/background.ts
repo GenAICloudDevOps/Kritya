@@ -1,7 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import { scrubbedShellEnv } from "../config/config.js";
-import { buildSandboxedCommand, shouldSandbox, type SandboxMode } from "./sandbox.js";
+import {
+  buildSandboxedCommand,
+  requiresSandbox,
+  sandboxUnavailableReason,
+  shouldSandbox,
+  type SandboxMode,
+} from "./sandbox.js";
 
 const MAX_BUFFER_CHARS = 50_000;
 
@@ -45,6 +51,14 @@ class BackgroundManager {
           : spawnOpts;
         proc = spawn(wrapped.cmd, wrapped.args, opts);
         cleanup = wrapped.cleanup;
+      } else if (requiresSandbox(sandboxMode)) {
+        // Same fail-closed contract as the foreground shell tool: "strict"
+        // means the sandbox is a hard requirement, so refuse rather than
+        // start an unconfined background process.
+        throw new Error(
+          `sandboxExec is "strict" but sandboxing is unavailable here (${sandboxUnavailableReason()}) ` +
+            `— refusing to start an unsandboxed background process`
+        );
       } else {
         // Sandboxing was requested but no sandbox binary is available here —
         // fall back to a plain run, same as the foreground shell tool does.

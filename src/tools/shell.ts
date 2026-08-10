@@ -4,6 +4,7 @@ import { gitDiffStat } from "../git/git.js";
 import { backgroundManager } from "../shell/background.js";
 import {
   buildSandboxedCommand,
+  requiresSandbox,
   sandboxUnavailableReason,
   shouldSandbox,
 } from "../shell/sandbox.js";
@@ -19,7 +20,8 @@ const GIT_MUTATING_RE =
   /\bgit\s+(commit|merge|rebase|pull|checkout|reset|clean|stash|cherry-pick|revert|apply|am|rm|mv|restore|add)\b/i;
 
 /** The markers `run` appends when a command didn't complete successfully. */
-const FAILURE_MARKER = /^\[(?:exit code: |command timed out |command cancelled )/m;
+const FAILURE_MARKER =
+  /^\[(?:exit code: |command timed out |command cancelled |command refused: )/m;
 
 export const shellTool: ToolDef = {
   name: "shell",
@@ -139,8 +141,18 @@ export const shellTool: ToolDef = {
           });
           return;
         }
-        // Sandboxing was requested but no sandbox binary is available here —
-        // fall back to a plain run rather than silently failing, but say so.
+        // Sandboxing was requested but no sandbox binary is available here.
+        // In "strict" mode that's a hard requirement, not a best-effort one —
+        // refuse to run rather than silently falling back to an unconfined
+        // command. Other modes fall back to a plain run, flagged with a note.
+        if (requiresSandbox(ctx.sandboxMode)) {
+          resolve(
+            `[command refused: sandboxExec is "strict" but sandboxing is unavailable here ` +
+              `(${sandboxUnavailableReason()}) — set sandboxExec to "auto"/"always" to allow ` +
+              `an unsandboxed fallback, or install the required sandbox binary]`
+          );
+          return;
+        }
         exec(command, runOpts, (error, stdout, stderr) =>
           finish(
             resolve,

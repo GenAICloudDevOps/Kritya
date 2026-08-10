@@ -11,9 +11,13 @@ import { debugLog } from "../config/debug.js";
  * automatically around tool calls); it can also ship a `.env` file (env vars
  * merged into the process, read by every shell command and MCP server),
  * `.kritya/commands/*.md` (custom slash commands — attacker-authored prompts
- * run with the user's standing permissions), and `.mcp.json` (MCP servers —
+ * run with the user's standing permissions), `.mcp.json` (MCP servers —
  * arbitrary processes launched, or remote endpoints contacted with the user's
- * env-expanded credentials). All of these take effect the
+ * env-expanded credentials), `KRITYA.md` (project memory — read straight into
+ * the system prompt on every turn, so it's the highest-leverage prompt
+ * injection surface a cloned repo can ship), and `.kritya/skills/*.md`
+ * (skills — extra instructions the model can pull in mid-session, same risk
+ * as a custom command). All of these take effect the
  * moment kritya launches in that directory, so a cloned repo could use any of
  * them to silently grant itself broad permissions or run code. Before any of
  * them takes effect, the workspace must be explicitly trusted.
@@ -38,6 +42,10 @@ interface GatedContent {
   commands?: Record<string, string>;
   /** Raw content of the workspace .mcp.json file, if present (hashed, not parsed). */
   mcp?: string;
+  /** Raw content of the workspace KRITYA.md file, if present — read into the system prompt. */
+  memory?: string;
+  /** Raw content of each .kritya/skills/<name>/SKILL.md file, keyed by skill dir name. */
+  skills?: Record<string, string>;
 }
 
 function readSettingsGatedContent(workspace: string): { allow?: string[]; hooks?: unknown } {
@@ -95,20 +103,68 @@ function readMcpFile(workspace: string): string | undefined {
   }
 }
 
+/**
+ * Raw content of KRITYA.md, if present. It's read straight into the system
+ * prompt and followed as an instruction (see src/agent/systemPrompt.ts), so
+ * it's gated on trust the same as an allow rule or a hook.
+ */
+function readMemoryFile(workspace: string): string | undefined {
+  try {
+    return fs.readFileSync(path.join(workspace, "KRITYA.md"), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Raw content of each .kritya/skills/<name>/SKILL.md file, keyed by the skill's
+ * directory name. A skill's full body is arbitrary instructions the model
+ * pulls in mid-session via load_skill (see src/tools/skills.ts) — same risk
+ * shape as a custom slash command.
+ */
+function readSkillFiles(workspace: string): Record<string, string> | undefined {
+  const dir = path.join(workspace, ".kritya", "skills");
+  let entries: string[];
+  try {
+    entries = fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return undefined;
+  }
+  if (!entries.length) return undefined;
+  const skills: Record<string, string> = {};
+  for (const name of entries) {
+    try {
+      skills[name] = fs.readFileSync(path.join(dir, name, "SKILL.md"), "utf8");
+    } catch {
+      // No SKILL.md in this subdir, or unreadable — skip it rather than fail
+      // the whole hash.
+    }
+  }
+  return Object.keys(skills).length ? skills : undefined;
+}
+
 function readGatedContent(workspace: string): GatedContent | null {
   const { allow, hooks } = readSettingsGatedContent(workspace);
   const env = readEnvFile(workspace);
   const commands = readCommandFiles(workspace);
   const mcp = readMcpFile(workspace);
+  const memory = readMemoryFile(workspace);
+  const skills = readSkillFiles(workspace);
   if (
     (!allow || allow.length === 0) &&
     !hooks &&
     env === undefined &&
     !commands &&
-    mcp === undefined
+    mcp === undefined &&
+    memory === undefined &&
+    !skills
   )
     return null;
-  return { allow, hooks, env, commands, mcp };
+  return { allow, hooks, env, commands, mcp, memory, skills };
 }
 
 /**
@@ -142,6 +198,24 @@ export function describeGatedContent(workspace: string): string {
   if (mcp !== undefined) {
     sections.push(
       `.mcp.json (MCP servers — processes launched / endpoints contacted as you):\n${mcp.trimEnd()}`
+    );
+  }
+  const memory = readMemoryFile(workspace);
+  if (memory !== undefined) {
+    sections.push(
+      `KRITYA.md (project memory — read into the system prompt and followed as an instruction):\n${memory.trimEnd()}`
+    );
+  }
+  const skills = readSkillFiles(workspace);
+  if (skills) {
+    const list = Object.entries(skills)
+      .map(([name, body]) => {
+        const first = body.split("\n")[0]?.trim().slice(0, 80) ?? "";
+        return `  ${name} — ${first || "(empty)"}`;
+      })
+      .join("\n");
+    sections.push(
+      `.kritya/skills/ (custom skills — instructions the model can load mid-session):\n${list}`
     );
   }
   return sections.join("\n\n") || "(no gated content)";

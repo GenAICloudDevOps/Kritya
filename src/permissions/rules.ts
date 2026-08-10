@@ -57,8 +57,14 @@ function subjectFor(toolName: string, args: Record<string, unknown>): string {
   return String(args.path ?? args.pattern ?? "").trim();
 }
 
-/** Shell metacharacters that chain/substitute commands (&&, ||, ;, |, `, $(...)). */
-const SHELL_METACHAR_RE = /&&|\|\||[;|`]|\$\(/;
+/**
+ * Shell metacharacters that chain/substitute commands or redirect I/O
+ * (&&, ||, ;, |, `, $(...), ${...}, >, >>, <, <<, a bare & to background /
+ * chain, and newlines). Redirection is included because `shell(git *)` must
+ * not silently allow `git log > ~/.bashrc` or `git log < /etc/passwd` just
+ * because the allowed pattern never spelled those characters out.
+ */
+const SHELL_METACHAR_RE = /&&|\|\||[;|`&\n]|\$\(|\$\{|<|>/;
 
 export function matchesRule(
   rule: string,

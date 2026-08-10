@@ -55,11 +55,13 @@ export interface CliConfig {
    * (bubblewrap on Linux, sandbox-exec on macOS; no effect on Windows). This
    * is a backstop for when destructive-command detection is evaded, not a
    * replacement for it. "auto" (default) sandboxes only commands flagged
-   * by classifyDanger; "always" sandboxes every shell command; "off"
-   * disables it. Falls back to unsandboxed execution with a warning if the
-   * required binary isn't on PATH.
+   * by classifyDanger; "always" sandboxes every shell command, falling back
+   * to unsandboxed execution with a warning if the required binary isn't on
+   * PATH; "strict" is the same as "always" but refuses to run the command at
+   * all instead of falling back — use this when the sandbox is a hard
+   * requirement, not a best-effort one; "off" disables it.
    */
-  sandboxExec?: "auto" | "always" | "off";
+  sandboxExec?: "auto" | "always" | "strict" | "off";
   /**
    * Days to keep session transcripts, audit logs, and telemetry files before
    * they're auto-deleted on startup. Default 15. Set to 0 (or any
@@ -261,10 +263,21 @@ export function saveConfig(patch: Partial<CliConfig>): void {
  * that genuinely need such a key must receive it explicitly (e.g. inline in
  * the command), same as MCP servers declare theirs via `env`.
  */
+// Provider credentials (and anything shaped like a credential) that shell
+// commands and background processes must not inherit. Beyond the provider
+// *_API_KEY vars this always covered, this also strips *_TOKEN, *_SECRET,
+// *_PASSWORD (common CI/CD and package-registry credential shapes — GitHub,
+// npm, Docker Hub tokens; DB passwords) and the AWS credential trio, which
+// were previously passed through intact. AWS_REGION/AWS_PROFILE etc. are
+// left alone — they're not secrets and ordinary `aws` CLI calls need them.
+const SCRUBBED_ENV_RE = /_(API_KEY|TOKEN|SECRET|PASSWORD)$/i;
+const SCRUBBED_AWS_ENV_RE = /^AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|SECURITY_TOKEN)$/i;
+
 export function scrubbedShellEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (/_API_KEY$/i.test(key)) continue;
+    if (SCRUBBED_ENV_RE.test(key)) continue;
+    if (SCRUBBED_AWS_ENV_RE.test(key)) continue;
     env[key] = value;
   }
   return env;

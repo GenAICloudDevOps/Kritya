@@ -10,7 +10,14 @@ function isPrivateIPv4Parts(a: number, b: number): boolean {
     (a === 192 && b === 168) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 169 && b === 254) ||
-    a === 0
+    a === 0 ||
+    // 100.64.0.0/10 — carrier-grade NAT / Tailscale range.
+    (a === 100 && b >= 64 && b <= 127) ||
+    // 198.18.0.0/15 — benchmarking range, sometimes used internally.
+    (a === 198 && (b === 18 || b === 19)) ||
+    // 192.0.0.0/24 — IETF protocol assignments (includes some cloud
+    // metadata-adjacent uses).
+    (a === 192 && b === 0)
   );
 }
 
@@ -20,6 +27,23 @@ function parseIPv4(host: string): [number, number, number, number] | null {
   const parts = m.slice(1).map(Number);
   if (parts.some((p) => p > 255)) return null;
   return parts as [number, number, number, number];
+}
+
+/**
+ * Whether `host` is a "plain" numeric IPv4 written as a single decimal, octal,
+ * or hexadecimal integer, or a dotted form with octal/hex octets (e.g.
+ * `2130706433`, `0x7f000001`, `017700000001`, `0177.0.0.1`) — forms that
+ * browsers and curl still resolve as IP addresses but that {@link parseIPv4}'s
+ * plain dotted-decimal-quad regex doesn't recognize, so they'd otherwise sail
+ * straight past the private/loopback check (e.g. `http://2130706433/` is
+ * `http://127.0.0.1/`). Rather than compute the exact address these forms
+ * resolve to, treat any host shaped like one as suspicious and block it
+ * outright — no ordinary public hostname is written this way, so this has no
+ * legitimate-use cost.
+ */
+function isNonStandardNumericIPv4(host: string): boolean {
+  if (parseIPv4(host)) return false; // ordinary dotted-decimal quad, handled separately
+  return /^(0x[0-9a-f]+|0[0-7]*|[1-9]\d*)(\.(0x[0-9a-f]+|0[0-7]+|[1-9]\d*|0))*$/i.test(host);
 }
 
 /**
@@ -106,6 +130,7 @@ export function isPrivateOrLoopbackHost(rawHost: string): boolean {
 
   const v4 = parseIPv4(host);
   if (v4) return isPrivateIPv4Parts(v4[0], v4[1]);
+  if (isNonStandardNumericIPv4(host)) return true;
 
   const v6 = parseIPv6Groups(host);
   if (v6) return isPrivateOrLoopbackIPv6Groups(v6);
@@ -120,6 +145,10 @@ export function isLoopbackHost(rawHost: string): boolean {
 
   const v4 = parseIPv4(host);
   if (v4) return v4[0] === 127;
+  // A non-standard numeric form could resolve to anything, including a
+  // loopback address — refuse it here too rather than let it pass as "not
+  // loopback" and be treated as an acceptable LAN target.
+  if (isNonStandardNumericIPv4(host)) return true;
 
   const v6 = parseIPv6Groups(host);
   if (v6) return isLoopbackIPv6Groups(v6);
