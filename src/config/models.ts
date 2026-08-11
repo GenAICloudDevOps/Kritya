@@ -19,14 +19,24 @@ export const DEFAULT_CONTEXT_WINDOW = 120_000;
  */
 export const CURATED_MODELS: ModelInfo[] = [
   {
+    id: "nvidia/nemotron-3.5-lightning-30b-a3b",
+    label: "Nemotron 3.5 Lightning 30B",
+    note: "default",
+    contextWindow: 128_000,
+  },
+  {
     id: "nvidia/nemotron-3-super-120b-a12b",
     label: "Nemotron 3 Super 120B",
-    note: "default",
     contextWindow: 128_000,
   },
   {
     id: "nvidia/nemotron-3-ultra-550b-a55b",
     label: "Nemotron 3 Ultra 550B",
+    contextWindow: 128_000,
+  },
+  {
+    id: "meta/muse-glimmer-30b",
+    label: "Muse Glimmer 30B",
     contextWindow: 128_000,
   },
   { id: "thinkingmachines/inkling", label: "Inkling", contextWindow: 128_000 },
