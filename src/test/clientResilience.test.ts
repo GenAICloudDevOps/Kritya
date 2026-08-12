@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { APIError } from "openai";
 import {
   isContextOverflowError,
   isRetryable,
@@ -41,9 +42,43 @@ test("isRetryable covers undici and stream-close transport codes", () => {
 test("isRetryable still refuses hard failures", () => {
   assert.equal(isRetryable(errWith({ status: 400 })), false);
   assert.equal(isRetryable(errWith({ status: 401 })), false);
+  // A 404 that carries a body is a real "no such model" — fail fast.
   assert.equal(isRetryable(errWith({ status: 404 })), false);
   assert.equal(isRetryable(errWith({ code: "ENOENT" })), false);
   assert.equal(isRetryable(new Error("plain")), false);
+});
+
+test("isRetryable retries an empty-bodied 404 but not one that reports a reason", () => {
+  // NVIDIA's gateway intermittently 404s with nothing in the body for a model
+  // that is fine; the same request succeeds on retry.
+  assert.equal(isRetryable(errWith({ status: 404 }, "404 status code (no body)")), true);
+  // Both real "no such model" shapes carry a body, and must still fail fast:
+  // that gateway's plain text, and an OpenAI-compatible JSON error.
+  assert.equal(isRetryable(errWith({ status: 404 }, "404 404 page not found")), false);
+  assert.equal(isRetryable(errWith({ status: 404 }, "404 The model does not exist")), false);
+  // Only 404 gets this treatment — an empty 401 is still a hard failure.
+  assert.equal(isRetryable(errWith({ status: 401 }, "401 status code (no body)")), false);
+});
+
+test("the empty-body 404 message this keys off is the one the SDK actually produces", () => {
+  // isRetryable can only see the message the SDK synthesizes when there was no
+  // body to parse. Generating a real error here means an SDK rewording fails
+  // this test rather than silently turning the retry back off.
+  const err = APIError.generate(404, undefined, undefined, new Headers()) as Error & {
+    status?: number;
+  };
+  assert.equal(err.status, 404);
+  assert.equal(err.message, "404 status code (no body)");
+  assert.equal(isRetryable(err), true);
+
+  // ...and the same generator with a body still produces a non-retryable error.
+  const withBody = APIError.generate(
+    404,
+    { error: { message: "The model does not exist" } },
+    undefined,
+    new Headers()
+  );
+  assert.equal(isRetryable(withBody), false);
 });
 
 test("isRetryable treats 408 like the other transient statuses", () => {
@@ -89,6 +124,43 @@ test("isContextOverflowError separates a too-long prompt from other 400s", () =>
   assert.equal(isContextOverflowError(errWith({ status: 413 }, "prompt is too long")), true);
   assert.equal(isContextOverflowError(errWith({ status: 400 }, "invalid tool schema")), false);
   assert.equal(isContextOverflowError(errWith({ status: 401 }, "context length")), false);
+});
+
+test("an empty-bodied 404 mid-conversation is retried instead of killing the turn", async () => {
+  let attempts = 0;
+  async function* healthy(): AsyncGenerator<FakeChunk> {
+    yield { choices: [{ delta: { content: "recovered" } }] };
+  }
+  const client = withCreate(new ProviderClient("fake-key"), () => {
+    if (++attempts === 1) throw APIError.generate(404, undefined, undefined, new Headers());
+    return healthy();
+  });
+
+  const retries: number[] = [];
+  const result = await client.chat("m", [], [], {
+    ...noopCallbacks,
+    onRetry: (attempt) => retries.push(attempt),
+  });
+
+  assert.equal(attempts, 2, "the blip was re-issued rather than surfaced");
+  assert.equal(retries.length, 1, "the retry was reported to the caller");
+  assert.equal(result.text, "recovered");
+});
+
+test("a 404 that names a reason still fails the turn immediately", async () => {
+  let attempts = 0;
+  const client = withCreate(new ProviderClient("fake-key"), () => {
+    attempts++;
+    throw APIError.generate(
+      404,
+      { error: { message: "The model does not exist" } },
+      undefined,
+      new Headers()
+    );
+  });
+
+  await assert.rejects(() => client.chat("m", [], [], noopCallbacks));
+  assert.equal(attempts, 1, "a genuine bad model is not retried four times");
 });
 
 test("a stream that opens and then goes silent is abandoned and retried, not hung", async () => {

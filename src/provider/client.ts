@@ -84,6 +84,28 @@ const RETRYABLE_ERROR_NAMES = new Set([
   "StreamIdleError",
 ]);
 
+/**
+ * A 404 whose response body was completely empty.
+ *
+ * NVIDIA's gateway returns these intermittently for a model that is working
+ * fine — the identical request succeeds on an immediate retry. A real "no
+ * such model" always carries a body (that gateway sends the text "404 page
+ * not found"; OpenAI-compatible providers send a JSON error), so an empty
+ * one is a transport-level blip rather than a verdict on the request.
+ *
+ * The SDK doesn't expose the raw body, so this keys off the message it
+ * synthesizes when there was nothing to parse (APIError.makeMessage).
+ * Rebuilding that string from the status rather than substring-matching
+ * keeps a genuine body that happens to contain the phrase from qualifying;
+ * client.test.ts pins the wording so an SDK change fails there instead of
+ * silently disabling this.
+ */
+function isEmptyBodyNotFound(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  if (status !== 404) return false;
+  return (err as { message?: string })?.message === `${status} status code (no body)`;
+}
+
 /** Exported for tests; the retry loop below is the only real caller. */
 export function isRetryable(err: unknown): boolean {
   if (err instanceof StreamIdleError) return true;
@@ -92,6 +114,9 @@ export function isRetryable(err: unknown): boolean {
   // re-sending it is safe and is usually the thing that works.
   if (status === 429 || status === 408 || (typeof status === "number" && status >= 500))
     return true;
+  // A 404 normally means "no such model" and must fail fast; an empty-bodied
+  // one is a gateway blip. See isEmptyBodyNotFound.
+  if (isEmptyBodyNotFound(err)) return true;
   const name = (err as { name?: string })?.name;
   if (name && RETRYABLE_ERROR_NAMES.has(name)) return true;
   const code = (err as { code?: string })?.code;
