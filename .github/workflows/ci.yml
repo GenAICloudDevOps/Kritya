@@ -46,7 +46,7 @@ jobs:
         with:
           languages: javascript-typescript
 
-      - uses: github/codeql-action/analyze@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+      - uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
 
   # Dependency checks that ask the registry, not the machine: the answer is the
   # same on every OS and Node version, so running them once per matrix entry
