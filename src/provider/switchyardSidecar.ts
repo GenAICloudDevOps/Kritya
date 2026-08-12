@@ -33,7 +33,8 @@ const SWITCHYARD_BASE_THRESHOLD = 0.5;
 
 const READY_TIMEOUT_MS = 10_000;
 
-function routesToml(nvidiaBaseUrl: string): string {
+/** Exported for tests; the sidecar startup path is the only real caller. */
+export function routesToml(nvidiaBaseUrl: string): string {
   return `schema_version = 1
 
 [llm_clients.nvidia]
@@ -271,7 +272,7 @@ export function staleSwitchyardModelWarning(
   if (!configModel || configModel === SWITCHYARD_ROUTE_ID) return undefined;
   return (
     `⚠ ~/.kritya/config.json has "model": "${configModel}" saved, which bypasses switchyard's ` +
-    `escalation routing and calls that model directly every turn. Run /model switchyard ` +
+    `routing and calls that model directly every turn. Run /model switchyard ` +
     `(or remove "model" from config.json) to restore routing.`
   );
 }
