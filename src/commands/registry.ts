@@ -44,7 +44,8 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   { name: "/model", description: "pick a model, or /model <id> for any provider model ID" },
   {
     name: "/provider",
-    description: "list providers, or /provider <name> to switch mid-session (keeps history)",
+    description:
+      "list providers, or /provider <name> to switch mid-session (keeps history); add --default to persist",
   },
   {
     name: "/brainstorm",
@@ -156,7 +157,7 @@ export interface CommandContext {
   releaseKill(): void;
   setModelEverywhere(id: string): void;
   provider: string;
-  setProviderEverywhere(name: string): void;
+  setProviderEverywhere(name: string, persist?: boolean): void;
   refreshFileList(): void;
   runAgent(text: string, images?: string[]): Promise<void>;
   runWebSearch(query: string): Promise<void>;
@@ -200,6 +201,12 @@ async function compactAtPhaseBoundary(ctx: CommandContext, phase: WorkflowPhase)
 function takeForce(arg: string): { arg: string; force: boolean } {
   const force = /(^|\s)--force(\s|$)/.test(arg);
   return { arg: arg.replace(/(^|\s)--force(\s|$)/, " ").trim(), force };
+}
+
+/** Strip a trailing/leading `--default` from a command argument. */
+function takeDefault(arg: string): { arg: string; makeDefault: boolean } {
+  const makeDefault = /(^|\s)--default(\s|$)/.test(arg);
+  return { arg: arg.replace(/(^|\s)--default(\s|$)/, " ").trim(), makeDefault };
 }
 
 /**
@@ -271,7 +278,8 @@ const handlers: Record<string, CommandHandler> = {
     else ctx.setPhase("model");
   },
   "/provider": (ctx) => {
-    if (!ctx.arg) {
+    const { arg, makeDefault } = takeDefault(ctx.arg);
+    if (!arg) {
       const lines = listProviders(ctx.config).map((p) => {
         const marker = p.name === ctx.provider ? "*" : " ";
         const note = p.hasKey ? "" : "  (no API key configured)";
@@ -281,12 +289,13 @@ const handlers: Record<string, CommandHandler> = {
         kind: "info",
         text:
           `Providers (* = active):\n${lines.join("\n")}\n\n` +
-          `Switch with /provider <name> — conversation history is kept. ` +
+          `Switch with /provider <name> — session only, conversation history is kept. ` +
+          `Add --default to also make it the default for future launches. ` +
           `If a request keeps failing (429/5xx after retries), switch to any provider marked with a key.`,
       });
       return;
     }
-    ctx.setProviderEverywhere(ctx.arg);
+    ctx.setProviderEverywhere(arg, makeDefault);
   },
   "/mcp": (ctx) => {
     // Bare /mcp is read-only and stays available while the kill switch is

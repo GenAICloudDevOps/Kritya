@@ -68,7 +68,7 @@ test("resolveEffectiveModel falls back when every candidate is empty", () => {
   );
 });
 
-test("staleSwitchyardModelWarning is silent off switchyard, with an explicit --model, or a clean config", () => {
+test("staleSwitchyardModelWarning is silent off switchyard, with an explicit --model, or on the route id", () => {
   assert.equal(staleSwitchyardModelWarning("nvidia", "nvidia/some-model", undefined), undefined);
   assert.equal(
     staleSwitchyardModelWarning("switchyard", "nvidia/some-model", "nvidia/some-model"),
@@ -81,7 +81,7 @@ test("staleSwitchyardModelWarning is silent off switchyard, with an explicit --m
   );
 });
 
-test("staleSwitchyardModelWarning fires for a persisted raw model id under switchyard", () => {
+test("staleSwitchyardModelWarning fires when a raw model id resolves under switchyard", () => {
   const warning = staleSwitchyardModelWarning(
     "switchyard",
     "nvidia/nemotron-3-ultra-550b-a55b",

@@ -6,8 +6,13 @@ import { debugLog } from "./debug.js";
 
 /** A named, OpenAI-compatible model provider. */
 export interface ProviderConfig {
-  /** OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1 */
-  baseUrl: string;
+  /**
+   * OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1. Optional:
+   * an entry that only overrides part of a built-in provider (say just
+   * `model`) inherits the rest from BUILTIN_PROVIDERS — see resolveProvider,
+   * which merges the two and falls back to NVIDIA_BASE_URL.
+   */
+  baseUrl?: string;
   /** Environment variable that holds the API key for this provider. */
   apiKeyEnv?: string;
   /** Literal API key (use apiKeyEnv or a .env file in preference). */
@@ -24,6 +29,14 @@ export interface ProviderConfig {
 
 export interface CliConfig {
   apiKey?: string;
+  /**
+   * Legacy global default model, applied when the active provider has no
+   * `providers.<name>.model` of its own. Prefer setting the model per
+   * provider (via `/model`, which now persists to `providers.<name>.model`)
+   * — a single global value here is shared by every provider, so a model id
+   * meant for one provider can silently leak into another (e.g. bypassing
+   * switchyard's routing). Kept only for backward compatibility.
+   */
   model?: string;
   baseUrl?: string;
   /** Active provider name (a key of BUILTIN_PROVIDERS or `providers`). Default: nvidia. */
@@ -190,7 +203,7 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
   const merged: ProviderConfig = {
     ...BUILTIN_PROVIDERS[name],
     ...config.providers?.[name],
-  } as ProviderConfig;
+  };
 
   let baseUrl = merged.baseUrl;
   if (name === "nvidia" && config.baseUrl) baseUrl = config.baseUrl;
@@ -209,6 +222,24 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
     topP: merged.topP,
     maxTokens: merged.maxTokens,
   };
+}
+
+/**
+ * The legacy top-level `config.model`, but only for the provider it was
+ * actually chosen on.
+ *
+ * That field predates per-provider models and is shared by every provider, so
+ * a value saved while (say) nvidia was active would otherwise be applied to
+ * every other provider too — which is how an nvidia model id ends up
+ * bypassing switchyard's routing and 404-ing. `config.provider` records which
+ * provider was active when it was written, so scoping it there keeps existing
+ * configs working for their own provider without leaking anywhere else.
+ * Returns undefined for every other provider, letting them fall through to
+ * their own default.
+ */
+export function legacyGlobalModel(config: CliConfig, providerName: string): string | undefined {
+  const savedUnder = config.provider || "nvidia";
+  return providerName === savedUnder ? config.model : undefined;
 }
 
 export interface ProviderStatus {
@@ -243,6 +274,25 @@ export function loadConfig(): CliConfig {
     debugLog(`loadConfig(${CONFIG_FILE})`, err);
     return {};
   }
+}
+
+/**
+ * Persist `model` as the default for one provider, leaving every other
+ * provider's entry — and that provider's own other fields (apiKey, baseUrl…)
+ * — intact. Merges against what's currently on disk rather than an in-memory
+ * snapshot, so a provider added to config.json after startup isn't dropped.
+ *
+ * This is the per-provider replacement for writing the top-level
+ * `config.model`, which every provider shared; see legacyGlobalModel.
+ */
+export function saveProviderModel(providerName: string, model: string): void {
+  const providers = loadConfig().providers ?? {};
+  saveConfig({
+    providers: {
+      ...providers,
+      [providerName]: { ...providers[providerName], model },
+    },
+  });
 }
 
 export function saveConfig(patch: Partial<CliConfig>): void {

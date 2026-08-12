@@ -2,6 +2,7 @@ import path from "node:path";
 import { Agent } from "./agent/loop.js";
 import {
   CONFIG_DIR,
+  legacyGlobalModel,
   listProviders,
   loadConfig,
   loadDotEnv,
@@ -153,10 +154,10 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const providerDefaultModel = config.providers?.[provider.name]?.model;
   const model = resolveEffectiveModel(
     provider.name,
-    [args.model, config.model, providerDefaultModel],
+    [args.model, providerDefaultModel, legacyGlobalModel(config, provider.name)],
     provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
   );
-  const staleModelWarning = staleSwitchyardModelWarning(provider.name, config.model, args.model);
+  const staleModelWarning = staleSwitchyardModelWarning(provider.name, model, args.model);
   if (staleModelWarning) process.stderr.write(`${staleModelWarning}\n`);
   const sampling = {
     temperature: provider.temperature,

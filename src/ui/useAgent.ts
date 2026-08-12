@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import path from "node:path";
 import type { Agent } from "../agent/loop.js";
 import { gitBranch } from "../git/git.js";
-import { listProviders, resolveProvider, saveConfig, type CliConfig } from "../config/config.js";
+import {
+  listProviders,
+  resolveProvider,
+  saveConfig,
+  saveProviderModel,
+  type CliConfig,
+} from "../config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "../config/models.js";
 import { ProviderClient, RetryExhaustedError } from "../provider/client.js";
 import { createSwitchyardClient } from "../provider/switchyardClient.js";
@@ -303,14 +309,16 @@ export function useAgent({
     setModel(id);
     setServedModel(undefined);
     agent.contextWindow = contextWindowFor(id, config);
-    // On switchyard, "model" is a routing directive, not a portable choice: the
-    // route id (SWITCHYARD_ROUTE_ID) means "let escalation routing decide",
-    // while any other id means "call this model directly, skip routing
-    // entirely." Persisting a raw id here would silently disable routing on
-    // every future launch (config.model outranks the switchyard default — see
-    // engine.ts/headless.ts/index.tsx), so a bypass id is kept session-only.
+    // Persists to providers.<name>.model — scoped to the active provider, so
+    // picking a model here never leaks into any other provider's resolution.
+    // On switchyard specifically, "model" is a routing directive, not a
+    // portable choice: the route id (SWITCHYARD_ROUTE_ID) means "let
+    // escalation routing decide," while any other id means "call this model
+    // directly, skip routing entirely." Persisting a raw id would silently
+    // disable routing on every future launch, so a bypass id is kept
+    // session-only there.
     if (providerRef.current !== "switchyard" || id === SWITCHYARD_ROUTE_ID) {
-      saveConfig({ model: id });
+      saveProviderModel(providerRef.current, id);
     }
     addItem({ kind: "info", text: `Model set to ${id}` });
   };
@@ -320,8 +328,12 @@ export function useAgent({
    * current one keeps timing out or rate-limiting. Only the underlying HTTP
    * client changes; `agent.history` (and the persisted session file) are
    * untouched, so the conversation carries over.
+   *
+   * Session-only by default: closing and relaunching kritya reverts to
+   * config.provider. Pass `persist: true` (from `/provider <name> --default`)
+   * to make this the new default for future launches too.
    */
-  const setProviderEverywhere = (name: string) => {
+  const setProviderEverywhere = (name: string, persist = false) => {
     const resolved = resolveProvider(config, name);
     if (!resolved.apiKey) {
       addItem({
@@ -342,7 +354,7 @@ export function useAgent({
       providerRef.current = name;
       setProvider(name);
       setServedModel(undefined);
-      saveConfig({ provider: name });
+      if (persist) saveConfig({ provider: name });
 
       const providerDefaultModel = config.providers?.[name]?.model;
       // Filters out SWITCHYARD_ROUTE_ID as a carry-over candidate when `name`
@@ -365,6 +377,9 @@ export function useAgent({
       } else {
         note += ` Model "${modelRef.current}" carried over — /model to change it if it isn't offered here.`;
       }
+      note += persist
+        ? ` Saved as the default for future launches.`
+        : ` This session only — /provider ${name} --default to make it the default.`;
       addItem({ kind: "info", text: note });
     };
 

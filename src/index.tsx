@@ -3,7 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { render } from "ink";
 import { Agent } from "./agent/loop.js";
-import { CONFIG_DIR, loadConfig, loadDotEnv, resolveProvider } from "./config/config.js";
+import {
+  CONFIG_DIR,
+  legacyGlobalModel,
+  loadConfig,
+  loadDotEnv,
+  resolveProvider,
+} from "./config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
@@ -309,11 +315,15 @@ async function main() {
   const modelRef = {
     current: resolveEffectiveModel(
       provider.name,
-      [args.model, config.model, providerDefaultModel],
+      [args.model, providerDefaultModel, legacyGlobalModel(config, provider.name)],
       provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
     ),
   };
-  const staleModelWarning = staleSwitchyardModelWarning(provider.name, config.model, args.model);
+  const staleModelWarning = staleSwitchyardModelWarning(
+    provider.name,
+    modelRef.current,
+    args.model
+  );
   if (staleModelWarning) console.error(staleModelWarning);
   const providerRef = { current: provider.name };
   // Mutable so /provider can swap the active client mid-session (fallback

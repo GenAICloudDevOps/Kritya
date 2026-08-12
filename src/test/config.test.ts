@@ -34,3 +34,22 @@ test("scrubbedShellEnv removes *_API_KEY vars but keeps the rest", async () => {
     delete process.env.KRITYA_TEST_PLAIN;
   }
 });
+
+test("legacyGlobalModel applies only to the provider it was saved under", async () => {
+  const { legacyGlobalModel } = await import(`../config/config.js?t=${Date.now()}`);
+  // A pre-per-provider config: the global model was chosen while nvidia was active.
+  const config = { provider: "nvidia", model: "nvidia/nemotron-3.5-lightning-30b-a3b" };
+
+  // Still honoured for nvidia, so existing configs keep working...
+  assert.equal(legacyGlobalModel(config, "nvidia"), "nvidia/nemotron-3.5-lightning-30b-a3b");
+  // ...but never leaks into another provider (this is what used to 404 switchyard).
+  assert.equal(legacyGlobalModel(config, "switchyard"), undefined);
+  assert.equal(legacyGlobalModel(config, "openai"), undefined);
+});
+
+test("legacyGlobalModel treats an absent provider as the nvidia default", async () => {
+  const { legacyGlobalModel } = await import(`../config/config.js?t=${Date.now()}`);
+  const config = { model: "nvidia/some-model" };
+  assert.equal(legacyGlobalModel(config, "nvidia"), "nvidia/some-model");
+  assert.equal(legacyGlobalModel(config, "switchyard"), undefined);
+});

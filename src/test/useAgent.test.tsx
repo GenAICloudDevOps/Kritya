@@ -8,7 +8,7 @@ import { render } from "ink-testing-library";
 import { KillSwitch } from "../agent/killSwitch.js";
 import { RetryExhaustedError } from "../provider/client.js";
 import type { Agent } from "../agent/loop.js";
-import type { CliConfig } from "../config/config.js";
+import { CONFIG_DIR, type CliConfig } from "../config/config.js";
 import type { PermissionDecision, UiBridge } from "../types.js";
 import { useAgent, type UseAgentParams } from "../ui/useAgent.js";
 
@@ -455,6 +455,55 @@ test("setModelEverywhere updates the model ref, the agent's context window, and 
   assert.equal(modelRef.current, "new/model");
   assert.equal(api.model, "new/model");
   assert.match(lastItemText(api.items), /Model set to new\/model/);
+});
+
+test("setModelEverywhere persists under the active provider, leaving other providers alone", async () => {
+  // CONFIG_DIR is fixed at module-load time from the scratch HOME set by
+  // useAgentTestHome.js, so this is where saveConfig actually writes. Seed the
+  // file the way a real launch would (config.json on disk, loaded into memory)
+  // — the save merges against disk, so the two have to agree.
+  const configFile = path.join(CONFIG_DIR, "config.json");
+  const config = {
+    providers: {
+      nvidia: { apiKeyEnv: "NVIDIA_API_KEY", model: "nvidia/old-model" },
+      ollama: { baseUrl: "http://localhost:11434/v1", apiKey: "local-key", model: "llama3" },
+    },
+  } as CliConfig;
+  await fs.mkdir(CONFIG_DIR, { recursive: true });
+  await fs.writeFile(configFile, JSON.stringify(config));
+
+  const agent = fakeAgent();
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-useagent-"));
+  let api!: ReturnType<typeof useAgent>;
+  function Harness({ onReady }: { onReady: (a: ReturnType<typeof useAgent>) => void }) {
+    const value = useAgent({
+      agent,
+      workspace,
+      modelRef: { current: "nvidia/old-model" },
+      providerRef: { current: "nvidia" },
+      config,
+      uiBridge: fakeUiBridge(),
+      resumedCount: 0,
+      refreshFileList: () => {},
+      onSwitchClient: () => {},
+    });
+    onReady(value);
+    return null;
+  }
+  render(<Harness onReady={(a) => (api = a)} />);
+  await tick();
+
+  api.setModelEverywhere("nvidia/new-model");
+  await tick();
+
+  const saved = JSON.parse(await fs.readFile(configFile, "utf8")) as CliConfig;
+  // Scoped to the active provider...
+  assert.equal(saved.providers?.nvidia?.model, "nvidia/new-model");
+  // ...without clobbering that provider's other fields, or any other provider.
+  assert.equal(saved.providers?.nvidia?.apiKeyEnv, "NVIDIA_API_KEY");
+  assert.equal(saved.providers?.ollama?.model, "llama3");
+  // The legacy global field stays untouched, so it can't leak across providers.
+  assert.equal(saved.model, undefined);
 });
 
 test("setProviderEverywhere reports a missing API key without touching the agent", async () => {

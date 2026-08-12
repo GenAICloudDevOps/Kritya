@@ -1,6 +1,12 @@
 import path from "node:path";
 import { Agent } from "./agent/loop.js";
-import { CONFIG_DIR, loadConfig, loadDotEnv, resolveProvider } from "./config/config.js";
+import {
+  CONFIG_DIR,
+  legacyGlobalModel,
+  loadConfig,
+  loadDotEnv,
+  resolveProvider,
+} from "./config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
@@ -63,7 +69,7 @@ export async function createEngineSession(
   const providerDefaultModel = config.providers?.[provider.name]?.model;
   let currentModel = resolveEffectiveModel(
     provider.name,
-    [opts.model, config.model, providerDefaultModel],
+    [opts.model, providerDefaultModel, legacyGlobalModel(config, provider.name)],
     provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
   );
   const sampling = {

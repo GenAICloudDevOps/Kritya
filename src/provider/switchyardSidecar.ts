@@ -256,24 +256,25 @@ export function resolveEffectiveModel(
 }
 
 /**
- * Warn when a persisted `config.model` will silently bypass switchyard's
- * routing this run — the scenario `/model` on switchyard now avoids going
- * forward (see useAgent.ts), but a config.json saved before that fix, or one
- * hand-edited, can still carry a raw model id. `explicitModel` (a --model
- * flag for this run) isn't flagged: that's a deliberate one-off, not a stale
- * leftover.
+ * Warn when the model that just resolved for switchyard will silently bypass
+ * its routing this run. `/model` now persists per provider (see useAgent.ts)
+ * so this shouldn't arise from normal use going forward, but a legacy
+ * top-level `config.model` (saved before that fix, or hand-edited) can still
+ * win when `providers.switchyard.model` isn't set. `explicitModel` (a
+ * --model flag for this run) isn't flagged: that's a deliberate one-off, not
+ * a stale leftover.
  */
 export function staleSwitchyardModelWarning(
   providerName: string,
-  configModel: string | undefined,
+  effectiveModel: string | undefined,
   explicitModel: string | undefined
 ): string | undefined {
   if (providerName !== "switchyard" || explicitModel) return undefined;
-  if (!configModel || configModel === SWITCHYARD_ROUTE_ID) return undefined;
+  if (!effectiveModel || effectiveModel === SWITCHYARD_ROUTE_ID) return undefined;
   return (
-    `⚠ ~/.kritya/config.json has "model": "${configModel}" saved, which bypasses switchyard's ` +
-    `routing and calls that model directly every turn. Run /model switchyard ` +
-    `(or remove "model" from config.json) to restore routing.`
+    `⚠ Resolved model "${effectiveModel}" for switchyard, which bypasses its routing and calls ` +
+    `that model directly every turn. Run /model switchyard (or remove "model" from ` +
+    `~/.kritya/config.json) to restore routing.`
   );
 }
 
