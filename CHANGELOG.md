@@ -4,7 +4,7 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0-beta] — 2026-07-29
+## [0.7.0-beta] — 2026-08-12
 
 ### Added
 
@@ -20,6 +20,55 @@ switchyard` mid-session) routes each turn across multiple NVIDIA models
   curated models called directly (Switchyard has no built-in cross-model
   fallback). The status line shows which model actually served each turn.
   See `docs/CONFIGURATION.md#nemo-switchyard`.
+- **Two models in the curated registry** — `nvidia/nemotron-3.5-lightning-30b-a3b`
+  (now the default) and `meta/muse-glimmer-30b`, both with a 128k context
+  window. As always, newer IDs can be added via `customModels` in
+  `~/.kritya/config.json` rather than waiting on a release.
+- **Mermaid flowcharts render as ASCII trees** — a ```mermaid block in an
+  answer is drawn in the terminal instead of being printed as raw source, and
+  the system prompt now steers diagram requests into the chat rather than
+  into a written file.
+
+### Changed
+
+- **`npm audit` in CI runs behind a reviewed, expiring allowlist** — npm can
+  only suppress findings by severity, so a single unfixable advisory would
+  otherwise force the choice between a permanently red build and lowering the
+  gate for every future high-severity finding. `scripts/check-audit.mjs`
+  suppresses individual advisories by GHSA id and still fails on everything
+  else at high or above; each entry in `scripts/audit-allowlist.json` records
+  why the vulnerable code path is unreachable and carries an expiry date that
+  fails the build once passed. The gate fails closed — npm reporting its own
+  failure (a missing lockfile, an unreachable registry) as well-formed JSON
+  is treated as an error, not as "no vulnerabilities".
+- **The `deepwiki` and `context7` MCP servers are no longer configured by
+  default** — every exposed tool's schema is sent on every request, so two
+  servers nobody explicitly asked for cost tokens on each turn.
+
+### Security
+
+- **Sandbox, permission rules, secrets, and workspace trust hardened** — adds
+  a `"strict"` sandbox mode that refuses to run rather than falling back
+  unsandboxed; stops redirection and background operators from bypassing
+  shell allowlist rules; blocks writes anywhere under `.git` (not just
+  `.git/config`), closing a hook-based code-execution path; strips auth
+  tokens, secrets, passwords, and AWS credentials from the environment shell
+  commands inherit; rejects numeric and encoded IP forms in `fetch_url` and
+  covers more private ranges; gates `KRITYA.md` and workspace skills behind
+  workspace trust so an untrusted checkout can't inject prompt content; adds
+  danger patterns for data exfiltration and `eval`/base64-based evasion;
+  randomizes and locks down the macOS sandbox profile temp file; and blocks
+  more sensitive file patterns (kube config, docker config, `.ppk`, `.jks`,
+  `.gitconfig`).
+- **`shell` refuses commands that name a sensitive file** — output redaction
+  only caught known secret _patterns_ after a command ran, so `cat .env` could
+  still leak a value in a shape the matcher didn't recognize (a
+  `DATABASE_URL`, say). The filename check that already gates
+  `read_file`/`write_file` now runs against the command up front.
+
+## [0.6.0-beta] — 2026-07-29
+
+### Added
 
 - **Agent Skills** — kritya now supports the open Agent Skills format. Drop a
   `SKILL.md` file (with `name` and `description` frontmatter fields) in
