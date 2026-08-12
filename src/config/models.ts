@@ -74,3 +74,21 @@ export function contextWindowFor(modelId: string, config: CliConfig): number {
   const known = CURATED_MODELS.find((m) => m.id === modelId)?.contextWindow;
   return known ?? DEFAULT_CONTEXT_WINDOW;
 }
+
+/**
+ * A short display form of a model id for status-line use — the provider
+ * prefix plus a slugified curated label, size/param suffix (30B, 550B, …)
+ * dropped. Falls back to the raw id for anything not in the curated list
+ * (custom models), since there's no label to slugify.
+ */
+export function modelDisplaySlug(modelId: string): string {
+  const curated = CURATED_MODELS.find((m) => m.id === modelId);
+  if (!curated) return modelId;
+  const prefix = modelId.includes("/") ? modelId.slice(0, modelId.indexOf("/") + 1) : "";
+  const slug = curated.label
+    .replace(/\s+\d+B$/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${prefix}${slug}`;
+}

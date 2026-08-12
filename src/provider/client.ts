@@ -17,6 +17,13 @@ export interface ChatResult {
   text: string;
   toolCalls: ParsedToolCall[];
   usage?: Usage;
+  /**
+   * The model that actually served the request, as reported on the streamed
+   * chunks. Usually identical to the `model` requested, except behind a
+   * router (e.g. switchyard) that dispatches a named route to a different
+   * underlying model — there this is the real one, and `model` is the route.
+   */
+  model?: string;
 }
 
 export interface StreamCallbacks {
@@ -393,6 +400,7 @@ export class ProviderClient {
     let text = "";
     const calls = new Map<number, { id: string; name: string; argsJson: string }>();
     let usage: Usage | undefined;
+    let servedModel: string | undefined;
 
     for await (const chunk of this.withIdleWatchdog(stream)) {
       if (chunk.usage) {
@@ -402,6 +410,10 @@ export class ProviderClient {
           cachedPromptTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
         };
       }
+      // Behind a router the chunk's own `model` is the real one that served
+      // it, not the route name that was requested — grab it once, from
+      // whichever chunk happens to carry it first.
+      if (!servedModel && chunk.model) servedModel = chunk.model;
       const delta = chunk.choices?.[0]?.delta;
       if (!delta) continue;
 
@@ -461,7 +473,7 @@ export class ProviderClient {
         : {}),
     } as ChatMessage;
 
-    return { message, text: visibleText, toolCalls, usage };
+    return { message, text: visibleText, toolCalls, usage, model: servedModel };
   }
 
   /**

@@ -11,6 +11,13 @@ import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
+import { createSwitchyardClient } from "./provider/switchyardClient.js";
+import {
+  SWITCHYARD_ROUTE_ID,
+  resolveEffectiveModel,
+  staleSwitchyardModelWarning,
+  stopSwitchyardSidecar,
+} from "./provider/switchyardSidecar.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { createTracer, telemetryFileFor, cleanupOldTelemetry } from "./telemetry/tracer.js";
@@ -144,12 +151,22 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   }
 
   const providerDefaultModel = config.providers?.[provider.name]?.model;
-  const model = args.model || config.model || providerDefaultModel || DEFAULT_MODEL;
-  const client = new ProviderClient(provider.apiKey, provider.baseUrl, {
+  const model = resolveEffectiveModel(
+    provider.name,
+    [args.model, config.model, providerDefaultModel],
+    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+  );
+  const staleModelWarning = staleSwitchyardModelWarning(provider.name, config.model, args.model);
+  if (staleModelWarning) process.stderr.write(`${staleModelWarning}\n`);
+  const sampling = {
     temperature: provider.temperature,
     topP: provider.topP,
     maxTokens: provider.maxTokens,
-  });
+  };
+  const client =
+    provider.name === "switchyard"
+      ? await createSwitchyardClient(provider.apiKey, sampling)
+      : new ProviderClient(provider.apiKey, provider.baseUrl, sampling);
 
   const session = new SessionStore(workspace);
   const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
@@ -308,6 +325,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     backgroundManager.killAll();
     lspManager.disposeAll();
     shutdownMcp();
+    if (provider.name === "switchyard") stopSwitchyardSidecar();
   }
 
   // Normal (non-crash) shutdown: give the final metrics export a real chance

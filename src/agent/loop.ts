@@ -526,7 +526,7 @@ export class Agent {
 
       if (result.usage) {
         this.lastPromptTokens = result.usage.promptTokens;
-        handlers.onUsage(result.usage);
+        handlers.onUsage({ ...result.usage, servedModel: result.model });
       } else {
         // Some providers omit usage on streamed responses. Estimate from text
         // length so the context meter and auto-compaction don't stall at 0,
@@ -538,6 +538,7 @@ export class Agent {
           promptTokens: this.lastPromptTokens,
           completionTokens: estimateTokens(result.text),
           estimated: true,
+          servedModel: result.model,
         });
       }
       this.history.push(result.message);

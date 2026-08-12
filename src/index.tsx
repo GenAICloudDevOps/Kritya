@@ -8,6 +8,12 @@ import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
+import { createSwitchyardClient } from "./provider/switchyardClient.js";
+import {
+  SWITCHYARD_ROUTE_ID,
+  resolveEffectiveModel,
+  staleSwitchyardModelWarning,
+} from "./provider/switchyardSidecar.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
@@ -301,19 +307,29 @@ async function main() {
 
   const providerDefaultModel = config.providers?.[provider.name]?.model;
   const modelRef = {
-    current: args.model || config.model || providerDefaultModel || DEFAULT_MODEL,
+    current: resolveEffectiveModel(
+      provider.name,
+      [args.model, config.model, providerDefaultModel],
+      provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+    ),
   };
+  const staleModelWarning = staleSwitchyardModelWarning(provider.name, config.model, args.model);
+  if (staleModelWarning) console.error(staleModelWarning);
   const providerRef = { current: provider.name };
   // Mutable so /provider can swap the active client mid-session (fallback
   // when a provider keeps timing out or rate-limiting — see
   // RetryExhaustedError) without losing the conversation. runReadOnlyAgent /
   // runWriteAgent below read this variable at call time, so subagents spawned
   // after a switch pick up the new provider too.
-  let client = new ProviderClient(apiKey, provider.baseUrl, {
+  const sampling = {
     temperature: provider.temperature,
     topP: provider.topP,
     maxTokens: provider.maxTokens,
-  });
+  };
+  let client =
+    provider.name === "switchyard"
+      ? await createSwitchyardClient(apiKey, sampling)
+      : new ProviderClient(apiKey, provider.baseUrl, sampling);
   const session = new SessionStore(workspace);
   // Shared by the main agent and every subagent it spawns, so a write
   // subagent's commits and a read-only subagent's tool calls land in the same

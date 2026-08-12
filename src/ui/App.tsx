@@ -7,6 +7,7 @@ import stringWidth from "string-width";
 import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
+import { modelDisplaySlug } from "../config/models.js";
 import type { ProviderClient } from "../provider/client.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { resolveSafe } from "../tools/common.js";
@@ -198,6 +199,7 @@ export function App({
     inFlight,
     model,
     provider,
+    servedModel,
     totalUsage,
     totalCost,
     tasks,
@@ -731,7 +733,11 @@ export function App({
           planMode={planMode}
           acceptEdits={acceptEdits}
           autoApprovedCount={autoApprovedCount}
-          model={model}
+          model={
+            servedModel && servedModel !== model
+              ? `${model}-${modelDisplaySlug(servedModel)}`
+              : model
+          }
           workflow={workflow}
           branch={branch}
           tasks={tasks}

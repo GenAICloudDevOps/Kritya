@@ -3,8 +3,10 @@ import path from "node:path";
 import type { Agent } from "../agent/loop.js";
 import { gitBranch } from "../git/git.js";
 import { listProviders, resolveProvider, saveConfig, type CliConfig } from "../config/config.js";
-import { contextWindowFor } from "../config/models.js";
+import { DEFAULT_MODEL, contextWindowFor } from "../config/models.js";
 import { ProviderClient, RetryExhaustedError } from "../provider/client.js";
+import { createSwitchyardClient } from "../provider/switchyardClient.js";
+import { SWITCHYARD_ROUTE_ID, resolveEffectiveModel } from "../provider/switchyardSidecar.js";
 import { KillSwitchError } from "../agent/killSwitch.js";
 import {
   loadProjectState,
@@ -122,6 +124,10 @@ export function useAgent({
   const [elicitation, setElicitation] = useState<PendingElicitation | null>(null);
   const [model, setModel] = useState(modelRef.current);
   const [provider, setProvider] = useState(providerRef.current);
+  /** The model that actually served the most recent turn — see Usage.servedModel.
+   *  Only meaningful behind a router (switchyard), where it can differ from
+   *  `model` (the route name); cleared on provider/model switch. */
+  const [servedModel, setServedModel] = useState<string | undefined>(undefined);
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks ?? []);
   const [branch, setBranch] = useState<string | null>(() => gitBranch(workspace));
   const [planMode, setPlanMode] = useState(false);
@@ -295,8 +301,17 @@ export function useAgent({
   const setModelEverywhere = (id: string) => {
     modelRef.current = id;
     setModel(id);
+    setServedModel(undefined);
     agent.contextWindow = contextWindowFor(id, config);
-    saveConfig({ model: id });
+    // On switchyard, "model" is a routing directive, not a portable choice: the
+    // route id (SWITCHYARD_ROUTE_ID) means "let escalation routing decide",
+    // while any other id means "call this model directly, skip routing
+    // entirely." Persisting a raw id here would silently disable routing on
+    // every future launch (config.model outranks the switchyard default — see
+    // engine.ts/headless.ts/index.tsx), so a bypass id is kept session-only.
+    if (providerRef.current !== "switchyard" || id === SWITCHYARD_ROUTE_ID) {
+      saveConfig({ model: id });
+    }
     addItem({ kind: "info", text: `Model set to ${id}` });
   };
 
@@ -317,26 +332,63 @@ export function useAgent({
       });
       return;
     }
-    const newClient = new ProviderClient(resolved.apiKey, resolved.baseUrl, {
+    const sampling = {
       temperature: resolved.temperature,
       topP: resolved.topP,
       maxTokens: resolved.maxTokens,
-    });
+    };
+
+    const finishSwitch = () => {
+      providerRef.current = name;
+      setProvider(name);
+      setServedModel(undefined);
+      saveConfig({ provider: name });
+
+      const providerDefaultModel = config.providers?.[name]?.model;
+      // Filters out SWITCHYARD_ROUTE_ID as a carry-over candidate when `name`
+      // isn't switchyard — it's a routing directive, not a real model, so it
+      // would 404 against any other provider (see the config.model === config.provider
+      // mismatch this was built to fix).
+      const targetModel = resolveEffectiveModel(
+        name,
+        [
+          providerDefaultModel,
+          name === "switchyard" ? SWITCHYARD_ROUTE_ID : undefined,
+          modelRef.current,
+        ],
+        name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+      );
+      let note = `Switched provider to ${name} — conversation history kept.`;
+      if (targetModel !== modelRef.current) {
+        setModelEverywhere(targetModel);
+        note = `Switched provider to ${name} (model: ${targetModel}) — conversation history kept.`;
+      } else {
+        note += ` Model "${modelRef.current}" carried over — /model to change it if it isn't offered here.`;
+      }
+      addItem({ kind: "info", text: note });
+    };
+
+    if (name === "switchyard") {
+      addItem({ kind: "info", text: "Starting local switchyard-server…" });
+      createSwitchyardClient(resolved.apiKey, sampling)
+        .then((newClient) => {
+          agent.setClient(newClient);
+          onSwitchClient(newClient);
+          finishSwitch();
+        })
+        .catch((err) => {
+          addItem({
+            kind: "info",
+            text: `Couldn't start switchyard: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        });
+      return;
+    }
+
+    const newClient = new ProviderClient(resolved.apiKey, resolved.baseUrl, sampling);
     agent.setClient(newClient);
     onSwitchClient(newClient);
-    providerRef.current = name;
-    setProvider(name);
-    saveConfig({ provider: name });
-
-    const providerDefaultModel = config.providers?.[name]?.model;
-    let note = `Switched provider to ${name} — conversation history kept.`;
-    if (providerDefaultModel && providerDefaultModel !== modelRef.current) {
-      setModelEverywhere(providerDefaultModel);
-      note = `Switched provider to ${name} (model: ${providerDefaultModel}) — conversation history kept.`;
-    } else {
-      note += ` Model "${modelRef.current}" carried over — /model to change it if it isn't offered here.`;
-    }
-    addItem({ kind: "info", text: note });
+    finishSwitch();
   };
 
   /** Re-read the workflow pointer from disk after anything that may have moved it. */
@@ -455,7 +507,10 @@ export function useAgent({
               `Provider error${status ? ` (${status})` : ""} — retrying (attempt ${attempt})…`
             );
           },
-          onUsage: recordUsage,
+          onUsage: (usage) => {
+            if (usage.servedModel) setServedModel(usage.servedModel);
+            recordUsage(usage);
+          },
         },
         ac.signal,
         images
@@ -549,6 +604,7 @@ export function useAgent({
     inFlight,
     model,
     provider,
+    servedModel,
     usageByModel,
     totalUsage,
     totalCost,

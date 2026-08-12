@@ -144,6 +144,8 @@ export interface Usage {
    * an estimated Usage should be shown as approximate, not exact.
    */
   estimated?: boolean;
+  /** The model that actually served this turn — see ChatResult.model in provider/client.ts. */
+  servedModel?: string;
 }
 
 /** Callbacks through which the agent loop reports progress to the UI. */

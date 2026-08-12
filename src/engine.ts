@@ -5,6 +5,12 @@ import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
+import { createSwitchyardClient } from "./provider/switchyardClient.js";
+import {
+  SWITCHYARD_ROUTE_ID,
+  resolveEffectiveModel,
+  stopSwitchyardSidecar,
+} from "./provider/switchyardSidecar.js";
 import { SessionStore } from "./session/store.js";
 import { AuditLog } from "./audit/audit.js";
 import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
@@ -55,12 +61,20 @@ export async function createEngineSession(
   }
 
   const providerDefaultModel = config.providers?.[provider.name]?.model;
-  let currentModel = opts.model || config.model || providerDefaultModel || DEFAULT_MODEL;
-  const client = new ProviderClient(provider.apiKey, provider.baseUrl, {
+  let currentModel = resolveEffectiveModel(
+    provider.name,
+    [opts.model, config.model, providerDefaultModel],
+    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+  );
+  const sampling = {
     temperature: provider.temperature,
     topP: provider.topP,
     maxTokens: provider.maxTokens,
-  });
+  };
+  const client =
+    provider.name === "switchyard"
+      ? await createSwitchyardClient(provider.apiKey, sampling)
+      : new ProviderClient(provider.apiKey, provider.baseUrl, sampling);
 
   const session = new SessionStore(workspace);
   session.start([]);
@@ -122,6 +136,7 @@ export async function createEngineSession(
     async dispose() {
       backgroundManager.killAll();
       lspManager.disposeAll();
+      if (provider.name === "switchyard") stopSwitchyardSidecar();
       // Normal (non-crash) shutdown: give the final metrics export a real
       // chance to land, capped so a hung collector can't stall dispose().
       await Promise.race([

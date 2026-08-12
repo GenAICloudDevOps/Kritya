@@ -162,6 +162,12 @@ export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
     apiKeyEnv: "GEMINI_API_KEY",
   },
+  // Not a real network target: `baseUrl` here is a placeholder. The actual
+  // client is built by createSwitchyardClient (switchyardClient.ts), which
+  // launches a local switchyard-server sidecar on a free port and points at
+  // that instead. Needs NVIDIA_API_KEY — the sidecar's own outbound calls
+  // and kritya's cross-model fallback both use it directly.
+  switchyard: { baseUrl: "http://127.0.0.1/v1", apiKeyEnv: "NVIDIA_API_KEY" },
 };
 
 export interface ResolvedProvider {
