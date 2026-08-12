@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # typescript-eslint peers on `typescript >=4.8.4 <6.1.0`, so a TS 7 bump
+      # cannot pass lint no matter how it's resolved — the PR is reopened
+      # weekly and sits there occupying one of the five slots above. Drop this
+      # entry once typescript-eslint widens its peer range to accept TS 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
