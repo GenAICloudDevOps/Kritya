@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **NeMo Switchyard provider** — `--provider switchyard` (or `/provider
+switchyard` mid-session) routes each turn across multiple NVIDIA models
+  instead of one fixed model, using
+  [NeMo Switchyard](https://github.com/NVIDIA-NeMo/Switchyard). kritya
+  manages the `switchyard-server` sidecar itself — generating its config,
+  launching it on a free port, and waiting for it to be ready — so there's
+  nothing to run separately. Routing classifies each request and picks
+  between Nemotron 3.5 Lightning and Nemotron 3 Ultra per turn; if the
+  sidecar's own retries are exhausted, kritya falls back to three more
+  curated models called directly (Switchyard has no built-in cross-model
+  fallback). The status line shows which model actually served each turn.
+  See `docs/CONFIGURATION.md#nemo-switchyard`.
+
 - **Agent Skills** — kritya now supports the open Agent Skills format. Drop a
   `SKILL.md` file (with `name` and `description` frontmatter fields) in
   `.kritya/skills/<name>/` and the agent picks it up automatically: a

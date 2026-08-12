@@ -303,6 +303,148 @@ A practical fallback chain to configure: keep `nvidia` as your default and set
 proxies most major model families, so it's a reasonable single fallback for
 "any one provider is down."
 
+### NeMo Switchyard
+
+`switchyard` is a built-in provider that routes each turn across multiple
+NVIDIA models instead of one fixed model, using [NeMo
+Switchyard](https://github.com/NVIDIA-NeMo/Switchyard) — an open-source
+routing server from NVIDIA, not something built into kritya. kritya's part is
+generating its config and running it as a local sidecar; the actual routing
+decision is entirely Switchyard's.
+
+Install the server first (needs a working [Rust toolchain](https://rustup.rs)):
+
+```bash
+cargo install --locked switchyard-server
+```
+
+Then select the provider like any other:
+
+```bash
+kritya --provider switchyard
+```
+
+or mid-session: `/provider switchyard`.
+
+#### What it does
+
+On startup, kritya writes a `routes.toml` to a temp directory, launches
+`switchyard-server` on a free localhost port, and waits for it to accept
+requests — no separate process to manage yourself. The generated config
+routes between two curated models:
+
+| Role   | Model                                   |
+| ------ | --------------------------------------- |
+| Weak   | `nvidia/nemotron-3.5-lightning-30b-a3b` |
+| Strong | `nvidia/nemotron-3-ultra-550b-a55b`     |
+
+using Switchyard's `llm_classifier` router in `capability` mode: a
+classifier reads each incoming request and picks the weak or strong tier
+based on a difficulty score (`base_threshold = 0.5`), re-evaluating on every
+turn — a trivial message and a hard one right after it can land on different
+models in the same session. The status line shows which model actually
+answered each turn as `switchyard-<provider>/<model>`, e.g.
+`switchyard-nvidia/nemotron-3-ultra`.
+
+The sibling mode, `escalation`, is deliberately not used. It answers on the
+weak tier first and asks a judge model whether that answer means the weak
+model is _stuck_ — a signal about a spinning agent loop, not about question
+difficulty. A hard one-shot prompt the weak model answers competently in one
+pass never trips it, so per-question routing needs `capability` mode instead.
+
+#### Fallback
+
+Switchyard itself has no cross-model fallback — if the sidecar's own request
+exhausts its retries, kritya's client falls back to calling three more
+curated models directly against NVIDIA, in order, before giving up:
+`meta/muse-glimmer-30b`, `thinkingmachines/inkling`, `z-ai/glm-5.2`. This
+only covers the one failing turn; the next turn always tries Switchyard
+again first, so a transient sidecar problem doesn't permanently downgrade
+the session.
+
+#### Gotchas
+
+- **`/model` while on switchyard** only persists to `~/.kritya/config.json`
+  if you set it back to `switchyard` (the route id). Setting it to a
+  specific model id switches for that session only — persisting a raw model
+  id would silently disable routing on every future launch, since it would
+  outrank the switchyard default the same way a top-level `model` normally
+  outranks a provider default (see above). If you edited `config.json` by
+  hand and see a warning at startup about a stale model, run `/model
+switchyard` once to clear it.
+- Requires `NVIDIA_API_KEY` regardless of which provider you normally use —
+  both the sidecar's outbound calls and kritya's own fallback path call
+  NVIDIA directly.
+
+#### Troubleshooting
+
+**`Error: 404 page not found` on every request** — `provider` and `model` in
+`~/.kritya/config.json` disagree (e.g. `model: "switchyard"` saved while
+`provider` is something else, or vice versa). Check both:
+
+```bash
+cat ~/.kritya/config.json
+```
+
+Fix by running `/model switchyard` once, or editing the file directly.
+
+**Routing always picks the same model, never the other tier** — get the
+sidecar's own reasoning for each request. Start with both debug flags on:
+
+```bash
+KRITYA_DEBUG=1 RUST_LOG=debug kritya --provider switchyard 2> /tmp/kritya-debug.log
+```
+
+Send a few messages of varying difficulty, exit, then:
+
+```bash
+grep "routing decision" /tmp/kritya-debug.log
+```
+
+Each line ends with `reasoning="... (confidence 0.XX)"` — this is
+Switchyard's own classifier explaining its pick per turn, so it shows
+directly whether it's evaluating each request or falling through to the same
+model every time. If you've hand-edited `routes.toml`'s `mode`, confirm it's
+still `capability` — `escalation` mode needs a genuinely _stuck_ agent to
+switch tiers, not just a hard question (see above).
+
+**`switchyard-server not found on PATH`** — the binary isn't installed:
+
+```bash
+which switchyard-server || cargo install --locked switchyard-server
+```
+
+If `cargo` itself errors with no default toolchain configured, run
+`rustup default stable` first, then retry the install.
+
+**No sidecar debug output at all, not even a startup line** — with
+`KRITYA_DEBUG=1` set, kritya prints a line like `switchyard-server: config at
+..., starting on 127.0.0.1:<port>` unconditionally, before anything else
+happens. If that line is missing from the log, kritya never entered the
+switchyard code path this run at all — re-check that `provider` actually
+resolved to `switchyard` (`cat ~/.kritya/config.json`, or whatever
+`--provider` flag was passed), rather than assuming the sidecar itself is at
+fault.
+
+**Isolate kritya from the server** — to check whether a problem is in
+kritya's client or in `switchyard-server` itself, call the sidecar directly
+while it's running (port from the debug log's `starting on 127.0.0.1:<port>`
+line):
+
+```bash
+curl -s -X POST http://127.0.0.1:<port>/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"switchyard","messages":[{"role":"user","content":"hello"}]}'
+```
+
+The temp `routes.toml` kritya generates isn't deleted after the session
+either — the same debug line gives its path, so it can be inspected directly
+if the generated config itself is in question.
+
+- Requires `NVIDIA_API_KEY` regardless of which provider you normally use —
+  both the sidecar's outbound calls and kritya's own fallback path call
+  NVIDIA directly.
+
 ### Custom slash commands
 
 Drop a markdown file in `.kritya/commands/` (workspace) or `~/.kritya/commands/`

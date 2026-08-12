@@ -94,6 +94,14 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
 - **`src/provider/client.ts`** — `ProviderClient`, a thin wrapper over the
   `openai` SDK for any OpenAI-compatible endpoint. Streams text, reasoning, and
   tool calls; retries transient errors with backoff.
+- **`src/provider/switchyardSidecar.ts`** / **`switchyardClient.ts`** — the
+  `switchyard` provider. The sidecar module generates a `routes.toml`,
+  launches `switchyard-server` (NVIDIA's open-source router, an external
+  binary — see `docs/CONFIGURATION.md#nemo-switchyard`) on a free localhost
+  port, and waits for it to be ready; `SwitchyardProviderClient` extends
+  `ProviderClient` to add a cross-model fallback Switchyard itself doesn't
+  have, calling three more curated models directly against NVIDIA if the
+  sidecar's own retries are exhausted.
 - **`src/config/`** — config file, `.env` loading, built-in provider registry
   (`resolveProvider`), and the model registry with per-model context windows.
   Also `retention.ts` (the 15-day auto-delete of transcripts, audit logs, and

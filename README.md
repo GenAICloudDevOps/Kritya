@@ -43,7 +43,8 @@ kritya [directory] [options]
   -r, --resume          pick a past session from a list
   -m, --model <id>      use any model ID your provider offers
   -p, --provider <name> nvidia (default), openai, openrouter, groq, deepseek,
-                        mistral, together, ollama, or a custom one
+                        mistral, together, ollama, switchyard (multi-model
+                        routing via NVIDIA NeMo Switchyard), or a custom one
   -h, --help            help
   -v, --version         version
 ```
