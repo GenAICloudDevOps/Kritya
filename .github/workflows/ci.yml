@@ -65,7 +65,10 @@ jobs:
       # npm ci is itself the integrity check: it fails if any tarball doesn't
       # match the hash pinned in package-lock.json.
       - run: npm ci
-      - run: npm audit --audit-level=high
+      # `npm audit` behind a reviewed, expiring per-advisory allowlist — npm
+      # can only suppress by severity, which would drop the gate for every
+      # future high finding too. See scripts/audit-allowlist.json.
+      - run: npm run check:audit
       - run: npm audit signatures
       - run: npm run check:install-scripts
 

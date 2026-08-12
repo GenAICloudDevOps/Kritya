@@ -1,0 +1,17 @@
+{
+  "_comment": "Advisories `npm audit` reports that do not fail CI, checked by scripts/check-audit.mjs. npm can only suppress by severity, never by advisory, so without this file one unfixable finding would force the whole high-severity gate down. An entry is only justified when there is no patched version to upgrade to AND the vulnerable code path is unreachable from this project — record the reachability argument in `reason`, not just the fact that it's inconvenient. `expires` is a hard deadline: past it, CI fails until someone re-checks whether a fix has shipped.",
+  "allow": [
+    {
+      "id": "GHSA-w3rx-r6r6-pgpr",
+      "package": "image-size",
+      "reason": "Infinite-loop DoS in image-size's ICNS parser, reached only when pptxgenjs sizes an image being placed on a slide. src/tools/document/pptx.ts never calls addImage and never hands pptxgenjs an image; reading .pptx goes through JSZip and a regex, not pptxgenjs at all. No patched version exists (affected <=2.0.2, the current latest), and npm's suggested fix downgrades pptxgenjs ^4 to 1.1.5, which removes the feature rather than fixing it.",
+      "expires": "2026-11-12"
+    },
+    {
+      "id": "GHSA-5p2g-fcmc-qvqq",
+      "package": "image-size",
+      "reason": "Same parser family and same reachability argument as GHSA-w3rx-r6r6-pgpr, in image-size's JXL and HEIF parsers. Unreachable without an addImage call, no patched version available.",
+      "expires": "2026-11-12"
+    }
+  ]
+}
