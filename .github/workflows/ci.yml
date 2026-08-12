@@ -77,13 +77,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Both Node versions the package claims to support (`engines:
+        # >=22`): 22.x is the floor, 24.x is the Active LTS most users
+        # will actually be on once 22 drops to maintenance. Testing only
+        # the floor meant the newer half of that range was never exercised.
         os: [ubuntu-latest]
-        node-version: [22.x]
+        node-version: [22.x, 24.x]
         include:
           - os: windows-latest
             node-version: 22.x
-          - os: macos-latest
-            node-version: 22.x
+          # macOS is commented out to conserve Actions minutes: it bills at
+          # 10x (vs 1x Linux, 2x Windows), which made it roughly three
+          # quarters of this workflow's cost on its own. The trade is real,
+          # not free — src/shell/sandbox.ts's `sandbox-exec` path is
+          # macOS-only and now has no CI coverage, so a change there needs
+          # testing by hand or by re-enabling this leg for that PR.
+          # - os: macos-latest
+          #   node-version: 22.x
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -100,9 +110,11 @@ jobs:
       - run: npm run format:check
       # Coverage thresholds only need checking once; running c8 on every
       # OS/Node combination would just repeat the same numbers twice.
+      # Pinned to one specific cell (ubuntu + 22.x) rather than "any ubuntu",
+      # since ubuntu now runs on two Node versions.
       # These two conditions are complements — keep them in sync, or a matrix
       # change can silently leave coverage unenforced everywhere.
       - run: npm test
-        if: matrix.os != 'ubuntu-latest'
+        if: matrix.os != 'ubuntu-latest' || matrix.node-version != '22.x'
       - run: npm run test:coverage
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22.x'

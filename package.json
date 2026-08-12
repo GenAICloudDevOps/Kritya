@@ -83,10 +83,7 @@
       "glob": "^13.0.0",
       "fast-csv": "^5.0.7"
     },
-    "glob": "^13.0.0",
-    "openai": {
-      "formdata-node": "^6.0.3"
-    }
+    "glob": "^13.0.0"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
