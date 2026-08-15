@@ -41,10 +41,10 @@ export const PHASE_COMMAND: Record<WorkflowPhase, string> = {
 /** One-line summary of what each phase produces, for help text and the system prompt. */
 export const PHASE_SUMMARY: Record<WorkflowPhase, string> = {
   brainstorm: "problem, users, MVP features, recommended stack",
-  spec: "goals, non-goals, contracts, data schema, prioritized acceptance criteria",
+  spec: "goals, non-goals, contracts, data schema, prioritized acceptance criteria, non-functional requirements",
   plan: "architecture and ordered milestones, flagged by risk (runs in read-only plan mode)",
-  build: "the application code, with tests per acceptance criterion",
-  review: "spec-compliance and security findings, with a scorecard up top",
+  build: "the application code, with tests per acceptance criterion, written test-first",
+  review: "spec-compliance, security, and reliability findings, with a scorecard up top",
   fix: "fixes for the review's findings, each re-verified",
 };
 
@@ -424,6 +424,14 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `each one MUST or LATER (must-have for this build, vs. a later iteration) — if build ever ` +
         `runs short on time or scope, LATER is what gets cut first, and that decision belongs here, ` +
         `not left for build to guess.\n` +
+        `Before finalizing, use ask_user to ask whether this project: handles sensitive or ` +
+        `personal data, needs auth/access control, takes input from outside the user's own ` +
+        `machine, has real reliability or performance stakes, or needs CI/logging from day one. ` +
+        `If any answer is yes, add a "Non-functional requirements" section with concrete, ` +
+        `checkable requirements for it — label security ones SEC1, SEC2, … and reliability/` +
+        `performance/observability ones REL1, REL2, …, same stable-identifier rule as the ACs. ` +
+        `If none apply, write one line saying so and move on — do not invent security or ` +
+        `reliability requirements a small project doesn't need.\n` +
         cap +
         `Do NOT design the architecture, choose a folder layout, or sequence the work — that is ` +
         `the plan phase's job. Do NOT write application code.\n` +
@@ -446,6 +454,12 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `touches a part of the system where a wrong guess is expensive to unwind. Say what makes ` +
         `it risky in one clause. This is what tells the user, and the build phase, where to slow ` +
         `down and check assumptions instead of plowing straight through.\n` +
+        `If spec.md has a "Non-functional requirements" section: for each milestone that cites a ` +
+        `SEC or REL label, note the trust boundary or failure mode it implies (e.g. "this endpoint ` +
+        `takes unauthenticated input" or "this call can time out") and flag any dependency it ` +
+        `needs that's worth vetting for license or maintenance risk before adopting it. If spec.md ` +
+        `has no such section, skip this — don't invent security or reliability process for a ` +
+        `project that doesn't need it.\n` +
         `Write the plan to docs/${slug}/plan.md — writing Markdown under docs/${slug}/ is allowed ` +
         `in plan mode; application code and shell are still blocked. That write will succeed, so ` +
         `do not ask the user to turn plan mode off in order to save the plan, and use the ` +
@@ -470,9 +484,16 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `everything downstream is built on top of it.\n` +
         `Tests are part of the deliverable, not an afterthought: for each milestone, consult the ` +
         `AC-labelled acceptance criteria it cites in docs/${slug}/spec.md (read just those, not the ` +
-        `whole file again), write tests that would fail if the criterion were unmet, and do not ` +
-        `mark a milestone done until its tests actually run and pass. Report pass/fail per ` +
-        `milestone, not just what you changed.\n` +
+        `whole file again). Write the test before the code it tests: write it, run it, confirm it ` +
+        `fails for the right reason, then write the minimal implementation that makes it pass. Do ` +
+        `not write the implementation first and backfill a test that already passes — that proves ` +
+        `nothing. Do not mark a milestone done until its tests actually run and pass. Report ` +
+        `pass/fail per milestone, not just what you changed.\n` +
+        `If a milestone cites a SEC or REL label from spec.md's Non-functional requirements ` +
+        `section, also write a negative/failure-path test for it — invalid input, an unauthorized ` +
+        `attempt, a timeout or dependency failure, whatever the label implies — not just the ` +
+        `happy-path test for its AC. A milestone touching sensitive data or access control is not ` +
+        `done until that test exists and passes too.\n` +
         `If a milestone's tests fail twice in a row after genuine fix attempts, stop working that ` +
         `milestone: mark it blocked in the task list with why, move on to milestones that don't ` +
         `depend on it, and report the block to the user at the end instead of retrying indefinitely.\n` +
@@ -487,7 +508,7 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
     case "review":
       return (
         `PROJECT WORKFLOW — REVIEW phase for project "${slug}".\n` +
-        `Review what the build phase produced. Dispatch both of these as read-only subagents in ` +
+        `Review what the build phase produced. Dispatch all of these as read-only subagents in ` +
         `one spawn_agent call so they run concurrently and their tool output never enters this ` +
         `conversation:\n` +
         `  1. SPEC COMPLIANCE — check the implementation against every AC-labelled acceptance ` +
@@ -497,11 +518,18 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `authorization gaps, secret handling, unsafe deserialization, path traversal, SSRF, ` +
         `dependency risk, and missing input validation. Report concrete exploitable findings ` +
         `with file and line, not generic advice.\n` +
+        `  3. RELIABILITY — review error handling, edge cases, resource cleanup, and whether every ` +
+        `REL-labelled requirement in docs/${slug}/spec.md's Non-functional requirements section ` +
+        `(if any) is actually met. Report concrete failure scenarios — what input or condition ` +
+        `breaks it, and what happens when it does — with file and line, not generic advice. If ` +
+        `spec.md has no REL labels, still check for unhandled errors and missing cleanup; skip ` +
+        `only the requirement-compliance half of the remit.\n` +
         `Each subagent starts with no context, so give it the project slug, the paths it needs, ` +
         `and its full remit in the task string.\n` +
         `Open docs/${slug}/review.md with a short SCORECARD before the detailed findings — one ` +
-        `line, e.g. "4/6 acceptance criteria met · 2 security findings (1 high, 1 medium)" — so the ` +
-        `headline is visible without reading the whole document. Then list the findings grouped by ` +
+        `line, e.g. "4/6 acceptance criteria met · 2 security findings (1 high, 1 medium) · 1 ` +
+        `reliability finding" — so the headline is visible without reading the whole document. ` +
+        `Then list the findings grouped by ` +
         `severity, each with a file:line and a concrete suggested fix. State plainly whether the ` +
         `build satisfies the spec. Do not fix anything in this phase — reviewing and fixing in one ` +
         `pass produces neither a trustworthy review nor a reviewed fix.\n` +

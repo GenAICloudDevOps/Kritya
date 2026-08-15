@@ -96,14 +96,14 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   — writing a durable artifact for each under `docs/<name>/` and stopping for
   your approval between phases:
 
-  | Phase        | Produces                                                                                    |
-  | ------------ | ------------------------------------------------------------------------------------------- |
-  | `brainstorm` | `brainstorm.md` — problem, users, MVP features, stack                                       |
-  | `spec`       | `spec.md` — contracts, data schema, numbered acceptance criteria, each tagged MUST or LATER |
-  | `plan`       | `plan.md` — architecture and ordered milestones, each tagged RISKY or ROUTINE               |
-  | `build`      | the code, plus tests for each acceptance criterion, with a live milestone checklist         |
-  | `review`     | `review.md` — a one-line scorecard, then spec-compliance and security findings              |
-  | `fix`        | `fix.md` — the review's findings addressed and re-verified                                  |
+  | Phase        | Produces                                                                                                                                                                                        |
+  | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `brainstorm` | `brainstorm.md` — problem, users, MVP features, stack                                                                                                                                           |
+  | `spec`       | `spec.md` — contracts, data schema, acceptance criteria (MUST/LATER), and non-functional requirements (security/reliability/performance/CI, asked about via `ask_user` — skipped if none apply) |
+  | `plan`       | `plan.md` — architecture and ordered milestones, each tagged RISKY or ROUTINE, plus trust boundaries for any security/reliability requirement                                                   |
+  | `build`      | the code, with tests written before the code they test, plus negative/failure-path tests for security/reliability-tagged milestones, and a live milestone checklist                             |
+  | `review`     | `review.md` — a one-line scorecard, then spec-compliance, security, and reliability findings                                                                                                    |
+  | `fix`        | `fix.md` — the review's findings addressed and re-verified                                                                                                                                      |
 
   Spec comes before plan on purpose: the spec settles _what_ (and pins the
   numbered acceptance criteria everything downstream is held to), the plan

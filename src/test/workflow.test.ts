@@ -362,6 +362,42 @@ test("the spec phase asks for must-have vs later priority on each criterion", ()
   assert.match(prompt, /LATER/);
 });
 
+test("the spec phase surfaces non-functional requirements via ask_user", () => {
+  const prompt = phasePrompt("app", "spec", "");
+  assert.match(prompt, /ask_user/);
+  assert.match(prompt, /Non-functional requirements/);
+  assert.match(prompt, /SEC1/);
+  assert.match(prompt, /REL1/);
+  assert.match(prompt, /do not invent security or reliability requirements/i);
+});
+
+test("the plan phase surfaces trust boundaries for SEC\\/REL milestones, but only if spec has them", () => {
+  const prompt = phasePrompt("app", "plan", "");
+  assert.match(prompt, /Non-functional requirements/);
+  assert.match(prompt, /trust boundary/i);
+  assert.match(prompt, /skip this/i);
+});
+
+test("the build phase enforces test-first ordering", () => {
+  const prompt = phasePrompt("app", "build", "");
+  assert.match(prompt, /before the code it tests/i);
+  assert.match(prompt, /confirm it fails/i);
+  assert.match(prompt, /Do not write the implementation first/i);
+});
+
+test("the build phase requires negative-path tests for SEC\\/REL milestones", () => {
+  const prompt = phasePrompt("app", "build", "");
+  assert.match(prompt, /negative\/failure-path test/i);
+  assert.match(prompt, /SEC or REL/);
+});
+
+test("the review phase adds a third reliability subagent", () => {
+  const prompt = phasePrompt("app", "review", "");
+  assert.match(prompt, /RELIABILITY/);
+  assert.match(prompt, /error handling/i);
+  assert.match(prompt, /REL-labelled/);
+});
+
 test("staleArtifacts is quiet when nothing has drifted", () => {
   const ws = tmpWorkspace();
   writeArtifact(ws, "app", "brainstorm");
