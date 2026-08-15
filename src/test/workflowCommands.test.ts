@@ -99,11 +99,11 @@ function writeArtifact(ws: string, name: string, phase: Parameters<typeof artifa
   fs.writeFileSync(path.join(ws, rel), "content");
 }
 
-test("/brainstorm starts a project and runs the brainstorm phase", async () => {
+test("/flow-brainstorm starts a project and runs the brainstorm phase", async () => {
   const h = harness();
   h.ctx.arg = "a habit tracker";
-  h.ctx.raw = "/brainstorm a habit tracker";
-  await runCommand("/brainstorm", h.ctx);
+  h.ctx.raw = "/flow-brainstorm a habit tracker";
+  await runCommand("/flow-brainstorm", h.ctx);
 
   assert.equal(loadProjectState(h.workspace)?.name, "a-habit-tracker");
   assert.equal(loadProjectState(h.workspace)?.phase, "brainstorm");
@@ -111,12 +111,12 @@ test("/brainstorm starts a project and runs the brainstorm phase", async () => {
   assert.match(h.prompts[0], /BRAINSTORM phase/);
 });
 
-test("/brainstorm with a new idea starts a new project instead of reusing the old name", async () => {
+test("/flow-brainstorm with a new idea starts a new project instead of reusing the old name", async () => {
   const h = harness();
   saveProjectState(h.workspace, "old-project", "build");
   h.ctx.arg = "a totally different thing";
-  h.ctx.raw = "/brainstorm a totally different thing";
-  await runCommand("/brainstorm", h.ctx);
+  h.ctx.raw = "/flow-brainstorm a totally different thing";
+  await runCommand("/flow-brainstorm", h.ctx);
 
   // The old behaviour wrote the new idea into docs/old-project/.
   assert.equal(loadProjectState(h.workspace)?.name, "a-totally-different-thing");
@@ -126,11 +126,11 @@ test("/brainstorm with a new idea starts a new project instead of reusing the ol
   );
 });
 
-test("/brainstorm with no idea resumes the existing project", async () => {
+test("/flow-brainstorm with no idea resumes the existing project", async () => {
   const h = harness();
   saveProjectState(h.workspace, "my-app", "plan");
-  h.ctx.raw = "/brainstorm";
-  await runCommand("/brainstorm", h.ctx);
+  h.ctx.raw = "/flow-brainstorm";
+  await runCommand("/flow-brainstorm", h.ctx);
   assert.equal(loadProjectState(h.workspace)?.name, "my-app");
   assert.equal(loadProjectState(h.workspace)?.phase, "brainstorm");
 });
@@ -138,8 +138,8 @@ test("/brainstorm with no idea resumes the existing project", async () => {
 test("a phase refuses to run when the artifact it reads was never written", async () => {
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
-  h.ctx.raw = "/plan";
-  await runCommand("/plan", h.ctx);
+  h.ctx.raw = "/flow-plan";
+  await runCommand("/flow-plan", h.ctx);
 
   assert.equal(h.prompts.length, 0, "the phase must not run");
   assert.equal(loadProjectState(h.workspace)?.phase, "brainstorm", "and must not change the phase");
@@ -150,8 +150,8 @@ test("--force runs a phase past a missing prerequisite, with a warning", async (
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
   h.ctx.arg = "--force";
-  h.ctx.raw = "/plan --force";
-  await runCommand("/plan", h.ctx);
+  h.ctx.raw = "/flow-plan --force";
+  await runCommand("/flow-plan", h.ctx);
 
   assert.equal(h.prompts.length, 1);
   assert.match(h.prompts[0], /PLAN phase/);
@@ -194,13 +194,13 @@ test("the plan phase turns plan mode on and every other phase turns it off", asy
   saveProjectState(h.workspace, "my-app", "spec");
   writeArtifact(h.workspace, "my-app", "spec");
 
-  h.ctx.raw = "/plan";
-  await runCommand("/plan", h.ctx);
+  h.ctx.raw = "/flow-plan";
+  await runCommand("/flow-plan", h.ctx);
   assert.equal(h.ctx.planMode, true, "plan phase is read-only");
 
   writeArtifact(h.workspace, "my-app", "plan");
-  h.ctx.raw = "/build";
-  await runCommand("/build", h.ctx);
+  h.ctx.raw = "/flow-build";
+  await runCommand("/flow-build", h.ctx);
   assert.equal(h.ctx.planMode, false, "build must be able to write");
   assert.equal(loadProjectState(h.workspace)?.phase, "build");
 });
@@ -210,8 +210,8 @@ test("entering the plan phase clears accept-edits", async () => {
   saveProjectState(h.workspace, "my-app", "spec");
   writeArtifact(h.workspace, "my-app", "spec");
   h.ctx.acceptEdits = true;
-  h.ctx.raw = "/plan";
-  await runCommand("/plan", h.ctx);
+  h.ctx.raw = "/flow-plan";
+  await runCommand("/flow-plan", h.ctx);
   assert.equal(h.ctx.acceptEdits, false);
 });
 
@@ -219,8 +219,8 @@ test("each phase command compacts at the boundary before running", async () => {
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
   writeArtifact(h.workspace, "my-app", "brainstorm");
-  h.ctx.raw = "/spec";
-  await runCommand("/spec", h.ctx);
+  h.ctx.raw = "/flow-spec";
+  await runCommand("/flow-spec", h.ctx);
   assert.equal(h.counts.compactions, 1);
   assert.equal(h.prompts.length, 1);
 });
@@ -231,8 +231,8 @@ test("compaction is visible while it runs", async () => {
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
   writeArtifact(h.workspace, "my-app", "brainstorm");
-  h.ctx.raw = "/spec";
-  await runCommand("/spec", h.ctx);
+  h.ctx.raw = "/flow-spec";
+  await runCommand("/flow-spec", h.ctx);
 
   assert.equal(h.duringCompaction.phase, "working", "the spinner only renders while working");
   assert.match(h.duringCompaction.activity ?? "", /Compacting before the spec phase/);
@@ -242,8 +242,8 @@ test("a phase declares itself running and does not clear that itself", async () 
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
   writeArtifact(h.workspace, "my-app", "brainstorm");
-  h.ctx.raw = "/spec";
-  await runCommand("/spec", h.ctx);
+  h.ctx.raw = "/flow-spec";
+  await runCommand("/flow-spec", h.ctx);
 
   // Set once, and never cleared by the command — the turn's own teardown does
   // that, which is also what announces the next command. Clearing it here would
@@ -251,33 +251,33 @@ test("a phase declares itself running and does not clear that itself", async () 
   assert.deepEqual(h.labels, ["spec"]);
 });
 
-test("/brainstorm declares its phase and compacts too", async () => {
+test("/flow-brainstorm declares its phase and compacts too", async () => {
   const h = harness();
   h.ctx.arg = "a habit tracker";
-  h.ctx.raw = "/brainstorm a habit tracker";
-  await runCommand("/brainstorm", h.ctx);
+  h.ctx.raw = "/flow-brainstorm a habit tracker";
+  await runCommand("/flow-brainstorm", h.ctx);
 
   assert.deepEqual(h.labels, ["brainstorm"]);
   assert.equal(h.counts.compactions, 1);
   assert.match(h.duringCompaction.activity ?? "", /Compacting before the brainstorm phase/);
 });
 
-test("/brainstorm takes a short name: prefix and passes only the idea on", async () => {
+test("/flow-brainstorm takes a short name: prefix and passes only the idea on", async () => {
   const h = harness();
   h.ctx.arg = "reverser: a script that reverses a string";
-  h.ctx.raw = "/brainstorm reverser: a script that reverses a string";
-  await runCommand("/brainstorm", h.ctx);
+  h.ctx.raw = "/flow-brainstorm reverser: a script that reverses a string";
+  await runCommand("/flow-brainstorm", h.ctx);
 
   assert.equal(loadProjectState(h.workspace)?.name, "reverser");
   assert.match(h.prompts[0], /a script that reverses a string/);
   assert.doesNotMatch(h.prompts[0], /reverser:/);
 });
 
-test("/brainstorm without a name prefix still derives one from the idea", async () => {
+test("/flow-brainstorm without a name prefix still derives one from the idea", async () => {
   const h = harness();
   h.ctx.arg = "a script that reverses a string, in Python";
-  h.ctx.raw = `/brainstorm ${h.ctx.arg}`;
-  await runCommand("/brainstorm", h.ctx);
+  h.ctx.raw = `/flow-brainstorm ${h.ctx.arg}`;
+  await runCommand("/flow-brainstorm", h.ctx);
 
   const name = loadProjectState(h.workspace)?.name ?? "";
   assert.match(name, /^a-script-that-reverses/);
@@ -322,19 +322,25 @@ test("/project rename works before any artifact has been written", async () => {
 });
 
 test("phase commands report there is no project instead of starting one", async () => {
-  for (const cmd of ["/spec", "/plan", "/build", "/review"]) {
+  for (const cmd of ["/flow-spec", "/flow-plan", "/flow-build", "/flow-review", "/flow-fix"]) {
     const h = harness();
     h.ctx.raw = cmd;
     await runCommand(cmd, h.ctx);
     assert.equal(loadProjectState(h.workspace), null, `${cmd} must not create state`);
-    if (cmd !== "/plan") {
-      // Bare /plan with no project is the mode toggle, which says something else.
-      assert.ok(
-        h.said.some((s) => s.includes("No active project workflow")),
-        cmd
-      );
-    }
+    assert.ok(
+      h.said.some((s) => s.includes("No active project workflow")),
+      cmd
+    );
   }
+});
+
+test("bare /plan with no project is a pure mode toggle, not a phase command", async () => {
+  const h = harness();
+  h.ctx.raw = "/plan";
+  await runCommand("/plan", h.ctx);
+  assert.equal(loadProjectState(h.workspace), null);
+  assert.equal(h.ctx.planMode, true);
+  assert.ok(h.said.some((s) => s.includes("Plan mode ON")));
 });
 
 test("/project clear ends the workflow and keeps the artifacts", async () => {
@@ -385,7 +391,16 @@ test("/project with no argument reports where the workflow stands", async () => 
 });
 
 test("workflow commands are refused while the kill switch is engaged", async () => {
-  for (const cmd of ["/brainstorm", "/spec", "/plan", "/build", "/review", "/project"]) {
+  for (const cmd of [
+    "/flow-brainstorm",
+    "/flow-spec",
+    "/plan",
+    "/flow-plan",
+    "/flow-build",
+    "/flow-review",
+    "/flow-fix",
+    "/project",
+  ]) {
     const h = harness({ killed: true });
     h.ctx.arg = "x";
     h.ctx.raw = `${cmd} x`;
@@ -397,4 +412,48 @@ test("workflow commands are refused while the kill switch is engaged", async () 
       cmd
     );
   }
+});
+
+test("/flow-fix runs the fix phase once review.md exists", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "review");
+  writeArtifact(h.workspace, "my-app", "review");
+  h.ctx.raw = "/flow-fix";
+  await runCommand("/flow-fix", h.ctx);
+
+  assert.equal(loadProjectState(h.workspace)?.phase, "fix");
+  assert.equal(h.prompts.length, 1);
+  assert.match(h.prompts[0], /FIX phase/);
+});
+
+test("running a phase warns when an earlier artifact is now stale", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "spec");
+  writeArtifact(h.workspace, "my-app", "plan");
+  // Touch spec.md after plan.md, simulating an edit made after planning.
+  const specPath = path.join(h.workspace, artifactPath("my-app", "spec")!);
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(specPath, future, future);
+
+  h.ctx.raw = "/flow-build";
+  saveProjectState(h.workspace, "my-app", "plan");
+  await runCommand("/flow-build", h.ctx);
+
+  assert.ok(h.said.some((s) => s.includes("plan.md") && s.includes("stale")));
+});
+
+test("/project status surfaces stale artifacts too", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "spec");
+  writeArtifact(h.workspace, "my-app", "plan");
+  const specPath = path.join(h.workspace, artifactPath("my-app", "spec")!);
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(specPath, future, future);
+
+  h.ctx.raw = "/project";
+  await runCommand("/project", h.ctx);
+
+  assert.ok(h.said.some((s) => s.includes("stale")));
 });

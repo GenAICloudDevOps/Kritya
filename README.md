@@ -51,35 +51,37 @@ kritya [directory] [options]
 
 In-session commands (type `/` to see them with autocomplete; letters filter the list):
 
-| Command               | What it does                                                                                                                        |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `/model`              | interactive model picker (`/model <id>` sets any model ID directly)                                                                 |
-| `/provider`           | list providers, or `/provider <name>` to switch mid-session ([more](docs/CONFIGURATION.md#providers))                               |
-| `/brainstorm <idea>`  | start the staged new-project workflow (see below)                                                                                   |
-| `/spec`               | project workflow: write the spec from the approved brainstorm                                                                       |
-| `/plan`               | project workflow: plan from the spec (`/plan on`/`off` toggles the mode)                                                            |
-| `/build`              | project workflow: implement the plan, with tests                                                                                    |
-| `/review`             | project workflow: spec-compliance and security review of the build                                                                  |
-| `/project`            | workflow status; `goto <phase>`, `rename <name>`, `clear` to end it                                                                 |
-| `/diff`               | show the cumulative git diff of this session's changes                                                                              |
-| `/init`               | scan the repo and generate a `KRITYA.md` project-memory file                                                                        |
-| `/commit`             | have the agent review, stage, and commit the current git changes                                                                    |
-| `/web-search <query>` | search the web via Tavily; results are shown and added to context                                                                   |
-| `/mcp`                | MCP server status; `/mcp add\|remove <name>`, `/mcp login\|logout <name>`, `/mcp trust` ([more](docs/CONFIGURATION.md#mcp-servers)) |
-| `/skills`             | list discovered skills (project + user-global) and why any were skipped                                                             |
-| `/plugins`            | list discovered Agent Plugins, what each contributes, and why any were skipped ([more](docs/CONFIGURATION.md#agent-plugins))        |
-| `/undo`               | revert all file changes from the agent's last turn                                                                                  |
-| `/redo`               | reapply the change most recently undone                                                                                             |
-| `/checkpoint <name>`  | save a named point in the session (`/checkpoint` alone lists saved ones)                                                            |
-| `/rewind <name>`      | rewind both the conversation and the files to a checkpoint                                                                          |
-| `/compact`            | summarize older conversation to free context space                                                                                  |
-| `/clear`              | start a fresh conversation                                                                                                          |
-| `/cost`               | token usage and estimated $ (see Pricing below)                                                                                     |
-| `/audit`              | show this session's permission decisions and verify the audit log's chain ([more](docs/CONFIGURATION.md#audit-log--telemetry))      |
-| `/budget`             | show session token budget; `/budget reset` or `/budget <number>`                                                                    |
-| `/kill`               | emergency stop: `/kill [reason]` halts everything; `/kill off` releases                                                             |
-| `/help`               | command list                                                                                                                        |
-| `/exit`               | quit                                                                                                                                |
+| Command                   | What it does                                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `/model`                  | interactive model picker (`/model <id>` sets any model ID directly)                                                                 |
+| `/provider`               | list providers, or `/provider <name>` to switch mid-session ([more](docs/CONFIGURATION.md#providers))                               |
+| `/flow-brainstorm <idea>` | start the staged new-project workflow (see below)                                                                                   |
+| `/flow-spec`              | project workflow: write the spec from the approved brainstorm                                                                       |
+| `/flow-plan`              | project workflow: plan from the spec (read-only)                                                                                    |
+| `/flow-build`             | project workflow: implement the plan, with tests                                                                                    |
+| `/flow-review`            | project workflow: spec-compliance and security review of the build                                                                  |
+| `/flow-fix`               | project workflow: fix the review's findings, each one re-verified                                                                   |
+| `/plan`                   | toggle plan mode: `/plan`, `/plan on`, `/plan off` (unrelated to `/flow-plan`)                                                      |
+| `/project`                | workflow status; `goto <phase>`, `rename <name>`, `clear` to end it                                                                 |
+| `/diff`                   | show the cumulative git diff of this session's changes                                                                              |
+| `/init`                   | scan the repo and generate a `KRITYA.md` project-memory file                                                                        |
+| `/commit`                 | have the agent review, stage, and commit the current git changes                                                                    |
+| `/web-search <query>`     | search the web via Tavily; results are shown and added to context                                                                   |
+| `/mcp`                    | MCP server status; `/mcp add\|remove <name>`, `/mcp login\|logout <name>`, `/mcp trust` ([more](docs/CONFIGURATION.md#mcp-servers)) |
+| `/skills`                 | list discovered skills (project + user-global) and why any were skipped                                                             |
+| `/plugins`                | list discovered Agent Plugins, what each contributes, and why any were skipped ([more](docs/CONFIGURATION.md#agent-plugins))        |
+| `/undo`                   | revert all file changes from the agent's last turn                                                                                  |
+| `/redo`                   | reapply the change most recently undone                                                                                             |
+| `/checkpoint <name>`      | save a named point in the session (`/checkpoint` alone lists saved ones)                                                            |
+| `/rewind <name>`          | rewind both the conversation and the files to a checkpoint                                                                          |
+| `/compact`                | summarize older conversation to free context space                                                                                  |
+| `/clear`                  | start a fresh conversation                                                                                                          |
+| `/cost`                   | token usage and estimated $ (see Pricing below)                                                                                     |
+| `/audit`                  | show this session's permission decisions and verify the audit log's chain ([more](docs/CONFIGURATION.md#audit-log--telemetry))      |
+| `/budget`                 | show session token budget; `/budget reset` or `/budget <number>`                                                                    |
+| `/kill`                   | emergency stop: `/kill [reason]` halts everything; `/kill off` releases                                                             |
+| `/help`                   | command list                                                                                                                        |
+| `/exit`                   | quit                                                                                                                                |
 
 Custom `/commands` you define (see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#custom-slash-commands)) also appear here.
 
@@ -90,17 +92,18 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 - **Staged new-project workflow** — ask kritya to build something new (a
   FastAPI backend, a Next.js frontend, a CLI) and it doesn't dive straight into
-  code. It runs five phases — **brainstorm → spec → plan → build → review** —
-  writing a durable artifact for each under `docs/<name>/` and stopping for your
-  approval between phases:
+  code. It runs six phases — **brainstorm → spec → plan → build → review → fix**
+  — writing a durable artifact for each under `docs/<name>/` and stopping for
+  your approval between phases:
 
-  | Phase        | Produces                                                         |
-  | ------------ | ---------------------------------------------------------------- |
-  | `brainstorm` | `brainstorm.md` — problem, users, MVP features, stack            |
-  | `spec`       | `spec.md` — contracts, data schema, numbered acceptance criteria |
-  | `plan`       | `plan.md` — architecture and ordered milestones                  |
-  | `build`      | the code, plus tests for each acceptance criterion               |
-  | `review`     | `review.md` — spec-compliance and security findings              |
+  | Phase        | Produces                                                                                    |
+  | ------------ | ------------------------------------------------------------------------------------------- |
+  | `brainstorm` | `brainstorm.md` — problem, users, MVP features, stack                                       |
+  | `spec`       | `spec.md` — contracts, data schema, numbered acceptance criteria, each tagged MUST or LATER |
+  | `plan`       | `plan.md` — architecture and ordered milestones, each tagged RISKY or ROUTINE               |
+  | `build`      | the code, plus tests for each acceptance criterion, with a live milestone checklist         |
+  | `review`     | `review.md` — a one-line scorecard, then spec-compliance and security findings              |
+  | `fix`        | `fix.md` — the review's findings addressed and re-verified                                  |
 
   Spec comes before plan on purpose: the spec settles _what_ (and pins the
   numbered acceptance criteria everything downstream is held to), the plan
@@ -109,27 +112,34 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   The current phase lives in `.kritya/project.json`, so the flow resumes across
   sessions. While a workflow is active the statusline carries a `⚑ name:phase`
   flag, and the spinner names the running phase; `/project` shows the full
-  picture and `/project clear` ends it. A phase
+  picture — including a warning if an earlier artifact was edited after a
+  later one already depended on it — and `/project clear` ends it. A phase
   refuses to run if the artifact it reads was never written (`--force`
   overrides). The agent walks the phases on its own, or you drive them by hand
-  with `/brainstorm <idea>`, `/spec`, `/plan`, `/build`, `/review` — and after
-  each one kritya tells you which command comes next, so the handoff doesn't
-  depend on the model remembering to say it.
+  with `/flow-brainstorm <idea>`, `/flow-spec`, `/flow-plan`, `/flow-build`,
+  `/flow-review`, `/flow-fix` — and after each one kritya tells you which
+  command comes next, so the handoff doesn't depend on the model remembering
+  to say it. `/flow-fix` only fixes what review found; if anything is still
+  open afterward it tells you to run `/flow-review` again or `/flow-fix`
+  again once you've decided how to handle what's left.
 
   The project is named from your idea unless you name it yourself with a short
-  prefix — `/brainstorm reverser: a script that reverses a string` gives you
-  `docs/reverser/`. `/project rename <name>` moves an existing one.
+  prefix — `/flow-brainstorm reverser: a script that reverses a string` gives
+  you `docs/reverser/`. `/project rename <name>` moves an existing one.
 
-  Cost matters here — five phases in one session adds up — so kritya compacts
+  Cost matters here — six phases in one session adds up — so kritya compacts
   the conversation at each phase boundary (the artifact is on disk, so the
   transcript that produced it is redundant), caps artifact length, and in the
   build phase dispatches independent milestones to isolated write subagents
   rather than pulling every file into the main context. The review phase runs
-  its two reviewers as read-only subagents, so only their findings come back.
+  its two reviewers as read-only subagents, so only their findings come back;
+  the fix phase does the same to re-verify only what it changed.
 
   In the plan phase, plan mode's read-only guard is relaxed just enough to let
   the agent write Markdown under that project's own `docs/<name>/` folder —
-  other docs, application code, and shell stay blocked until you `/build`.
+  other docs, application code, and shell stay blocked until you `/flow-build`.
+  Plan mode itself is still a separate, general-purpose toggle — `/plan`,
+  `/plan on`, `/plan off` — unrelated to the workflow's `/flow-plan` phase.
 
 - **Trust levels** — `Shift+Tab` cycles **normal** (every write/edit asks
   first) → **accept-edits** (file writes/edits auto-approve, no prompt) →
@@ -140,8 +150,8 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   still prompt, in every mode — that guard never turns off. The first time you
   switch into accept-edits mode each session, kritya asks you to confirm first
   so it's a deliberate choice, not an accidental keypress. `/plan on` and
-  `/plan off` set the mode explicitly; a bare `/plan` runs the workflow's plan
-  phase when a project is active, and toggles the mode when none is.
+  `/plan off` set the mode explicitly; a bare `/plan` toggles it. `/plan` never
+  touches the project workflow — that's `/flow-plan`.
 - **Kill switch** — `Ctrl+K` (or `/kill [reason]`) is a hard stop for the whole
   session. It aborts the in-flight model stream, any running tool, and every
   subagent at once, then refuses everything afterwards: new messages, tool

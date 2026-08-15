@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
+import TextInput from "ink-text-input";
 import { SelectList } from "./SelectList.js";
 import type { ElicitationField, ElicitationResult } from "../types.js";
 
@@ -19,6 +20,7 @@ export function ElicitationPrompt({
 }) {
   const [index, setIndex] = useState(0);
   const [content, setContent] = useState<Record<string, string | boolean>>({});
+  const [textValue, setTextValue] = useState("");
 
   const finish = (finalContent: Record<string, string | boolean>) =>
     onDecision({ action: "accept", content: finalContent });
@@ -28,6 +30,7 @@ export function ElicitationPrompt({
     const next = { ...content, [field.name]: value };
     if (index + 1 < fields.length) {
       setContent(next);
+      setTextValue("");
       setIndex(index + 1);
     } else {
       finish(next);
@@ -35,6 +38,12 @@ export function ElicitationPrompt({
   };
 
   const field = fields[index];
+
+  // SelectList handles its own Escape-to-cancel; the free-text field below has
+  // no such built-in, so it needs its own listener.
+  useInput((_input, key) => {
+    if (field?.kind === "string" && key.escape) onDecision({ action: "cancel" });
+  });
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
@@ -63,12 +72,17 @@ export function ElicitationPrompt({
               onCancel={() => onDecision({ action: "cancel" })}
             />
           ) : (
-            <SelectList
-              key={field.name}
-              items={[{ label: "(text input not yet supported — declining)", value: "decline" }]}
-              onSelect={() => onDecision({ action: "decline" })}
-              onCancel={() => onDecision({ action: "cancel" })}
-            />
+            <Box>
+              <Text color="cyan">{"> "}</Text>
+              <TextInput
+                value={textValue}
+                onChange={setTextValue}
+                onSubmit={(v) => {
+                  const trimmed = v.trim();
+                  if (trimmed) answer(trimmed);
+                }}
+              />
+            </Box>
           )}
         </Box>
       ) : (

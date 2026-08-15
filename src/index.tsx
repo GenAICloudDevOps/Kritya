@@ -489,6 +489,16 @@ async function main() {
     if (!elicitationRef.current) return { action: "cancel" };
     return elicitationRef.current(`[MCP: ${server}] ${message}`, fields);
   };
+  // Same prompt UI as MCP elicitation, but for the agent's own ask_user tool —
+  // no "[MCP: server]" prefix, since the question is the agent's, not a
+  // third-party server's.
+  const onAskUser = async (
+    message: string,
+    fields: ElicitationField[]
+  ): Promise<ElicitationResult> => {
+    if (!elicitationRef.current) return { action: "cancel" };
+    return elicitationRef.current(message, fields);
+  };
 
   const mcpTools: ToolDef[] = await loadMcpTools(
     mergeMcpServers(config.mcpServers, approvedProjectMcp, approvedPluginMcp),
@@ -740,6 +750,7 @@ async function main() {
         uiBridge.onTasksUpdate(t);
         session.saveTasks(t);
       },
+      requestElicitation: onAskUser,
       spawnAgents,
     },
     new PermissionManager(loadRules(workspace, trustWorkspace)),

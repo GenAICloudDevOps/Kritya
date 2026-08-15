@@ -19,6 +19,7 @@ import {
   renameProject,
   saveProjectState,
   slugify,
+  staleArtifacts,
   type WorkflowPhase,
 } from "../agent/workflow.js";
 
@@ -110,8 +111,8 @@ test("renameProject rejects an empty name and is a no-op for the same name", () 
   assert.deepEqual(renameProject(ws, "my-app", "My App"), { ok: true, name: "my-app" });
 });
 
-test("phases run brainstorm -> spec -> plan -> build -> review", () => {
-  assert.deepEqual(PHASE_ORDER, ["brainstorm", "spec", "plan", "build", "review"]);
+test("phases run brainstorm -> spec -> plan -> build -> review -> fix", () => {
+  assert.deepEqual(PHASE_ORDER, ["brainstorm", "spec", "plan", "build", "review", "fix"]);
 });
 
 test("previousPhase and nextPhase walk the order and stop at the ends", () => {
@@ -120,8 +121,10 @@ test("previousPhase and nextPhase walk the order and stop at the ends", () => {
   assert.equal(previousPhase("plan"), "spec");
   assert.equal(previousPhase("build"), "plan");
   assert.equal(previousPhase("review"), "build");
+  assert.equal(previousPhase("fix"), "review");
   assert.equal(nextPhase("brainstorm"), "spec");
-  assert.equal(nextPhase("review"), null);
+  assert.equal(nextPhase("review"), "fix");
+  assert.equal(nextPhase("fix"), null);
 });
 
 test("parsePhase accepts known phases and rejects anything else", () => {
@@ -169,6 +172,7 @@ test("artifactPath points at docs/<name>/<phase>.md, and null for build", () => 
   assert.equal(artifactPath("My App", "spec"), "docs/my-app/spec.md");
   assert.equal(artifactPath("My App", "plan"), "docs/my-app/plan.md");
   assert.equal(artifactPath("My App", "review"), "docs/my-app/review.md");
+  assert.equal(artifactPath("My App", "fix"), "docs/my-app/fix.md");
   assert.equal(artifactPath("My App", "build"), null);
 });
 
@@ -202,6 +206,13 @@ test("phaseBlocker for build looks at the plan, and for review at the build", ()
   assert.equal(phaseBlocker(ws, "my-app", "build"), null);
   // Build writes code rather than a doc, so review is never blocked on a file.
   assert.equal(phaseBlocker(ws, "my-app", "review"), null);
+});
+
+test("phaseBlocker for fix looks at the review", () => {
+  const ws = tmpWorkspace();
+  assert.match(phaseBlocker(ws, "my-app", "fix") ?? "", /review\.md/);
+  writeArtifact(ws, "my-app", "review");
+  assert.equal(phaseBlocker(ws, "my-app", "fix"), null);
 });
 
 test("isPlanningDocWrite allows only the active project's own docs", () => {
@@ -262,6 +273,7 @@ test("each phase prompt points at the phase before it, not a later one", () => {
   assert.match(phasePrompt("app", "spec", ""), /Read docs\/app\/brainstorm\.md first/);
   assert.match(phasePrompt("app", "plan", ""), /Read docs\/app\/spec\.md first/);
   assert.match(phasePrompt("app", "build", ""), /Read docs\/app\/plan\.md/);
+  assert.match(phasePrompt("app", "fix", ""), /Read docs\/app\/review\.md/);
   // The spec phase must not reach forward into the plan's territory.
   assert.doesNotMatch(phasePrompt("app", "spec", ""), /docs\/app\/plan\.md/);
 });
@@ -281,12 +293,13 @@ test("the plan phase is told its own write will succeed under plan mode", () => 
   assert.match(prompt, /do not ask the user to turn plan mode off/i);
 });
 
-test("phase prompts hand off to the next phase's command, and review ends the chain", () => {
-  assert.match(phasePrompt("app", "brainstorm", ""), /\/spec/);
-  assert.match(phasePrompt("app", "spec", ""), /\/plan/);
-  assert.match(phasePrompt("app", "plan", ""), /\/build/);
-  assert.match(phasePrompt("app", "build", ""), /\/review/);
-  assert.doesNotMatch(phasePrompt("app", "review", ""), /they will run/);
+test("phase prompts hand off to the next phase's command, and fix ends the chain", () => {
+  assert.match(phasePrompt("app", "brainstorm", ""), /\/flow-spec/);
+  assert.match(phasePrompt("app", "spec", ""), /\/flow-plan/);
+  assert.match(phasePrompt("app", "plan", ""), /\/flow-build/);
+  assert.match(phasePrompt("app", "build", ""), /\/flow-review/);
+  assert.match(phasePrompt("app", "review", ""), /\/flow-fix/);
+  assert.doesNotMatch(phasePrompt("app", "fix", ""), /they will run/);
 });
 
 test("the build phase treats tests as part of the deliverable", () => {
@@ -304,10 +317,30 @@ test("the review phase dispatches read-only subagents for spec compliance and se
   assert.match(prompt, /docs\/app\/review\.md/);
   // Reviewing and fixing in one pass gives neither a real review nor a real fix.
   assert.match(prompt, /Do not fix/i);
+  assert.match(prompt, /SCORECARD/);
+});
+
+test("the plan phase tags milestones by risk", () => {
+  const prompt = phasePrompt("app", "plan", "");
+  assert.match(prompt, /RISKY/);
+  assert.match(prompt, /ROUTINE/);
+});
+
+test("the build phase stops instead of retrying a milestone forever", () => {
+  const prompt = phasePrompt("app", "build", "");
+  assert.match(prompt, /fail(s|ed)? twice/i);
+  assert.match(prompt, /blocked/i);
+});
+
+test("the fix phase re-verifies findings with a read-only subagent", () => {
+  const prompt = phasePrompt("app", "fix", "");
+  assert.match(prompt, /docs\/app\/review\.md/);
+  assert.match(prompt, /docs\/app\/fix\.md/);
+  assert.match(prompt, /read-only subagent/i);
 });
 
 test("phase prompts cap artifact length so later phases stay cheap to run", () => {
-  for (const phase of ["brainstorm", "spec", "plan", "review"] as WorkflowPhase[]) {
+  for (const phase of ["brainstorm", "spec", "plan", "review", "fix"] as WorkflowPhase[]) {
     assert.match(phasePrompt("app", phase, ""), /under ~\d+ words/, phase);
   }
 });
@@ -315,4 +348,51 @@ test("phase prompts cap artifact length so later phases stay cheap to run", () =
 test("phasePrompt appends the user's input when provided", () => {
   const prompt = phasePrompt("app", "brainstorm", "a habit tracker");
   assert.match(prompt, /a habit tracker/);
+});
+
+test("the brainstorm phase prefers ask_user over open-ended prose questions", () => {
+  const prompt = phasePrompt("app", "brainstorm", "");
+  assert.match(prompt, /ask_user/);
+  assert.match(prompt, /sensible default/i);
+});
+
+test("the spec phase asks for must-have vs later priority on each criterion", () => {
+  const prompt = phasePrompt("app", "spec", "");
+  assert.match(prompt, /MUST/);
+  assert.match(prompt, /LATER/);
+});
+
+test("staleArtifacts is quiet when nothing has drifted", () => {
+  const ws = tmpWorkspace();
+  writeArtifact(ws, "app", "brainstorm");
+  writeArtifact(ws, "app", "spec");
+  assert.deepEqual(staleArtifacts(ws, "app", "spec"), []);
+});
+
+test("staleArtifacts flags a downstream doc written before an upstream edit", () => {
+  const ws = tmpWorkspace();
+  writeArtifact(ws, "app", "brainstorm");
+  writeArtifact(ws, "app", "spec");
+  writeArtifact(ws, "app", "plan");
+  // Force spec.md's mtime after plan.md's, simulating an edit made later.
+  const specPath = path.join(ws, artifactPath("app", "spec")!);
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(specPath, future, future);
+
+  const warnings = staleArtifacts(ws, "app", "plan");
+  assert.ok(warnings.some((w) => /plan\.md/.test(w)));
+});
+
+test("staleArtifacts warns about the build itself once a stale plan has been built from", () => {
+  const ws = tmpWorkspace();
+  writeArtifact(ws, "app", "spec");
+  writeArtifact(ws, "app", "plan");
+  const specPath = path.join(ws, artifactPath("app", "spec")!);
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(specPath, future, future);
+
+  // Before build has been reached, no claim is made about "the code".
+  assert.ok(!staleArtifacts(ws, "app", "plan").some((w) => /code/.test(w)));
+  // Once the project has reached build (or beyond), the code is called out too.
+  assert.ok(staleArtifacts(ws, "app", "build").some((w) => /code/.test(w)));
 });

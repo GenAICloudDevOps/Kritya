@@ -244,6 +244,10 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     client,
     () => model,
     tools,
+    // No requestElicitation here — no UI to ask through. Leaving it undefined
+    // (rather than an always-cancel stub) lets ask_user report itself as
+    // unavailable, same message a subagent gets, instead of "the user
+    // declined" for a question no one was actually asked.
     { workspace, sandboxMode: config.sandboxExec ?? "auto", trustWorkspace },
     permissions,
     session,

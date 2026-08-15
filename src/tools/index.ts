@@ -29,6 +29,7 @@ import {
 } from "./lsp.js";
 import { repoMapTool } from "./repoMap.js";
 import { loadSkillTool } from "./skills.js";
+import { askUserTool } from "./askUser.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   readFileTool,
@@ -59,6 +60,7 @@ export const ALL_TOOLS: ToolDef[] = [
   readNotebookTool,
   editNotebookTool,
   loadSkillTool,
+  askUserTool,
 ];
 
 /** Read-only tools a subagent is allowed to use (no writes, edits, or shell). */

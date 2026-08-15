@@ -70,6 +70,13 @@ export interface ToolContext {
   /** Lets the update_tasks tool push checklist changes to the UI. */
   onTasksUpdate?(tasks: TaskItem[]): void;
   /**
+   * Lets the ask_user tool put a structured question (multiple-choice, with
+   * free text always available) in front of the user and wait for an answer.
+   * Undefined in contexts with no one to ask — headless runs, and subagents,
+   * which the tool itself reports as unavailable rather than hanging.
+   */
+  requestElicitation?(message: string, fields: ElicitationField[]): Promise<ElicitationResult>;
+  /**
    * Runs one or more subagents concurrently, each with its own fresh context.
    * Read-only agents can only inspect the repo. Write agents get an isolated
    * git worktree + branch, so their edits and shell commands never touch the

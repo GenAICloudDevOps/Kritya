@@ -17,26 +17,35 @@ import path from "node:path";
  * at the workspace root; both the slash commands (deterministically) and the
  * agent (via write_file, when running autonomously) keep it up to date.
  */
-export type WorkflowPhase = "brainstorm" | "spec" | "plan" | "build" | "review";
+export type WorkflowPhase = "brainstorm" | "spec" | "plan" | "build" | "review" | "fix";
 
-export const PHASE_ORDER: WorkflowPhase[] = ["brainstorm", "spec", "plan", "build", "review"];
+export const PHASE_ORDER: WorkflowPhase[] = [
+  "brainstorm",
+  "spec",
+  "plan",
+  "build",
+  "review",
+  "fix",
+];
 
 /** The slash command that runs each phase, for user-facing guidance. */
 export const PHASE_COMMAND: Record<WorkflowPhase, string> = {
-  brainstorm: "/brainstorm",
-  spec: "/spec",
-  plan: "/plan",
-  build: "/build",
-  review: "/review",
+  brainstorm: "/flow-brainstorm",
+  spec: "/flow-spec",
+  plan: "/flow-plan",
+  build: "/flow-build",
+  review: "/flow-review",
+  fix: "/flow-fix",
 };
 
 /** One-line summary of what each phase produces, for help text and the system prompt. */
 export const PHASE_SUMMARY: Record<WorkflowPhase, string> = {
   brainstorm: "problem, users, MVP features, recommended stack",
-  spec: "goals, non-goals, contracts, data schema, acceptance criteria",
-  plan: "architecture and ordered milestones (runs in read-only plan mode)",
+  spec: "goals, non-goals, contracts, data schema, prioritized acceptance criteria",
+  plan: "architecture and ordered milestones, flagged by risk (runs in read-only plan mode)",
   build: "the application code, with tests per acceptance criterion",
-  review: "spec-compliance and security findings",
+  review: "spec-compliance and security findings, with a scorecard up top",
+  fix: "fixes for the review's findings, each re-verified",
 };
 
 /**
@@ -49,6 +58,7 @@ const PHASE_WORD_CAP: Partial<Record<WorkflowPhase, number>> = {
   spec: 1200,
   plan: 1000,
   review: 800,
+  fix: 600,
 };
 
 export interface ProjectState {
@@ -101,7 +111,7 @@ const SLUG_MAX = 40;
 const NAME_PREFIX_MAX_WORDS = 5;
 
 /**
- * Split `/brainstorm` input into a project name and the idea itself.
+ * Split `/flow-brainstorm` input into a project name and the idea itself.
  *
  * `reverser: a script that reverses a string` names the project `reverser`.
  * Without a short leading `name:` the whole input is the idea, and the name is
@@ -255,6 +265,65 @@ export function phaseBlocker(workspace: string, name: string, phase: WorkflowPha
 }
 
 /**
+ * Artifacts that are now older than one they depend on, e.g. spec.md edited
+ * after plan.md was already written from it. This never blocks a phase — a
+ * stale downstream doc might still be exactly what the user wants — it only
+ * warns, at the two points that matter: right before a phase runs (its input
+ * may be stale) and in `/project` status (a standing view of the whole chain).
+ * `build` has no artifact file to timestamp, so a stale `plan.md` also flags
+ * "the code already built from it" once the project has reached `build` or
+ * beyond — there is no way to prove the code is out of sync without a file to
+ * check, but staying silent would be worse: silent drift between spec and
+ * code is exactly the failure mode the whole staged workflow exists to avoid.
+ */
+export function staleArtifacts(
+  workspace: string,
+  name: string,
+  currentPhase: WorkflowPhase
+): string[] {
+  const mtime = (phase: WorkflowPhase): number | null => {
+    const rel = artifactPath(name, phase);
+    if (!rel) return null;
+    try {
+      return fs.statSync(path.join(workspace, rel)).mtimeMs;
+    } catch {
+      return null;
+    }
+  };
+  const reachedBuild = PHASE_ORDER.indexOf(currentPhase) >= PHASE_ORDER.indexOf("build");
+
+  const warnings: string[] = [];
+  let planIsStale = false;
+  for (let i = 0; i < PHASE_ORDER.length; i++) {
+    const upstream = PHASE_ORDER[i];
+    const upstreamMtime = mtime(upstream);
+    if (upstreamMtime === null) continue;
+    for (const downstream of PHASE_ORDER.slice(i + 1)) {
+      if (downstream === "build") continue; // no doc to compare — handled below
+      const downstreamRel = artifactPath(name, downstream)!;
+      const downstreamMtime = mtime(downstream);
+      if (downstreamMtime === null) continue;
+      if (downstreamMtime < upstreamMtime) {
+        const upstreamRel = artifactPath(name, upstream)!;
+        warnings.push(
+          `⚠ ${downstreamRel} was written before ${upstreamRel}'s latest change — it may be stale.`
+        );
+        if (downstream === "plan") planIsStale = true;
+      }
+    }
+  }
+  // Only plan.md feeds build directly; spec/brainstorm feed build only through
+  // plan.md, so this fires once, off of plan.md's own staleness above, rather
+  // than once per upstream phase.
+  if (planIsStale && reachedBuild) {
+    warnings.push(
+      `⚠ plan.md changed after the code was built from it — the build may no longer match.`
+    );
+  }
+  return warnings;
+}
+
+/**
  * During plan mode all mutating tools are blocked — except the active project's
  * own planning documents. Scoping this to docs/<slug>/ matters: plan mode's
  * promise is that nothing outside the plan changes, and a workspace-wide
@@ -327,8 +396,15 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `PROJECT WORKFLOW — BRAINSTORM phase for project "${slug}".\n` +
         `Be a sharp product thinking-partner. Clarify the problem, the target users, the core ` +
         `features (MVP vs. later), and recommend a concrete tech stack with a short rationale. ` +
-        `Ask any make-or-break questions you still have, then write your synthesis to ` +
-        `docs/${slug}/brainstorm.md.\n` +
+        `If you can make a sensible default choice (e.g. a common tech-stack pick), make it and ` +
+        `state your reasoning in the doc rather than asking — reserve questions for the make-or` +
+        `-break ones you genuinely cannot guess (who the user is, what the MVP must include). For ` +
+        `each one, use ask_user with a short list of concrete options (e.g. candidate stacks or ` +
+        `feature scopes) rather than an open-ended question in chat — the user answers faster from ` +
+        `a list, and can always type their own answer via the option ask_user adds automatically. ` +
+        `When recommending a stack, name the trade-off in one clause (e.g. "SQLite: simplest, no ` +
+        `multi-user support" vs. "Postgres: more setup, scales past one writer") rather than just ` +
+        `announcing a pick. Once resolved, write your synthesis to docs/${slug}/brainstorm.md.\n` +
         cap +
         `Do NOT write application code, do NOT design the architecture, and do NOT specify ` +
         `interfaces yet — this phase settles direction only.\n` +
@@ -344,7 +420,10 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `Acceptance criteria are the contract the build and review phases are held to, so make ` +
         `each one specific and checkable — a criterion that cannot fail a test is not a criterion. ` +
         `Label them AC1, AC2, AC3, … under an "Acceptance criteria" heading; later phases cite ` +
-        `those labels, so they must be stable identifiers, not positions in the document.\n` +
+        `those labels, so they must be stable identifiers, not positions in the document. Mark ` +
+        `each one MUST or LATER (must-have for this build, vs. a later iteration) — if build ever ` +
+        `runs short on time or scope, LATER is what gets cut first, and that decision belongs here, ` +
+        `not left for build to guess.\n` +
         cap +
         `Do NOT design the architecture, choose a folder layout, or sequence the work — that is ` +
         `the plan phase's job. Do NOT write application code.\n` +
@@ -362,6 +441,11 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `independently testable.\n` +
         `Note which milestones are genuinely independent of each other — the build phase uses ` +
         `that to parallelize.\n` +
+        `Tag each milestone RISKY or ROUTINE. RISKY means it depends on something you haven't ` +
+        `confirmed works — an external API, a library behavior, a performance assumption — or ` +
+        `touches a part of the system where a wrong guess is expensive to unwind. Say what makes ` +
+        `it risky in one clause. This is what tells the user, and the build phase, where to slow ` +
+        `down and check assumptions instead of plowing straight through.\n` +
         `Write the plan to docs/${slug}/plan.md — writing Markdown under docs/${slug}/ is allowed ` +
         `in plan mode; application code and shell are still blocked. That write will succeed, so ` +
         `do not ask the user to turn plan mode off in order to save the plan, and use the ` +
@@ -375,13 +459,23 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
     case "build":
       return (
         `PROJECT WORKFLOW — BUILD phase for project "${slug}". Plan mode is OFF.\n` +
-        `Read docs/${slug}/plan.md — it is your build order. Call update_tasks first with the ` +
-        `milestone breakdown, then work milestone by milestone.\n` +
+        `Read docs/${slug}/plan.md — it is your build order. Call update_tasks first with the full ` +
+        `milestone breakdown (one task per milestone), then keep it current as you go: mark a ` +
+        `milestone in_progress the moment you start it and done the moment its tests pass — call ` +
+        `update_tasks again each time a milestone's status changes, not just once at the start. ` +
+        `This is the user's only live view into a build that can otherwise run for a long time in ` +
+        `silence, so do not let the checklist go stale.\n` +
+        `RISKY milestones (per plan.md's tags): confirm the assumption that makes them risky before ` +
+        `writing the rest of the milestone, so a wrong guess is caught early and cheaply, not after ` +
+        `everything downstream is built on top of it.\n` +
         `Tests are part of the deliverable, not an afterthought: for each milestone, consult the ` +
         `AC-labelled acceptance criteria it cites in docs/${slug}/spec.md (read just those, not the ` +
         `whole file again), write tests that would fail if the criterion were unmet, and do not ` +
         `mark a milestone done until its tests actually run and pass. Report pass/fail per ` +
         `milestone, not just what you changed.\n` +
+        `If a milestone's tests fail twice in a row after genuine fix attempts, stop working that ` +
+        `milestone: mark it blocked in the task list with why, move on to milestones that don't ` +
+        `depend on it, and report the block to the user at the end instead of retrying indefinitely.\n` +
         `If the workspace is a git repository and the plan marks milestones as independent, ` +
         `dispatch them with spawn_write_agent in parallel — each subagent gets a fresh context ` +
         `and its own branch, which keeps this conversation from accumulating the full text of ` +
@@ -405,12 +499,39 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `with file and line, not generic advice.\n` +
         `Each subagent starts with no context, so give it the project slug, the paths it needs, ` +
         `and its full remit in the task string.\n` +
-        `Collect their findings into docs/${slug}/review.md, grouped by severity, each with a ` +
-        `file:line and a concrete suggested fix. State plainly whether the build satisfies the ` +
-        `spec. Do not fix anything in this phase — reviewing and fixing in one pass produces ` +
-        `neither a trustworthy review nor a reviewed fix.\n` +
+        `Open docs/${slug}/review.md with a short SCORECARD before the detailed findings — one ` +
+        `line, e.g. "4/6 acceptance criteria met · 2 security findings (1 high, 1 medium)" — so the ` +
+        `headline is visible without reading the whole document. Then list the findings grouped by ` +
+        `severity, each with a file:line and a concrete suggested fix. State plainly whether the ` +
+        `build satisfies the spec. Do not fix anything in this phase — reviewing and fixing in one ` +
+        `pass produces neither a trustworthy review nor a reviewed fix.\n` +
         cap +
         approve +
+        extra
+      );
+    case "fix":
+      return (
+        `PROJECT WORKFLOW — FIX phase for project "${slug}". Plan mode is OFF.\n` +
+        `Read docs/${slug}/review.md — it lists every finding from the review phase. Address each ` +
+        `one: not-met or partially-met acceptance criteria, and every security finding, in severity ` +
+        `order. Skip only findings the user has explicitly told you to leave (say which and why in ` +
+        `the writeup); everything else gets fixed.\n` +
+        `For each finding you fix, note what changed and why in a few words — this becomes ` +
+        `docs/${slug}/fix.md, so keep the running log as you go rather than reconstructing it at ` +
+        `the end.\n` +
+        `After the fixes, dispatch a read-only subagent to re-check only what you touched: give it ` +
+        `the specific findings you addressed and the files you changed, and have it confirm each ` +
+        `finding is actually resolved (tests pass, the AC is now met, the vulnerability is closed) ` +
+        `rather than re-running the full spec-compliance and security sweep from scratch. Record its ` +
+        `verdict per finding — fixed, still open, or newly broken — in docs/${slug}/fix.md.\n` +
+        `If anything is still open after the subagent's check, say so plainly; do not report success ` +
+        `on a finding that didn't actually verify as fixed.\n` +
+        cap +
+        `Write docs/${slug}/fix.md BEFORE you ask for anything. Approval comes after the file ` +
+        `exists — never show the writeup in chat and ask whether to save it. Then summarize the ` +
+        `outcome in a few lines. If anything is still open, tell the user they can run ` +
+        `${PHASE_COMMAND.review} to re-check the whole build, or run ${PHASE_COMMAND.fix} again ` +
+        `once they've decided how to handle what's left.\n` +
         extra
       );
   }

@@ -26,6 +26,7 @@ import {
   phaseBlocker,
   phasePrompt,
   renameProject,
+  staleArtifacts,
   PHASE_COMMAND,
   PHASE_ORDER,
   PHASE_SUMMARY,
@@ -48,17 +49,19 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
       "list providers, or /provider <name> to switch mid-session (keeps history); add --default to persist",
   },
   {
-    name: "/brainstorm",
+    name: "/flow-brainstorm",
     description:
-      "start a new-project workflow: /brainstorm <idea> (brainstorm→spec→plan→build→review)",
+      "start a new-project workflow: /flow-brainstorm <idea> (brainstorm→spec→plan→build→review→fix)",
   },
-  { name: "/spec", description: "project workflow: write the spec from the approved brainstorm" },
   {
-    name: "/plan",
-    description: "project workflow: plan from the spec · /plan on|off toggles plan mode",
+    name: "/flow-spec",
+    description: "project workflow: write the spec from the approved brainstorm",
   },
-  { name: "/build", description: "project workflow: implement the plan, with tests" },
-  { name: "/review", description: "project workflow: spec-compliance and security review" },
+  { name: "/plan", description: "toggle plan mode: /plan, /plan on, /plan off" },
+  { name: "/flow-plan", description: "project workflow: plan from the spec (read-only)" },
+  { name: "/flow-build", description: "project workflow: implement the plan, with tests" },
+  { name: "/flow-review", description: "project workflow: spec-compliance and security review" },
+  { name: "/flow-fix", description: "project workflow: fix the review's findings, re-verified" },
   {
     name: "/project",
     description: "workflow status · /project goto <phase> · rename <name> · clear",
@@ -218,7 +221,7 @@ async function runPhase(ctx: CommandContext, phase: WorkflowPhase): Promise<void
   if (!project) {
     ctx.addItem({
       kind: "info",
-      text: "No active project workflow. Start one with /brainstorm <idea>.",
+      text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
     });
     return;
   }
@@ -230,6 +233,13 @@ async function runPhase(ctx: CommandContext, phase: WorkflowPhase): Promise<void
       text: `${blocker}\nTo run ${PHASE_COMMAND[phase]} anyway: ${PHASE_COMMAND[phase]} --force`,
     });
     return;
+  }
+  // Warn (never block) if an earlier artifact was edited after this phase's
+  // input was written from it — e.g. spec.md changed after plan.md already
+  // read it. The phase still runs on whatever's on disk right now.
+  const stale = staleArtifacts(ctx.workspace, project.name, phase);
+  if (stale.length) {
+    ctx.addItem({ kind: "info", text: stale.join("\n") });
   }
 
   // The plan phase is read-only by design; every other phase needs to write.
@@ -576,15 +586,15 @@ const handlers: Record<string, CommandHandler> = {
         "the change. Do not push. Show the final commit hash and message."
     );
   },
-  "/brainstorm": async (ctx) => {
+  "/flow-brainstorm": async (ctx) => {
     const input = ctx.arg.trim();
     const existing = loadProjectState(ctx.workspace);
     if (!existing && !input) {
       ctx.addItem({
         kind: "info",
         text:
-          `Usage: /brainstorm <your project idea>. Starts the ${PHASE_ORDER.join(" → ")} workflow.\n` +
-          `Name it yourself with a short prefix: /brainstorm reverser: a script that reverses a string`,
+          `Usage: /flow-brainstorm <your project idea>. Starts the ${PHASE_ORDER.join(" → ")} workflow.\n` +
+          `Name it yourself with a short prefix: /flow-brainstorm reverser: a script that reverses a string`,
       });
       return;
     }
@@ -600,7 +610,7 @@ const handlers: Record<string, CommandHandler> = {
         text:
           `Starting a new project "${name}". The previous project "${existing.name}" was in the ` +
           `${existing.phase} phase; its docs/${existing.name}/ artifacts are untouched, and ` +
-          `/project goto ${existing.phase} after /brainstorm ${existing.name} returns to it.`,
+          `/project goto ${existing.phase} after /flow-brainstorm ${existing.name} returns to it.`,
       });
     }
     saveProjectState(ctx.workspace, name, "brainstorm");
@@ -617,37 +627,34 @@ const handlers: Record<string, CommandHandler> = {
     await compactAtPhaseBoundary(ctx, "brainstorm");
     return ctx.runAgent(phasePrompt(name, "brainstorm", idea));
   },
+  // `/plan` (no `flow-` prefix) is pure plan-mode control — on/off or a bare
+  // toggle — and never touches the project workflow. `/flow-plan` runs the
+  // workflow's plan phase. Splitting these removes the ambiguity the old
+  // combined `/plan` had, where a bare call meant different things depending
+  // on whether a project happened to be active.
   "/plan": (ctx) => {
-    // `/plan on|off` is explicit mode control and never touches the workflow.
-    // A bare `/plan` runs the plan phase when a project is active, and toggles
-    // the mode when there is none. Keeping the phase off the toggle path
-    // matters: `/plan` used to double as a toggle, so flipping into read-only
-    // mid-build silently reset the project to the plan phase and re-ran it.
     const explicit = ctx.arg.trim().toLowerCase();
-    const project = loadProjectState(ctx.workspace);
-    if (explicit === "on" || explicit === "off" || (!project && !explicit)) {
-      const next = explicit ? explicit === "on" : !ctx.planMode;
-      ctx.setPlanMode(next);
-      ctx.agent.planMode = next;
-      // Plan mode and accept-edits are mutually exclusive; entering one via
-      // either path must turn the other off.
-      if (next && ctx.acceptEdits) {
-        ctx.agent.acceptEdits = false;
-        ctx.setAcceptEdits(false);
-      }
-      ctx.addItem({
-        kind: "info",
-        text: next
-          ? "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked. Run /plan off to execute."
-          : "Plan mode OFF — the agent can make changes again.",
-      });
-      return;
+    const next = explicit ? explicit === "on" : !ctx.planMode;
+    ctx.setPlanMode(next);
+    ctx.agent.planMode = next;
+    // Plan mode and accept-edits are mutually exclusive; entering one via
+    // either path must turn the other off.
+    if (next && ctx.acceptEdits) {
+      ctx.agent.acceptEdits = false;
+      ctx.setAcceptEdits(false);
     }
-    return runPhase(ctx, "plan");
+    ctx.addItem({
+      kind: "info",
+      text: next
+        ? "Plan mode ON — read-only. The agent will explore and propose a plan; edits and shell are blocked. Run /plan off to execute."
+        : "Plan mode OFF — the agent can make changes again.",
+    });
   },
-  "/spec": (ctx) => runPhase(ctx, "spec"),
-  "/build": (ctx) => runPhase(ctx, "build"),
-  "/review": (ctx) => runPhase(ctx, "review"),
+  "/flow-spec": (ctx) => runPhase(ctx, "spec"),
+  "/flow-plan": (ctx) => runPhase(ctx, "plan"),
+  "/flow-build": (ctx) => runPhase(ctx, "build"),
+  "/flow-review": (ctx) => runPhase(ctx, "review"),
+  "/flow-fix": (ctx) => runPhase(ctx, "fix"),
   "/project": (ctx) => {
     const [sub = "", ...rest] = ctx.arg.trim().split(/\s+/);
     const project = loadProjectState(ctx.workspace);
@@ -667,7 +674,7 @@ const handlers: Record<string, CommandHandler> = {
     if (!project) {
       ctx.addItem({
         kind: "info",
-        text: "No active project workflow. Start one with /brainstorm <idea>.",
+        text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
       });
       return;
     }
@@ -703,13 +710,16 @@ const handlers: Record<string, CommandHandler> = {
       const artifact = artifactPath(project.name, p);
       return `  ${marker} ${p.padEnd(11)}${PHASE_SUMMARY[p]}\n      ${artifact ?? "(application code)"}`;
     });
+    const stale = staleArtifacts(ctx.workspace, project.name, project.phase);
+    const staleBlock = stale.length ? `\n\n${stale.join("\n")}` : "";
     ctx.addItem({
       kind: "info",
       text:
         `Project "${project.name}" — ${project.phase} phase` +
         (project.updatedAt ? ` (since ${project.updatedAt.slice(0, 10)})` : "") +
-        `\n\n${lines.join("\n")}\n\n` +
-        `Run ${PHASE_COMMAND[project.phase]} to continue · /project goto <phase> to move · ` +
+        `\n\n${lines.join("\n")}` +
+        staleBlock +
+        `\n\nRun ${PHASE_COMMAND[project.phase]} to continue · /project goto <phase> to move · ` +
         `/project rename <name> · /project clear to end the workflow.`,
     });
   },
