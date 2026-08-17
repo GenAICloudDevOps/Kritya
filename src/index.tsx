@@ -34,6 +34,7 @@ import { ALL_TOOLS, READONLY_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
 import { TrustPrompt } from "./ui/TrustPrompt.js";
+import { AiDisclosurePrompt } from "./ui/AiDisclosurePrompt.js";
 import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
 import type { ElicitationField, ElicitationResult, TaskItem, ToolDef } from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
@@ -49,6 +50,7 @@ import { loadCustomCommands } from "./commands/custom.js";
 import { pluginsDir, scanPlugins, userPluginsDir } from "./plugins/discover.js";
 import { loadPluginMcpServers } from "./plugins/mcp.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
+import { isAiDisclosureShown, markAiDisclosureShown } from "./trust/aiDisclosure.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
 import { installCrashHandlers } from "./crash.js";
@@ -277,7 +279,32 @@ async function resolveMcpServerTrust(
   });
 }
 
+/**
+ * Shown once per workspace, on the interactive path only. Persisted in
+ * ~/.kritya/ai-disclosure.json, keyed by resolved workspace path — see
+ * isAiDisclosureShown/markAiDisclosureShown.
+ */
+async function showAiDisclosureNotice(): Promise<void> {
+  return new Promise((resolve) => {
+    const instance = render(
+      <AiDisclosurePrompt
+        onDismiss={() => {
+          instance.clear();
+          instance.unmount();
+          resolve();
+        }}
+      />
+    );
+  });
+}
+
 async function main() {
+  const config = loadConfig();
+  if (!isAiDisclosureShown(workspace)) {
+    await showAiDisclosureNotice();
+    markAiDisclosureShown(workspace);
+  }
+
   const trustWorkspace = await resolveWorkspaceTrust();
   if (trustWorkspace) {
     // Only the workspace's own .env — it's part of the trust-gated content.
@@ -286,7 +313,6 @@ async function main() {
     loadDotEnv([path.join(workspace, ".env")]);
   }
 
-  const config = loadConfig();
   const provider = resolveProvider(config, args.provider || undefined);
   const apiKey = provider.apiKey;
   if (!apiKey) {

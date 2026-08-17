@@ -411,6 +411,7 @@ export function App({
       releaseKill,
       setModelEverywhere,
       provider,
+      model,
       setProviderEverywhere,
       refreshFileList,
       runAgent,

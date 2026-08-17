@@ -200,6 +200,23 @@ Configurable in `~/.kritya/config.json`, or with `KRITYA_RETENTION_DAYS`
 - `otel`: persisted default for tracing (`"off"` / `"file"` / `"console"` /
   `"both"`), same relationship to `KRITYA_OTEL`.
 
+**AI disclosure.** Backs the [AI disclosure](../SECURITY.md#ai-disclosure-eu-ai-act-article-50)
+notes in SECURITY.md:
+
+```json
+{
+  "commitAttribution": true
+}
+```
+
+- `commitAttribution`: `true` (default) makes `/commit` append a
+  `Generated-By: kritya (<provider>/<model>)` trailer to the commit message;
+  set `false` to opt out.
+- The one-time, first-run "kritya is an AI agent" notice is shown once per
+  **workspace**, not per config setting — kritya tracks which workspaces have
+  seen it in `~/.kritya/ai-disclosure.json`, keyed by resolved workspace path
+  (same pattern as `trusted.json`'s per-workspace trust decisions).
+
 ## Configuration file
 
 `~/.kritya/config.json`:

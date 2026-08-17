@@ -89,6 +89,18 @@ of:
   are isolated on their own git worktree/branch and have destructive commands
   blocked outright, since there's no one present to confirm a prompt.
 
+## AI disclosure (EU AI Act Article 50)
+
+kritya is an AI agent: you launch it by name and it reads/writes files and
+runs shell commands via a model you configure, so there is no disguise to
+disclose — Article 50(1)'s "obvious from the circumstances" exemption
+applies. On first interactive run in a workspace, kritya prints a one-time
+notice to that effect (skipped in headless/CI mode, where `--trust` already
+signals deliberate, informed use). By default, `/commit` appends a
+`Generated-By: kritya (<provider>/<model>)` trailer to the commit message it
+writes, disclosing that the change was AI-assisted; set `commitAttribution`
+to `false` in config to opt out.
+
 ## Privacy / telemetry
 
 kritya collects **no telemetry** by default. It talks only to the model

@@ -160,6 +160,7 @@ export interface CommandContext {
   releaseKill(): void;
   setModelEverywhere(id: string): void;
   provider: string;
+  model: string;
   setProviderEverywhere(name: string, persist?: boolean): void;
   refreshFileList(): void;
   runAgent(text: string, images?: string[]): Promise<void>;
@@ -580,10 +581,15 @@ const handlers: Record<string, CommandHandler> = {
   },
   "/commit": (ctx) => {
     ctx.addItem({ kind: "user", text: "/commit" });
+    const attribution = ctx.config.commitAttribution !== false;
+    const trailerInstruction = attribution
+      ? ` End the commit message with a trailer on its own line: ` +
+        `"Generated-By: kritya (${ctx.provider}/${ctx.model})".`
+      : "";
     return ctx.runAgent(
       "Review the current git changes (git status, git diff), stage the appropriate files, " +
         "and create a commit with a well-written conventional-commit message that describes " +
-        "the change. Do not push. Show the final commit hash and message."
+        `the change.${trailerInstruction} Do not push. Show the final commit hash and message.`
     );
   },
   "/flow-brainstorm": async (ctx) => {

@@ -95,6 +95,12 @@ export interface CliConfig {
    * this if set.
    */
   otel?: "off" | "file" | "console" | "both";
+  /**
+   * Whether `/commit` appends a `Generated-By: kritya (<provider>/<model>)`
+   * trailer to the commit message, disclosing that the change was
+   * AI-assisted. Default true; set false to opt out.
+   */
+  commitAttribution?: boolean;
 }
 
 /**
