@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { isAiDisclosureShown, markAiDisclosureShown } from "../trust/aiDisclosure.js";
+import {
+  aiDisclosureShownAt,
+  isAiDisclosureShown,
+  markAiDisclosureShown,
+} from "../trust/aiDisclosure.js";
 
 async function makeWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "kritya-ai-disclosure-test-"));
@@ -37,4 +41,23 @@ test("isAiDisclosureShown is false for malformed JSON", async () => {
   const storeFile = path.join(await makeWorkspace(), "ai-disclosure.json");
   await fs.writeFile(storeFile, "{ not json");
   assert.equal(isAiDisclosureShown(ws, storeFile), false);
+});
+
+test("markAiDisclosureShown records an ISO timestamp, not just a boolean", async () => {
+  const ws = await makeWorkspace();
+  const storeFile = path.join(await makeWorkspace(), "ai-disclosure.json");
+  const before = Date.now();
+  markAiDisclosureShown(ws, storeFile);
+  const after = Date.now();
+
+  const shownAt = aiDisclosureShownAt(ws, storeFile);
+  assert.ok(shownAt);
+  const parsed = new Date(shownAt).getTime();
+  assert.ok(parsed >= before && parsed <= after);
+});
+
+test("aiDisclosureShownAt is undefined for a workspace that hasn't seen the notice", async () => {
+  const ws = await makeWorkspace();
+  const storeFile = path.join(await makeWorkspace(), "ai-disclosure.json");
+  assert.equal(aiDisclosureShownAt(ws, storeFile), undefined);
 });

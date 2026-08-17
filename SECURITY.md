@@ -95,11 +95,28 @@ kritya is an AI agent: you launch it by name and it reads/writes files and
 runs shell commands via a model you configure, so there is no disguise to
 disclose — Article 50(1)'s "obvious from the circumstances" exemption
 applies. On first interactive run in a workspace, kritya prints a one-time
-notice to that effect (skipped in headless/CI mode, where `--trust` already
-signals deliberate, informed use). By default, `/commit` appends a
+notice to that effect, recording the acknowledgment (with a timestamp, not
+just a boolean) in `~/.kritya/ai-disclosure.json`, keyed by workspace path —
+so it shows again in a new project rather than being silently suppressed
+machine-wide. By default, `/commit` appends a
 `Generated-By: kritya (<provider>/<model>)` trailer to the commit message it
 writes, disclosing that the change was AI-assisted; set `commitAttribution`
 to `false` in config to opt out.
+
+**Headless/CI mode.** `kritya --prompt` never shows the interactive notice —
+this is a deliberate scope decision, not an oversight. There is no TTY to
+show a notice to and no human present to read one; the workspace's own
+`.kritya/settings.json` allow rules, hooks, `.env`, and custom commands stay
+inert there unless `--trust` is passed explicitly (see "Scope and design
+notes" above), and that explicit flag is itself the informed, deliberate
+invocation Article 50(1)'s "obvious from the circumstances" exemption turns
+on.
+
+**Scope.** kritya's own disclosure covers kritya as the AI _system_ under
+Article 50(1) — it does not, and cannot, discharge whatever separate
+obligations your chosen model provider (NVIDIA, OpenAI, Anthropic, etc.) has
+as a GPAI _model_ provider under Title VIII. Those are a different party's
+responsibility under the Act.
 
 ## Privacy / telemetry
 

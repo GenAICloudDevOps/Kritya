@@ -9,14 +9,19 @@ import { debugLog } from "../config/debug.js";
  * agent" notice (see AiDisclosurePrompt.tsx), keyed by resolved workspace
  * path — same shape and persistence pattern as trust.ts's trusted.json, so a
  * dismissal in one workspace doesn't suppress the notice in every other one.
+ *
+ * Values are the ISO timestamp the notice was acknowledged, not a plain
+ * boolean: if this file is ever pointed to as evidence the user was told
+ * ("Art. 50(1) disclosure happened"), a bare true/false has no record of
+ * *when* — the timestamp is what makes it worth citing.
  */
 
 const DISCLOSURE_FILE = path.join(CONFIG_DIR, "ai-disclosure.json");
 
-function loadStore(storeFile: string): Record<string, boolean> {
+function loadStore(storeFile: string): Record<string, string> {
   try {
     const parsed = JSON.parse(fs.readFileSync(storeFile, "utf8"));
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, boolean>) : {};
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
   } catch (err) {
     // A missing file means "not shown anywhere yet" (normal); a malformed one
     // means every workspace re-shows the notice, worth being able to see.
@@ -27,13 +32,21 @@ function loadStore(storeFile: string): Record<string, boolean> {
 
 /** Whether the AI disclosure notice has already been shown and dismissed for this workspace. */
 export function isAiDisclosureShown(workspace: string, storeFile = DISCLOSURE_FILE): boolean {
-  return loadStore(storeFile)[path.resolve(workspace)] === true;
+  return typeof loadStore(storeFile)[path.resolve(workspace)] === "string";
 }
 
-/** Record that the AI disclosure notice has been shown and dismissed for this workspace. */
+/** When the AI disclosure notice was shown and dismissed for this workspace, if it was. */
+export function aiDisclosureShownAt(
+  workspace: string,
+  storeFile = DISCLOSURE_FILE
+): string | undefined {
+  return loadStore(storeFile)[path.resolve(workspace)];
+}
+
+/** Record that the AI disclosure notice has been shown and dismissed for this workspace, now. */
 export function markAiDisclosureShown(workspace: string, storeFile = DISCLOSURE_FILE): void {
   const store = loadStore(storeFile);
-  store[path.resolve(workspace)] = true;
+  store[path.resolve(workspace)] = new Date().toISOString();
   fs.mkdirSync(path.dirname(storeFile), { recursive: true, mode: 0o700 });
   hardenWindowsDir(path.dirname(storeFile));
   fs.writeFileSync(storeFile, JSON.stringify(store, null, 2) + "\n", { mode: 0o600 });
