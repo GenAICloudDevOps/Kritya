@@ -28,7 +28,7 @@ import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
 import { createMeter } from "./telemetry/metrics.js";
 import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
-import { sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
+import { defaultSandboxMode, sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
 import { lspManager } from "./lsp/manager.js";
 import { ALL_TOOLS, READONLY_TOOLS } from "./tools/index.js";
 import { UndoStack } from "./undo/undo.js";
@@ -328,7 +328,7 @@ async function main() {
     process.exit(1);
   }
 
-  const sandboxMode = config.sandboxExec ?? "auto";
+  const sandboxMode = config.sandboxExec ?? defaultSandboxMode();
   if (sandboxMode !== "off" && !sandboxAvailable()) {
     console.error(
       `⚠ sandboxExec is "${sandboxMode}" but ${sandboxUnavailableReason()}. ` +

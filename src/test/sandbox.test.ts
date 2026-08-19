@@ -3,6 +3,7 @@ import os from "node:os";
 import { test } from "node:test";
 import {
   buildSandboxedCommand,
+  defaultSandboxMode,
   sandboxAvailable,
   sandboxPathVariants,
   sandboxSharedTmpDir,
@@ -33,6 +34,17 @@ test("shouldSandbox: auto sandboxes every command on platforms with a sandbox bi
   assert.equal(shouldSandbox("auto", "npm test"), true);
   assert.equal(shouldSandbox("auto", "git status"), true);
   assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true);
+});
+
+test("defaultSandboxMode: strict on Windows (no sandbox binary to back auto), auto elsewhere", (t) => {
+  t.mock.method(os, "platform", () => "win32");
+  assert.equal(defaultSandboxMode(), "strict");
+
+  t.mock.method(os, "platform", () => "linux");
+  assert.equal(defaultSandboxMode(), "auto");
+
+  t.mock.method(os, "platform", () => "darwin");
+  assert.equal(defaultSandboxMode(), "auto");
 });
 
 test("buildSandboxedCommand returns null when unavailable, else a runnable wrapper", () => {

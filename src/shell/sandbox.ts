@@ -44,6 +44,18 @@ export function sandboxAvailable(): boolean {
   return sandboxTool() !== null;
 }
 
+/**
+ * Default `sandboxMode` when the config leaves `sandboxExec` unset. "auto" on
+ * Linux/macOS, where bwrap/sandbox-exec can actually confine writes to the
+ * workspace. On Windows there's no sandbox backend at all (see
+ * `sandboxUnavailableReason`), so "auto"/"always" would let a flagged command
+ * run unprotected outside the workspace — "strict" refuses those instead of
+ * silently falling back.
+ */
+export function defaultSandboxMode(): SandboxMode {
+  return os.platform() === "win32" ? "strict" : "auto";
+}
+
 /** One-line reason sandboxing can't run here, for a fallback warning. */
 export function sandboxUnavailableReason(): string {
   const platform = os.platform();

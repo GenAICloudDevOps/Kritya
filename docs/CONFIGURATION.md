@@ -58,16 +58,15 @@ the workspace, regardless of what the command text looks like.
 { "sandboxExec": "auto" }
 ```
 
-- `"auto"` (**default**) — sandbox every command on Linux/macOS when the
-  sandbox binary is present. On Windows there is no sandbox binary to use, so
-  `"auto"` falls back to sandboxing only the commands the danger guard flags,
-  which avoids a fallback note on every single shell call.
+- `"auto"` (**default on Linux/macOS**) — sandbox every command when the
+  sandbox binary is present.
 - `"always"` — sandbox every command on every platform, Windows included
   (where each one then takes the unavailable-fallback path below).
-- `"strict"` — like `"always"`, but **fail-closed**: if no sandbox binary is
-  available, the command is refused outright instead of running unsandboxed.
-  Use this when the sandbox is a hard requirement rather than a best-effort
-  one.
+- `"strict"` (**default on Windows**, since there's no sandbox binary there to
+  back `"auto"`) — like `"always"`, but **fail-closed**: if no sandbox binary
+  is available, the command is refused outright instead of running
+  unsandboxed. Use this when the sandbox is a hard requirement rather than a
+  best-effort one.
 - `"off"` — disables sandboxing entirely.
 
 Backed by `bwrap`/bubblewrap on Linux and `sandbox-exec` on macOS; not yet

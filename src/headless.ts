@@ -35,6 +35,7 @@ import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { installCrashHandlers } from "./crash.js";
+import { defaultSandboxMode } from "./shell/sandbox.js";
 import type { AgentHandlers, ElicitationResult, ToolDef } from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
 
@@ -248,7 +249,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     // (rather than an always-cancel stub) lets ask_user report itself as
     // unavailable, same message a subagent gets, instead of "the user
     // declined" for a question no one was actually asked.
-    { workspace, sandboxMode: config.sandboxExec ?? "auto", trustWorkspace },
+    { workspace, sandboxMode: config.sandboxExec ?? defaultSandboxMode(), trustWorkspace },
     permissions,
     session,
     initialHistory

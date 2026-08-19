@@ -28,6 +28,7 @@ import { ALL_TOOLS } from "./tools/index.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import { installCrashHandlers } from "./crash.js";
+import { defaultSandboxMode } from "./shell/sandbox.js";
 
 export interface EngineSession {
   agent: Agent;
@@ -109,7 +110,7 @@ export async function createEngineSession(
     client,
     () => currentModel,
     ALL_TOOLS,
-    { workspace, sandboxMode: config.sandboxExec ?? "auto", trustWorkspace },
+    { workspace, sandboxMode: config.sandboxExec ?? defaultSandboxMode(), trustWorkspace },
     permissions,
     session,
     []

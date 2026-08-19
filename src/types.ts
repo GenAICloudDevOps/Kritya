@@ -54,7 +54,7 @@ export interface SubagentResult {
 export interface ToolContext {
   /** Absolute path of the workspace root; all file tools are confined to it. */
   workspace: string;
-  /** OS-level sandboxing policy for the `shell` tool (see config's sandboxExec). Default "auto". */
+  /** OS-level sandboxing policy for the `shell` tool (see config's sandboxExec). Default "auto" (Linux/macOS) or "strict" (Windows). */
   sandboxMode?: SandboxMode;
   /**
    * Whether this workspace's gated content (see src/trust/trust.ts) has been
