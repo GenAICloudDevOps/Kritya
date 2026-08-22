@@ -115,6 +115,12 @@ export class LspClient {
       });
       this.proc = proc;
 
+      // A write can still be in flight when dispose() kills the process —
+      // stdin then errors asynchronously (EPIPE), separately from proc's own
+      // "error" event below. Unhandled, that's an uncaught exception; on
+      // Windows the timing between kill() and pipe teardown makes it common.
+      proc.stdin.on("error", () => {});
+
       proc.on("error", (err: NodeJS.ErrnoException) => {
         this.markDead(
           err.code === "ENOENT"
