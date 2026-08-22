@@ -4,6 +4,12 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1-beta] — 2026-08-22
+
+### Changed
+
+- **DeepSeek V4 Flash model ID updated** to `deepseek-ai/deepseek-v4-flash-0731`.
+
 ## [0.8.0-beta] — 2026-08-21
 
 ### Added

@@ -4,11 +4,15 @@
 
 Open source, [MIT licensed](LICENSE).
 
-A lean,interctive coding agent for your terminal. Provider-agnostic —
+A lean, interctive coding agent for your terminal. Provider-agnostic —
 it works with any OpenAI-compatible endpoint: [build.nvidia.com](https://build.nvidia.com)
 (Qwen3 Coder, Kimi K2, DeepSeek, GLM, Nemotron, ...) by default, plus OpenAI,
 OpenRouter, Groq, DeepSeek, Mistral, Together, and local models via Ollama.
+
 Works on Linux, macOS, and Windows.
+
+Configured for OpenAI-compatible endpoint - used with build.nvidia.com; other
+providers are wired the same way but not exercised.
 
 ```
 cd your-project
@@ -19,7 +23,29 @@ The agent can read, write, and edit files, search code, and run shell commands �
 autonomously looping until your request is done. Anything that mutates state
 (writes, edits, shell commands) asks for your permission first.
 
+## Features
+
+- **Provider-agnostic** — OpenAI-compatible endpoint (NVIDIA, OpenAI,
+  OpenRouter, Groq, DeepSeek, Mistral, Together, Ollama, ...); tested with
+  NVIDIA only
+- **Permission-gated actions** — every file write/edit/shell command asks
+  first, with configurable allow/deny rules
+- **Sandboxed execution** — OS-enforced backstop (`bwrap`/`sandbox-exec`)
+  confining writes to the workspace; falls back to unsandboxed (with a
+  warning) if the sandbox binary isn't installed
+- **Staged project workflow** — `/flow-brainstorm → spec → plan → build →
+review → fix` for building something new end-to-end
+- **MCP + Agent Plugins support** — extend with external tools/servers, each
+  individually trust-gated
+- **Undo/redo/checkpoints** — revert or rewind file changes and conversation
+  state
+- **Office docs & notebooks** — read/write Word, Excel, PowerPoint, PDF,
+  Jupyter
+- **Headless/CI mode** — scriptable, no-TTY runs for automation
+
 ## Setup
+
+Requires Node.js >=22.
 
 1. Get an API key from your chosen provider (click any
    model → "Get API Key").
@@ -32,13 +58,17 @@ autonomously looping until your request is done. Anything that mutates state
    Optional: add `TAVILY_API_KEY` the same way to enable the agent's
    web-search tool (`/web-search`) — get one at [tavily.com](https://tavily.com).
 
+   Optional (Linux): install `bubblewrap` (`bwrap`) for OS-level command
+   sandboxing — macOS has its sandbox built in; without `bwrap`, Linux falls
+   back to running commands unsandboxed with a warning.
+
 3. Install and run — pick one:
 
 ```bash
 # Option A: npm
 npm install -g kritya@beta
 cd ~/some-project
-kritya .
+kritya               # enter
 ```
 
 ```bash
@@ -49,8 +79,20 @@ npm install
 npm run build
 npm link           # puts `kritya` on your PATH
 cd ~/some-project
-kritya .
+kritya               # enter
 ```
+
+## Screenshots
+
+![One-time AI disclosure notice on first launch](screenshots/1.png)
+
+![Startup banner with model and workspace status](screenshots/2.png)
+
+![Permission prompt for a web search request](screenshots/3.png)
+
+![Command list shown after typing `/`](screenshots/4.png)
+
+![Test suite and coverage output](screenshots/5.png)
 
 ## Usage
 
@@ -357,25 +399,6 @@ Tavily if you use web search). Sessions and config stay on your machine under
 to the OpenTelemetry Collector you point it at — nothing is exported anywhere
 unless you configure that endpoint yourself.
 
-## Desktop app
-
-`electron/` wraps the same agent core in a cross-platform GUI — same tools,
-permissions, and kill switch as the terminal client, with a renderer instead
-of the Ink UI:
-
-```bash
-npm run electron:dev     # build, then launch the Electron app from source
-npm run electron:build   # package a distributable (nsis/dmg/AppImage)
-```
-
-The main process (`electron/main.mjs`) is deliberately thin: it starts one
-agent session per window against the compiled core (`dist/engine.js`, the
-same contract the terminal client uses) and exposes it to the renderer over
-IPC — start/prompt a session, switch model/provider, respond to a permission
-prompt, list/load past sessions, and engage/release the kill switch. Closing
-a window or hitting kill tears down only that window's session, so other open
-windows (and their background processes/LSP servers) keep running.
-
 ## Development
 
 ```bash
@@ -391,8 +414,8 @@ Architecture: `src/provider` (OpenAI-compatible streaming client) → `src/agent
 tools) → `src/ui` (Ink/React terminal UI), with `src/permissions`, `src/trust`,
 `src/hooks`, `src/mcp`, `src/plugins`, `src/lsp`, `src/commands`, `src/session`,
 `src/shell` (background processes + sandboxing), `src/audit`, `src/telemetry`,
-and `src/git` supporting. `src/headless.ts` and `src/engine.ts` are the CI and
-Electron entry points onto the same core. See
+and `src/git` supporting. `src/headless.ts` and `src/engine.ts` are the CI
+entry points onto the same core. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a full tour and
 [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 

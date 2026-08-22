@@ -49,6 +49,12 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
 - Describe user-facing changes in the PR and add a `CHANGELOG.md` entry under
   "Unreleased".
 - One logical change per PR where practical.
+- Before opening a PR, run the full check suite locally — this mirrors what
+  CI runs:
+
+  ```bash
+  npm ci && npm run check:audit && npm run format:check && npm run lint && npm run check:install-scripts && npm run test:coverage && npm run build
+  ```
 
 ## Reporting bugs and requesting features
 

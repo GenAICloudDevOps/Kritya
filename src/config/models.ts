@@ -55,7 +55,7 @@ export const CURATED_MODELS: ModelInfo[] = [
   },
   { id: "deepseek-ai/deepseek-v4-pro", label: "DeepSeek V4 Pro", contextWindow: 128_000 },
   {
-    id: "deepseek-ai/deepseek-v4-flash",
+    id: "deepseek-ai/deepseek-v4-flash-0731",
     label: "DeepSeek V4 Flash",
     note: "fast + cheap",
     contextWindow: 128_000,
