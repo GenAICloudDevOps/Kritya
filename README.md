@@ -84,13 +84,23 @@ kritya               # enter
 
 ## Screenshots
 
+**One-time AI disclosure notice on first launch**
+
 ![One-time AI disclosure notice on first launch](screenshots/1.png)
+
+**Startup banner with model and workspace status**
 
 ![Startup banner with model and workspace status](screenshots/2.png)
 
+**Permission prompt for a web search request**
+
 ![Permission prompt for a web search request](screenshots/3.png)
 
+**Command list shown after typing `/`**
+
 ![Command list shown after typing `/`](screenshots/4.png)
+
+**Test suite and coverage output**
 
 ![Test suite and coverage output](screenshots/5.png)
 
