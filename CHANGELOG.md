@@ -4,6 +4,45 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0-beta] — 2026-08-21
+
+### Added
+
+- **EU AI Act disclosure** — one-time, per-workspace notice on first
+  interactive launch (Art. 50(1)/(2)), recorded with a timestamp in
+  `~/.kritya/ai-disclosure.json`. `/commit` appends a
+  `Generated-By: kritya (<provider>/<model>)` trailer by default; set
+  `commitAttribution` to `false` to opt out. Headless/`--prompt` mode shows
+  no notice, consistent with the existing `--trust` scope decision.
+- **Project workflow: fix phase, `ask_user`, stale-artifact warnings** —
+  workflow commands renamed to `/flow-brainstorm`, `/flow-spec`,
+  `/flow-plan`, `/flow-build`, `/flow-review`, plus a new `/flow-fix` phase
+  that addresses review findings and re-verifies each one. Brainstorm and
+  spec gain an `ask_user` multiple-choice tool; spec tags criteria
+  MUST/LATER, plan tags milestones RISKY/ROUTINE, and each phase warns when
+  an earlier artifact was edited after later phases depended on it.
+- **Non-functional requirements in the workflow** — spec now asks about
+  security/reliability/performance/observability requirements up front
+  (tagged SEC#/REL#) instead of catching them only at review time; build
+  enforces test-first ordering and a failure-path test for tagged
+  milestones; review adds a third RELIABILITY subagent.
+
+### Fixed
+
+- `kritya` vs `kritya --provider <name>` now consistently pick the right
+  provider/model.
+- An empty-bodied 404 from the provider is retried instead of losing the
+  turn.
+- `sandboxExec` now defaults to `"strict"` on Windows, since there's no
+  sandbox binary there to back `"auto"`/`"always"` — a flagged command
+  previously ran unprotected.
+
+### Changed
+
+- CI now tests Node 22.x and 24.x on Ubuntu; the macOS leg was dropped
+  (10x the cost of Linux) — `src/shell/sandbox.ts`'s `sandbox-exec` path
+  has no CI coverage as a result and needs manual/macOS testing for changes.
+
 ## [0.7.0-beta] — 2026-08-12
 
 ### Added

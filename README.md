@@ -1,5 +1,9 @@
 # kritya
 
+> ⚠️ **Beta** — APIs, flags, and behavior may still change between releases.
+
+Open source, [MIT licensed](LICENSE).
+
 A lean,interctive coding agent for your terminal. Provider-agnostic —
 it works with any OpenAI-compatible endpoint: [build.nvidia.com](https://build.nvidia.com)
 (Qwen3 Coder, Kimi K2, DeepSeek, GLM, Nemotron, ...) by default, plus OpenAI,
@@ -24,10 +28,20 @@ autonomously looping until your request is done. Anything that mutates state
      you launch in, the directory you run from, and `~/.kritya/.env`
    - Linux/macOS: `export NVIDIA_API_KEY=nvapi-...`
    - Windows: `setx NVIDIA_API_KEY nvapi-...` (then open a new terminal)
-3. Install and run:
+3. Install and run — pick one:
 
 ```bash
-npm install        # from this repo
+# Option A: npm
+npm install -g kritya@beta
+cd ~/some-project
+kritya .
+```
+
+```bash
+# Option B: from source
+git clone https://github.com/GenAICloudDevOps/Kritya.git
+cd Kritya
+npm install
 npm run build
 npm link           # puts `kritya` on your PATH
 cd ~/some-project

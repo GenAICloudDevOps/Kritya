@@ -1,5 +1,9 @@
 # Contributing to kritya
 
+> ⚠️ **Beta project** — APIs, flags, and internals may still change between
+> releases. Expect some churn, and check for open issues/discussion before
+> starting larger changes.
+
 Thanks for your interest in improving kritya! This is a lean terminal coding
 agent, and contributions that keep it lean and dependency-light are especially
 welcome.
@@ -15,6 +19,8 @@ npm test
 npm run dev        # run from source against a scratch project
 ```
 
+Requires Node >=22. CI runs both 22.x and 24.x on Ubuntu.
+
 You'll need a provider API key (see the README). For most work, the tier
 at [build.nvidia.com](https://build.nvidia.com) is enough.
 
@@ -28,6 +34,10 @@ at [build.nvidia.com](https://build.nvidia.com) is enough.
   _why_, not _what_.
 - **Avoid new dependencies** unless there's a clear, load-bearing reason. Part
   of kritya's value is a small install footprint.
+- **macOS sandbox changes need manual testing.** CI only runs on Ubuntu, so
+  `src/shell/sandbox.ts`'s `sandbox-exec` (macOS) path has no automated
+  coverage — test changes there by hand on macOS, or re-enable the macOS CI
+  leg for that PR.
 
 ## Project layout
 

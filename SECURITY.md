@@ -7,6 +7,11 @@ issue. Use GitHub's "Report a vulnerability" (Security Advisories) on the
 repository, or contact the maintainer directly. We aim to acknowledge reports
 within a few days.
 
+kritya is beta software. The properties below are implemented and covered by
+automated checks (`npm audit`, Dependabot), but have not had a third-party
+security audit or penetration test — treat them as defense-in-depth, not a
+certified guarantee.
+
 ## Scope and design notes
 
 kritya runs an autonomous agent that can read and modify files and run shell
