@@ -19,10 +19,11 @@ npm test
 npm run dev        # run from source against a scratch project
 ```
 
-Requires Node >=22. CI runs both 22.x and 24.x on Ubuntu.
+Requires Node >=22. CI runs 22.x and 24.x on Ubuntu, plus 22.x on Windows
+and macOS.
 
-You'll need a provider API key (see the README). For most work, the tier
-at [build.nvidia.com](https://build.nvidia.com) is enough.
+You'll need a provider API key (see the README) — get one at
+[build.nvidia.com](https://build.nvidia.com).
 
 ## Development workflow
 
@@ -34,10 +35,6 @@ at [build.nvidia.com](https://build.nvidia.com) is enough.
   _why_, not _what_.
 - **Avoid new dependencies** unless there's a clear, load-bearing reason. Part
   of kritya's value is a small install footprint.
-- **macOS sandbox changes need manual testing.** CI only runs on Ubuntu, so
-  `src/shell/sandbox.ts`'s `sandbox-exec` (macOS) path has no automated
-  coverage — test changes there by hand on macOS, or re-enable the macOS CI
-  leg for that PR.
 
 ## Project layout
 

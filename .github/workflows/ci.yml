@@ -19,17 +19,7 @@ jobs:
   # (injection, unsafe regex, etc). Results land in the repo's Security tab,
   # not in job logs — a green check here means no new alerts, not zero
   # findings ever.
-  #
-  # Disabled for now via `if: false`: the scan itself runs fine, but the
-  # final upload step fails with "Code scanning is not enabled for this
-  # repository" — that's a repo Settings > Code security and analysis toggle
-  # (and, on a private repo, may require GitHub Advanced Security), not
-  # something this workflow can fix. Kept as a real (non-commented) job so it
-  # stays valid, versioned YAML — re-enabling is flipping `if: false` to
-  # `if: true` (or deleting the line) once code scanning is turned on for the
-  # repo, not reconstructing a commented-out block from scratch.
   codeql:
-    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -86,14 +76,8 @@ jobs:
         include:
           - os: windows-latest
             node-version: 22.x
-          # macOS is commented out to conserve Actions minutes: it bills at
-          # 10x (vs 1x Linux, 2x Windows), which made it roughly three
-          # quarters of this workflow's cost on its own. The trade is real,
-          # not free — src/shell/sandbox.ts's `sandbox-exec` path is
-          # macOS-only and now has no CI coverage, so a change there needs
-          # testing by hand or by re-enabling this leg for that PR.
-          # - os: macos-latest
-          #   node-version: 22.x
+          - os: macos-latest
+            node-version: 22.x
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
