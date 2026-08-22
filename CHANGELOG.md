@@ -4,6 +4,14 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2-beta] — 2026-08-22
+
+### Changed
+
+- **npm package trimmed** — `dist/test/**` and `dist/electron/**` are now
+  excluded from the published tarball, cutting package size roughly in
+  half; local build, tests, and Electron scripts are unaffected.
+
 ## [0.8.1-beta] — 2026-08-22
 
 ### Changed

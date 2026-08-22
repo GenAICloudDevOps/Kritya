@@ -1,13 +1,15 @@
 {
   "name": "kritya",
-  "version": "0.8.1-beta",
+  "version": "0.8.2-beta",
   "description": "Kritya — a lean, provider-agnostic terminal coding agent (NVIDIA, OpenAI, OpenRouter, Groq, Ollama, and more)",
   "type": "module",
   "bin": {
     "kritya": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/test/**",
+    "!dist/electron/**"
   ],
   "engines": {
     "node": ">=22"
