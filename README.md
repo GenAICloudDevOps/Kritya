@@ -28,6 +28,10 @@ autonomously looping until your request is done. Anything that mutates state
      you launch in, the directory you run from, and `~/.kritya/.env`
    - Linux/macOS: `export NVIDIA_API_KEY=nvapi-...`
    - Windows: `setx NVIDIA_API_KEY nvapi-...` (then open a new terminal)
+
+   Optional: add `TAVILY_API_KEY` the same way to enable the agent's
+   web-search tool (`/web-search`) — get one at [tavily.com](https://tavily.com).
+
 3. Install and run — pick one:
 
 ```bash
@@ -242,7 +246,7 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 - **Session search** — `kritya -r` lists past sessions by title (first message);
   type to filter.
 - **Web search tool** — besides `/web-search`, the agent can search on its own when
-  it needs current information (needs `TAVILY_API_KEY` in `.env`, free at
+  it needs current information (needs `TAVILY_API_KEY` in `.env`, get one at
   tavily.com). Web content is delimited as untrusted so pages can't inject
   instructions into the agent.
 - **Reading the web, not just searching it** — `fetch_url` pulls the full text
