@@ -1,5 +1,9 @@
 # kritya
 
+[![CI](https://github.com/GenAICloudDevOps/Kritya/actions/workflows/ci.yml/badge.svg)](https://github.com/GenAICloudDevOps/Kritya/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/kritya/beta)](https://www.npmjs.com/package/kritya)
+[![License](https://img.shields.io/github/license/GenAICloudDevOps/Kritya)](LICENSE)
+
 > ⚠️ **Beta** — APIs, flags, and behavior may still change between releases.
 
 Open source, [MIT licensed](LICENSE).
