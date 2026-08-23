@@ -4,6 +4,25 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3-beta] — 2026-08-23
+
+### Fixed
+
+- **`.env` values redacted in the trust prompt** — reviewing a workspace's
+  trust settings previously printed secret values (API keys, tokens) in
+  plaintext. Only variable names are now shown; values are redacted so
+  credentials aren't exposed in the terminal, scrollback, or recordings.
+- **LSP client no longer crashes on a stdin write racing shutdown** — a
+  write in flight when the client is disposed could throw an unhandled
+  EPIPE error; it's now swallowed, most noticeable on Windows where the
+  kill/pipe-teardown timing made this common.
+
+### Changed
+
+- CI hardening: workflow timeouts, `harden-runner` audit mode, OpenSSF
+  Scorecard, and CodeQL re-enabled alongside the macOS test leg.
+- README now shows CI, npm version, and license badges.
+
 ## [0.8.2-beta] — 2026-08-22
 
 ### Changed
