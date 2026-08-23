@@ -168,9 +168,29 @@ function readGatedContent(workspace: string): GatedContent | null {
 }
 
 /**
+ * Redacts secret values from .env content while preserving variable names, so
+ * the trust prompt can show what's being loaded without printing raw
+ * credentials to the terminal (visible in scrollback, screen shares,
+ * recordings, or session logs).
+ */
+function redactEnvContent(env: string): string {
+  return env
+    .split("\n")
+    .map((line) => {
+      const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      if (!match) return line;
+      const [, key, value] = match;
+      return value.length ? `${key}=<redacted>` : line;
+    })
+    .join("\n");
+}
+
+/**
  * A human-readable rendering of ALL the gated content, for the trust prompt.
  * The user must be able to see everything they're approving — not just
- * settings.json but the .env contents and each custom command file.
+ * settings.json but the .env contents and each custom command file. .env
+ * values are redacted (see {@link redactEnvContent}) since they're often
+ * secrets that shouldn't be printed to the terminal.
  */
 export function describeGatedContent(workspace: string): string {
   const { allow, hooks } = readSettingsGatedContent(workspace);
@@ -183,7 +203,9 @@ export function describeGatedContent(workspace: string): string {
     );
   }
   if (env !== undefined) {
-    sections.push(`.env (loaded into the environment of every command):\n${env.trimEnd()}`);
+    sections.push(
+      `.env (loaded into the environment of every command — values redacted):\n${redactEnvContent(env.trimEnd())}`
+    );
   }
   if (commands) {
     const list = Object.entries(commands)

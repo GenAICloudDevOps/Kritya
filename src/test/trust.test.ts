@@ -68,7 +68,8 @@ test("describeGatedContent surfaces settings, .env, and custom commands", async 
   const preview = describeGatedContent(ws);
   assert.match(preview, /shell\(npm test\)/, "allow rules shown");
   assert.match(preview, /lint/, "hooks shown");
-  assert.match(preview, /EVIL_VAR=payload/, ".env contents shown");
+  assert.match(preview, /EVIL_VAR=<redacted>/, ".env variable name shown, value redacted");
+  assert.doesNotMatch(preview, /payload/, ".env value not printed in plaintext");
   assert.match(preview, /\/deploy/, "custom command listed");
 });
 
