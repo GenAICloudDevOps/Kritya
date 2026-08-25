@@ -48,6 +48,13 @@ const NAMED_PATTERNS: NamedPattern[] = [
     kind: "Private key block",
     re: /-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g,
   },
+  { kind: "npm access token", re: /\bnpm_[A-Za-z0-9]{36}\b/g },
+  { kind: "PyPI upload token", re: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}\b/g },
+  { kind: "Azure Storage Account key", re: /\b[A-Za-z0-9+/]{86}==(?![A-Za-z0-9+/=])/g },
+  {
+    kind: "GCP service account key",
+    re: /\b[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com\b/gi,
+  },
 ];
 
 // Generic "KEY = <opaque token>" assignments, gated by an entropy check so
