@@ -36,8 +36,12 @@ export default tseslint.config(
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
-      // The shell/hooks tools deliberately execute commands; not a lint concern.
-      "@typescript-eslint/no-explicit-any": "off",
     },
+  },
+  {
+    // Test mocks (e.g. fake fetch calls, loose telemetry payloads) reasonably
+    // want looser typing; production code stays strict.
+    files: ["src/test/**/*.ts", "src/test/**/*.tsx"],
+    rules: { "@typescript-eslint/no-explicit-any": "off" },
   }
 );
