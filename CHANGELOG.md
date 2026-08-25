@@ -4,6 +4,35 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4-beta] — 2026-08-25
+
+### Security
+
+- **Reflected XSS in the MCP OAuth callback page** — `error_description`
+  and other query-string values were interpolated into the local callback
+  server's HTML response without escaping. Both fields are now HTML-escaped.
+- **Double-unescaping in `fetch_url`'s HTML-to-text conversion** — decoding
+  `&amp;` before `&lt;`/`&gt;` let a doubly-encoded string collapse into a
+  live tag. `&amp;` is now decoded last, and the `<script>`/`<style>`/
+  `<noscript>` stripping regexes tolerate unclosed or malformed closing tags.
+- **Custom permission rules now match resolved paths** — a `deny`/`allow`
+  rule like `write_file(.env*)` only matched the exact literal path string
+  the model passed, so `./.env` or `sub/../.env` could slip past it. Rules
+  now match against the path resolved relative to the workspace, same as
+  the built-in sensitive-path check.
+- Hardened `.github/workflows/build.yml` with explicit
+  `permissions: contents: read` (OpenSSF Scorecard Token-Permissions).
+
+### Added
+
+- Secret scanning now detects npm access tokens, PyPI upload tokens, Azure
+  Storage Account keys, and GCP service account keys, in addition to the
+  existing AWS/GitHub/GitLab/Slack/Stripe/Anthropic/OpenAI/Google patterns.
+
+### Changed
+
+- Bumped Electron from 43.3.0 to 43.4.1.
+
 ## [0.8.3-beta] — 2026-08-23
 
 ### Fixed

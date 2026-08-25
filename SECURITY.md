@@ -55,11 +55,11 @@ of:
   real key it saw in some tool output into an ordinary file like `README.md`.
   So `write_file` and `edit_file` also scan the **content** being written for
   known key formats (AWS, GitHub, GitLab, Slack, Stripe, Google, OpenAI,
-  Anthropic, private key blocks, …) and high-entropy secret-shaped
-  assignments, and block the write. Shell and background-process output is
-  redacted with the same patterns before it reaches the transcript. Both are
-  heuristics — they can miss a novel key format and can false-positive on
-  random-looking fixtures.
+  Anthropic, npm, PyPI, Azure, GCP, private key blocks, …) and high-entropy
+  secret-shaped assignments, and block the write. Shell and
+  background-process output is redacted with the same patterns before it
+  reaches the transcript. Both are heuristics — they can miss a novel key
+  format and can false-positive on random-looking fixtures.
 - **SSRF guard.** `fetch_url` and the MCP HTTP transport share one host check
   that refuses private, loopback, link-local, and carrier-grade-NAT ranges, so
   neither can be steered into your internal network or a cloud metadata
