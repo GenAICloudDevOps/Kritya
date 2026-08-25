@@ -35,6 +35,11 @@ export const CURATED_MODELS: ModelInfo[] = [
     contextWindow: 128_000,
   },
   {
+    id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    label: "Nemotron 3 Nano Omni 30B Reasoning",
+    contextWindow: 128_000,
+  },
+  {
     id: "meta/muse-glimmer-30b",
     label: "Muse Glimmer 30B",
     contextWindow: 128_000,
