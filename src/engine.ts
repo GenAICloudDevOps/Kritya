@@ -105,7 +105,7 @@ export async function createEngineSession(
   AuditLog.cleanupOld(retentionDays);
   cleanupOldTelemetry(retentionDays);
 
-  const permissions = new PermissionManager(loadRules(workspace, trustWorkspace));
+  const permissions = new PermissionManager(loadRules(workspace, trustWorkspace), workspace);
   const agent = new Agent(
     client,
     () => currentModel,

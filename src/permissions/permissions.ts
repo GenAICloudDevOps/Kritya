@@ -28,8 +28,9 @@ export class PermissionManager {
   private alwaysAllowed = new Set<string>();
   private allow: string[];
   private deny: string[];
+  private workspace?: string;
 
-  constructor(rules: string[] | PermissionRules = []) {
+  constructor(rules: string[] | PermissionRules = [], workspace?: string) {
     if (Array.isArray(rules)) {
       this.allow = rules;
       this.deny = [];
@@ -37,17 +38,18 @@ export class PermissionManager {
       this.allow = rules.allow;
       this.deny = rules.deny;
     }
+    this.workspace = workspace;
   }
 
   /** True if a deny rule blocks this call; such calls are never prompted, always refused. */
   isDenied(tool: ToolDef, args: Record<string, unknown> = {}): boolean {
-    return this.deny.some((rule) => matchesRule(rule, tool.name, args));
+    return this.deny.some((rule) => matchesRule(rule, tool.name, args, this.workspace));
   }
 
   needsPrompt(tool: ToolDef, args: Record<string, unknown> = {}): boolean {
     if (!tool.requiresPermission) return false;
     if (this.alwaysAllowed.has(alwaysAllowKey(tool.name, args))) return false;
-    return !this.allow.some((rule) => matchesRule(rule, tool.name, args));
+    return !this.allow.some((rule) => matchesRule(rule, tool.name, args, this.workspace));
   }
 
   record(toolName: string, decision: PermissionDecision, args: Record<string, unknown> = {}): void {

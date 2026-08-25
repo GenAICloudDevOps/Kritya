@@ -51,10 +51,23 @@ export function loadRules(workspace: string, trustWorkspace = true): PermissionR
 
 const RULE_RE = /^([a-z_]+)(?:\((.*)\))?$/;
 
-/** The string a pattern is matched against for a given tool. */
-function subjectFor(toolName: string, args: Record<string, unknown>): string {
+/**
+ * The string a pattern is matched against for a given tool.
+ *
+ * File-tool paths are resolved against `workspace` (when given) before
+ * matching, the same way {@link resolveSafe} normalizes them: "./.env" and
+ * "sub/../.env" both become ".env". Without this, a rule like
+ * `write_file(.env*)` only matches the exact literal string the model
+ * happened to pass, and a differently-spelled equivalent path slips past it.
+ */
+function subjectFor(toolName: string, args: Record<string, unknown>, workspace?: string): string {
   if (toolName === "shell") return String(args.command ?? "").trim();
-  return String(args.path ?? args.pattern ?? "").trim();
+  const rawPath = args.path;
+  if (workspace && typeof rawPath === "string" && rawPath.trim()) {
+    const rel = path.relative(workspace, path.resolve(workspace, rawPath));
+    return rel.split(path.sep).join("/");
+  }
+  return String(rawPath ?? args.pattern ?? "").trim();
 }
 
 /**
@@ -69,7 +82,8 @@ const SHELL_METACHAR_RE = /&&|\|\||[;|`&\n]|\$\(|\$\{|<|>/;
 export function matchesRule(
   rule: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  workspace?: string
 ): boolean {
   const m = RULE_RE.exec(rule.trim());
   if (!m) return false;
@@ -77,7 +91,7 @@ export function matchesRule(
   if (ruleTool !== toolName) return false;
   if (pattern === undefined) return true;
   const trimmedPattern = pattern.trim();
-  const subject = subjectFor(toolName, args);
+  const subject = subjectFor(toolName, args, workspace);
 
   // A wildcard shell(...) rule (e.g. shell(git *)) is only meant to allow one
   // command, not an arbitrary chain appended after it. If the actual command

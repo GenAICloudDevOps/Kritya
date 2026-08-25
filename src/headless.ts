@@ -240,7 +240,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   );
   const tools: ToolDef[] = [...ALL_TOOLS, ...mcpTools];
 
-  const permissions = new PermissionManager(loadRules(workspace, trustWorkspace));
+  const permissions = new PermissionManager(loadRules(workspace, trustWorkspace), workspace);
   const agent = new Agent(
     client,
     () => model,

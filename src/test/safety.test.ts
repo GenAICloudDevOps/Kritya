@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { classifyDanger } from "../permissions/danger.js";
 import { PermissionManager } from "../permissions/permissions.js";
@@ -57,6 +59,27 @@ test("deny rules block matching calls and win over allow", () => {
   assert.equal(pm.isDenied(write, { path: "src/index.ts" }), false);
   // Non-denied path is still allowed by the allow rule (no prompt).
   assert.equal(pm.needsPrompt(write, { path: "src/index.ts" }), false);
+});
+
+test("deny rules match an equivalent path spelled differently, when given a workspace", () => {
+  const write = ALL_TOOLS.find((t) => t.name === "write_file")!;
+  const workspace = path.join(os.tmpdir(), "kritya-rules-test-ws");
+  const pm = new PermissionManager(
+    { allow: ["write_file"], deny: ["write_file(.env*)"] },
+    workspace
+  );
+
+  // Raw string doesn't start with ".env" but resolves to it.
+  assert.equal(pm.isDenied(write, { path: "./.env" }), true);
+  assert.equal(pm.isDenied(write, { path: "sub/../.env" }), true);
+  // Unrelated paths are unaffected.
+  assert.equal(pm.isDenied(write, { path: "src/index.ts" }), false);
+});
+
+test("without a workspace, deny-rule matching falls back to the raw path string", () => {
+  const write = ALL_TOOLS.find((t) => t.name === "write_file")!;
+  const pm = new PermissionManager({ allow: ["write_file"], deny: ["write_file(.env*)"] });
+  assert.equal(pm.isDenied(write, { path: "./.env" }), false);
 });
 
 test("path patterns match file tools", () => {

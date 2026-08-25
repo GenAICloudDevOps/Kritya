@@ -570,7 +570,7 @@ async function main() {
       () => modelRef.current,
       readOnlySubTools,
       { workspace, sandboxMode, trustWorkspace },
-      new PermissionManager(),
+      new PermissionManager([], workspace),
       new SessionStore(workspace, true),
       []
     );
@@ -634,7 +634,7 @@ async function main() {
         () => modelRef.current,
         writeSubTools,
         { workspace: wt.dir, sandboxMode, trustWorkspace },
-        new PermissionManager({ allow: ["write_file", "edit_file", "shell(*)"], deny: [] }),
+        new PermissionManager({ allow: ["write_file", "edit_file", "shell(*)"], deny: [] }, wt.dir),
         new SessionStore(wt.dir, true),
         []
       );
@@ -779,7 +779,7 @@ async function main() {
       requestElicitation: onAskUser,
       spawnAgents,
     },
-    new PermissionManager(loadRules(workspace, trustWorkspace)),
+    new PermissionManager(loadRules(workspace, trustWorkspace), workspace),
     session,
     initialHistory
   );
