@@ -4,6 +4,16 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5-beta] — 2026-08-25
+
+### Added
+
+- Nemotron 3 Nano Omni 30B Reasoning added to the curated NVIDIA models list.
+
+### Changed
+
+- `no-explicit-any` is now enforced for app code (scoped off for tests).
+
 ## [0.8.4-beta] — 2026-08-25
 
 ### Security
