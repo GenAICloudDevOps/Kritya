@@ -135,23 +135,28 @@ async function readBodyCapped(res: Response, maxBytes: number): Promise<string> 
 
 /** Collapse an HTML document down to readable plain text (best-effort, no deps). */
 function htmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<\/(p|div|li|tr|h[1-6]|section|article|br)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return (
+    html
+      .replace(/<script[\s\S]*?(<\/script\s*>|$)/gi, " ")
+      .replace(/<style[\s\S]*?(<\/style\s*>|$)/gi, " ")
+      .replace(/<noscript[\s\S]*?(<\/noscript\s*>|$)/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<\/(p|div|li|tr|h[1-6]|section|article|br)>/gi, "\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      // &amp; must decode last: an already-escaped "&amp;lt;" is meant to render as
+      // the literal text "&lt;", not as "<" — decoding &amp; first would collapse
+      // it two levels and let doubly-encoded markup smuggle a live "<" through.
+      .replace(/&amp;/gi, "&")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
 }
 
 /**

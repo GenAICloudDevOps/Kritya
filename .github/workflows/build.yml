@@ -1,5 +1,8 @@
 name: Build Desktop App
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   # Paused to conserve Actions minutes. Uncomment to re-enable automatic

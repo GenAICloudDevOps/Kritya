@@ -24,13 +24,26 @@ export interface CallbackServer {
   close(): void;
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function page(title: string, detail: string): string {
   // Deliberately dependency-free and inline-styled: this renders in the user's
   // browser, and a login callback should not fetch anything from the network.
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>
+  // `detail` in particular can carry query-string content from the OAuth
+  // provider (e.g. error_description), so both fields must be HTML-escaped.
+  const safeTitle = escapeHtml(title);
+  const safeDetail = escapeHtml(detail);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:32rem;margin:6rem auto;padding:0 1.5rem;line-height:1.6">
-<h1 style="font-size:1.25rem;margin:0 0 .5rem">${title}</h1>
-<p style="color:#555;margin:0">${detail}</p>
+<h1 style="font-size:1.25rem;margin:0 0 .5rem">${safeTitle}</h1>
+<p style="color:#555;margin:0">${safeDetail}</p>
 </body></html>`;
 }
 

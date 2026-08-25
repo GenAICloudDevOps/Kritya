@@ -265,7 +265,9 @@ test("every phase prompt names the project and the artifact it writes", () => {
     const prompt = phasePrompt("My App", phase, "");
     assert.match(prompt, /my-app/, `${phase} prompt should name the slug`);
     const artifact = artifactPath("My App", phase);
-    if (artifact) assert.match(prompt, new RegExp(artifact.replace(/[/.]/g, "\\$&")), phase);
+    if (artifact) {
+      assert.match(prompt, new RegExp(artifact.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")), phase);
+    }
   }
 });
 
