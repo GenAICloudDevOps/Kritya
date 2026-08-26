@@ -4,6 +4,25 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8-beta] — 2026-08-25
+
+### Security
+
+- **Unbounded decompression in `.xlsx` reading (CVE-2026-78206)** —
+  `exceljs`'s xlsx loader decompresses every zip entry with no size limit
+  (no upstream fix available), and `read_document`/`edit_spreadsheet` feed
+  it any `.xlsx` file the model points to inside the workspace. A crafted
+  file could exhaust memory. Anything whose declared uncompressed size
+  (read cheaply from the zip's central directory, no inflation) exceeds
+  200MB is now rejected before `exceljs` ever sees it.
+
+### Changed
+
+- Left guardrail comments at the `exceljs` code paths kritya doesn't use
+  yet (`cell.note` prototype pollution, `addImage` path traversal, CSV
+  formula injection) so they aren't reintroduced blindly if those
+  features are added later.
+
 ## [0.8.7-beta] — 2026-08-25
 
 ### Changed
