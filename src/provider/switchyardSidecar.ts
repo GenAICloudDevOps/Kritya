@@ -10,11 +10,7 @@ import { debugLog } from "../config/debug.js";
 export const SWITCHYARD_WEAK_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
 export const SWITCHYARD_STRONG_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 /** Tried in order, direct against NVIDIA, if switchyard-server itself is unreachable or exhausts its own retries. */
-export const SWITCHYARD_FALLBACK_MODELS = [
-  "meta/muse-glimmer-30b",
-  "thinkingmachines/inkling",
-  "z-ai/glm-5.2",
-];
+export const SWITCHYARD_FALLBACK_MODELS = ["meta/muse-glimmer-30b"];
 /** The route id in the generated routes.toml — also the `model` field kritya sends. */
 export const SWITCHYARD_ROUTE_ID = "switchyard";
 

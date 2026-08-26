@@ -44,21 +44,6 @@ export const CURATED_MODELS: ModelInfo[] = [
     label: "Muse Glimmer 30B",
     contextWindow: 128_000,
   },
-  { id: "thinkingmachines/inkling", label: "Inkling", contextWindow: 128_000 },
-  { id: "z-ai/glm-5.2", label: "GLM 5.2", note: "strong agentic coder", contextWindow: 200_000 },
-  {
-    id: "qwen/qwen3.5-397b-a17b",
-    label: "Qwen3.5 397B",
-    note: "strong coding + tool use",
-    contextWindow: 256_000,
-  },
-  {
-    id: "moonshotai/kimi-k2.6",
-    label: "Kimi K2.6",
-    note: "strong agentic tool use",
-    contextWindow: 256_000,
-  },
-  { id: "deepseek-ai/deepseek-v4-pro", label: "DeepSeek V4 Pro", contextWindow: 128_000 },
   {
     id: "deepseek-ai/deepseek-v4-flash-0731",
     label: "DeepSeek V4 Flash",

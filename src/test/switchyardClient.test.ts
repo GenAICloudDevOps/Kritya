@@ -60,7 +60,7 @@ test("SwitchyardProviderClient returns the primary response directly when switch
   assert.equal(fallbackCalled, false, "switchyard succeeded, so no fallback should have run");
 });
 
-test("SwitchyardProviderClient falls back through the model pool in order, stopping at the first success", async () => {
+test("SwitchyardProviderClient falls back to the model pool when switchyard is exhausted", async () => {
   const swClient = new SwitchyardProviderClient("http://127.0.0.1:1/v1", "nvidia-key");
   withCreate(swClient, alwaysRetryExhausted);
 
@@ -68,22 +68,15 @@ test("SwitchyardProviderClient falls back through the model pool in order, stopp
   assert.deepEqual(
     fallbacks.map((f) => f.model),
     SWITCHYARD_FALLBACK_MODELS,
-    "fallback pool matches the documented order: Muse Glimmer, Inkling, GLM 5.2"
+    "fallback pool matches the documented order: Muse Glimmer"
   );
 
-  withCreate(fallbacks[0].client, alwaysRetryExhausted); // Muse Glimmer also fails
-  withCreate(fallbacks[1].client, succeedsWith("inkling answer", fallbacks[1].model)); // Inkling succeeds
-  let thirdCalled = false;
-  withCreate(fallbacks[2].client, () => {
-    thirdCalled = true;
-    throw new Error("GLM 5.2 should never be reached once Inkling succeeds");
-  });
+  withCreate(fallbacks[0].client, succeedsWith("muse glimmer answer", fallbacks[0].model));
 
   const result = await swClient.chat("switchyard", [], [], noopCallbacks);
 
-  assert.equal(result.text, "inkling answer");
-  assert.equal(result.model, fallbacks[1].model);
-  assert.equal(thirdCalled, false, "stops at the first fallback that succeeds");
+  assert.equal(result.text, "muse glimmer answer");
+  assert.equal(result.model, fallbacks[0].model);
 });
 
 test("SwitchyardProviderClient does not fall back for an ordinary (non-retry-exhausted) failure", async () => {
@@ -110,10 +103,8 @@ test("SwitchyardProviderClient throws the last fallback's error when every targe
   withCreate(swClient, alwaysRetryExhausted);
 
   const fallbacks = fallbackClients(swClient);
-  withCreate(fallbacks[0].client, alwaysRetryExhausted);
-  withCreate(fallbacks[1].client, alwaysRetryExhausted);
-  const lastErr = new RetryExhaustedError(new Error("glm also down"), 4);
-  withCreate(fallbacks[2].client, () => {
+  const lastErr = new RetryExhaustedError(new Error("muse glimmer also down"), 4);
+  withCreate(fallbacks[0].client, () => {
     throw lastErr;
   });
 

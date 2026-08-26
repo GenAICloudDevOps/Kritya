@@ -377,10 +377,9 @@ pass never trips it, so per-question routing needs `capability` mode instead.
 #### Fallback
 
 Switchyard itself has no cross-model fallback — if the sidecar's own request
-exhausts its retries, kritya's client falls back to calling three more
-curated models directly against NVIDIA, in order, before giving up:
-`meta/muse-glimmer-30b`, `thinkingmachines/inkling`, `z-ai/glm-5.2`. This
-only covers the one failing turn; the next turn always tries Switchyard
+exhausts its retries, kritya's client falls back to calling one more curated
+model directly against NVIDIA before giving up: `meta/muse-glimmer-30b`.
+This only covers the one failing turn; the next turn always tries Switchyard
 again first, so a transient sidecar problem doesn't permanently downgrade
 the session.
 
