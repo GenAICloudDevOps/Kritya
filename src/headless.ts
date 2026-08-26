@@ -255,6 +255,10 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     initialHistory
   );
   agent.contextWindow = contextWindowFor(model, config);
+  // No one is present to answer a permission prompt, so a forced
+  // unsandboxed-fallback warning must resolve on its own (see
+  // requestPermission below) rather than be raised at all.
+  agent.interactive = false;
   if (config.maxSteps && config.maxSteps > 0) agent.maxSteps = config.maxSteps;
   if (config.toolTimeoutSeconds !== undefined) {
     agent.toolTimeoutMs = config.toolTimeoutSeconds * 1000;

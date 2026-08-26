@@ -92,6 +92,50 @@ export function requiresSandbox(mode: SandboxMode | undefined): boolean {
 }
 
 /**
+ * True once the user has explicitly approved running unsandboxed for the rest
+ * of this process — see `sandboxFallbackWarning`. Resets on restart; there is
+ * no persistent "don't ask again" for this, since a different host without
+ * the sandbox binary could be running next time.
+ */
+let unsandboxedFallbackAcknowledged = false;
+
+/** Records that the user approved the one-time unsandboxed-fallback warning. */
+export function acknowledgeUnsandboxedFallback(): void {
+  unsandboxedFallbackAcknowledged = true;
+}
+
+/** Test-only: undoes `acknowledgeUnsandboxedFallback` between test cases. */
+export function resetUnsandboxedFallbackAcknowledgement(): void {
+  unsandboxedFallbackAcknowledged = false;
+}
+
+/**
+ * A one-time, forced permission-prompt warning for the fail-open gap in
+ * "auto"/"always": sandboxing was requested for `command` but no sandbox
+ * binary is installed, so it's about to run completely unconfined — able to
+ * read, write, or delete anywhere the real user can, not just inside the
+ * workspace. Returns null (nothing to warn about) once
+ * `acknowledgeUnsandboxedFallback` has been called this run, when sandboxing
+ * wasn't requested for this command, when a sandbox binary IS available, or
+ * under "strict" (which refuses instead of falling back, so it has no silent
+ * gap to warn about).
+ */
+export function sandboxFallbackWarning(
+  mode: SandboxMode | undefined,
+  command: string
+): string | null {
+  if (unsandboxedFallbackAcknowledged) return null;
+  if (!shouldSandbox(mode, command)) return null;
+  if (requiresSandbox(mode)) return null;
+  if (sandboxAvailable()) return null;
+  return (
+    `a command running with NO sandbox isolation (${sandboxUnavailableReason()}) — ` +
+    `it can read, write, or delete anywhere you can, not just inside the workspace. ` +
+    `Approving runs this command now and skips this warning for the rest of the session`
+  );
+}
+
+/**
  * Common tool-cache / global-install directories outside the workspace that
  * legitimate commands need to write to (package manager caches, toolchain
  * installs) even though sandboxing now applies to every command by default.

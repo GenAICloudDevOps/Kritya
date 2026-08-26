@@ -2,6 +2,7 @@ import type { ParsedToolCall } from "../provider/client.js";
 import type { PermissionManager } from "../permissions/permissions.js";
 import type { AgentHandlers, ToolContext, ToolDef } from "../types.js";
 import { classifyDanger } from "../permissions/danger.js";
+import { acknowledgeUnsandboxedFallback, sandboxFallbackWarning } from "../shell/sandbox.js";
 import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js";
 import type { Span, Tracer } from "../telemetry/tracer.js";
 import type { Meter } from "../telemetry/metrics.js";
@@ -66,6 +67,7 @@ export interface ToolExecutorHost {
   planMode: boolean;
   dryRunMode: boolean;
   acceptEdits: boolean;
+  interactive: boolean;
   audit?: AuditLog;
   tracer: Tracer;
   meter: Meter;
@@ -263,7 +265,17 @@ export class ToolExecutor {
     }
 
     // Destructive shell commands always prompt with a warning, even if allowlisted.
-    const danger = tool.name === "shell" ? classifyDanger(String(args.command ?? "")) : null;
+    const shellCommand = tool.name === "shell" ? String(args.command ?? "") : "";
+    const dangerLabel = tool.name === "shell" ? classifyDanger(shellCommand) : null;
+    // Separate from dangerLabel: this one only fires when no sandbox binary
+    // is installed, so a flagged command is about to run fully unconfined.
+    // Only surfaced when a human can actually see and answer the prompt —
+    // see `Agent.interactive`.
+    const sandboxWarning =
+      tool.name === "shell" && dangerLabel === null && host.interactive
+        ? sandboxFallbackWarning(host.ctx.sandboxMode, shellCommand)
+        : null;
+    const danger = dangerLabel ?? sandboxWarning;
 
     const autoApproveEdit =
       host.acceptEdits &&
@@ -292,6 +304,11 @@ export class ToolExecutor {
       );
       // A forced (danger) prompt does not grant a lasting allowance.
       if (danger === null) host.permissions.record(tool.name, decision, args);
+      // Unlike a dangerLabel prompt (which re-warns every time on purpose),
+      // approving the unsandboxed-fallback warning once is enough — "auto"
+      // sandboxes nearly every command, so re-asking on each one would be
+      // an unusable wall of prompts for a fact that won't change mid-session.
+      if (decision === "yes" && sandboxWarning !== null) acknowledgeUnsandboxedFallback();
       if (decision === "no") {
         host.audit?.logPermission({
           tool: name,

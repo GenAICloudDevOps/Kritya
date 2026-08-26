@@ -58,6 +58,13 @@ export class Agent {
   dryRunMode = false;
   /** When true, file-edit tools auto-approve without prompting (see ACCEPT_EDITS_TOOL_NAMES). */
   acceptEdits = false;
+  /**
+   * Whether a human can see and respond to a permission prompt right now.
+   * True by default (the CLI and its subagents render one); headless runs
+   * set this false because there is no one to answer it, so a forced
+   * warning prompt there must resolve on its own rather than block forever.
+   */
+  interactive = true;
   /** Fires each time a tool call is auto-approved because of acceptEdits, for a UI counter. */
   onAutoApprove?: () => void;
   /**
