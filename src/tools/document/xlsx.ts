@@ -1,9 +1,37 @@
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import type { XlsxSheet, CellEdit, AppliedCellEdit } from "./types.js";
 
 const CELL_REF_RE = /^[A-Za-z]{1,3}[1-9][0-9]*$/;
 
+// exceljs's xlsx loader decompresses every entry of the .xlsx zip with no
+// size limit (CVE-2026-78206, unpatched upstream as of this writing) — a
+// small file whose declared uncompressed size is huge can exhaust memory
+// before exceljs itself ever runs. JSZip.loadAsync only reads the central
+// directory (cheap, no inflation), so summing each entry's *declared*
+// uncompressed size here rejects a bomb before handing the buffer to exceljs.
+const MAX_XLSX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
+
+async function assertSafeXlsxSize(buf: Buffer): Promise<void> {
+  const zip = await JSZip.loadAsync(buf);
+  let total = 0;
+  for (const entry of Object.values(zip.files)) {
+    // `_data` is JSZip's internal CompressedObject; there is no public API
+    // for a zip entry's declared (pre-inflation) uncompressed size.
+    total +=
+      (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0;
+    if (total > MAX_XLSX_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        `This .xlsx file's declared uncompressed size exceeds ` +
+          `${MAX_XLSX_UNCOMPRESSED_BYTES / (1024 * 1024)}MB and was refused ` +
+          `as a likely decompression bomb rather than risk exhausting memory.`
+      );
+    }
+  }
+}
+
 export async function readXlsx(buf: Buffer): Promise<string> {
+  await assertSafeXlsxSize(buf);
   const workbook = new ExcelJS.Workbook();
   // exceljs's bundled types pin an older @types/node Buffer shape; the
   // runtime accepts any Node Buffer.
@@ -49,6 +77,12 @@ function toCellValue(value: string | number | boolean | null): ExcelJS.CellValue
   return value;
 }
 
+// If CSV export via exceljs's `workbook.csv.write()`/`writeBuffer()`/
+// `writeFile()` is ever added, string values starting with =, +, -, @, tab,
+// or CR must be prefixed with a leading `'` before export (CVE-2026-78209) —
+// exceljs does not do this itself, and cell content here can come from
+// LLM-generated or user-supplied text, not just trusted input.
+
 /**
  * Change specific cells of an existing workbook in place, preserving every
  * other cell, formula, and sheet. Returns the new file bytes and a record of
@@ -58,6 +92,7 @@ export async function editXlsx(
   buf: Buffer,
   edits: CellEdit[]
 ): Promise<{ buf: Buffer; applied: AppliedCellEdit[] }> {
+  await assertSafeXlsxSize(buf);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buf as unknown as Parameters<typeof workbook.xlsx.load>[0]);
 
@@ -86,6 +121,12 @@ export async function editXlsx(
   return { buf: Buffer.from(arrayBuffer), applied };
 }
 
+// If image embedding is ever added here via exceljs's `Workbook.addImage()`,
+// never pass a model/user-supplied path straight into `addImage({filename})`
+// — resolve it first and verify it stays inside the workspace, the same way
+// `resolveSafe` guards file-write paths elsewhere. An unchecked filename lets
+// addImage() read and embed an arbitrary file the process can see
+// (CVE-2026-78208).
 export async function writeXlsx(sheets: XlsxSheet[]): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   for (const sheet of sheets) {
