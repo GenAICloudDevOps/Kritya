@@ -4,6 +4,15 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.9-beta] — 2026-08-26
+
+### Removed
+
+- Dropped Inkling, GLM 5.2, Qwen3.5 397B, Kimi K2.6, and DeepSeek V4 Pro
+  from the curated model picker. Inkling and GLM 5.2 are also gone from
+  switchyard's direct-fallback pool, which now falls back to just
+  `meta/muse-glimmer-30b` if the sidecar itself is unreachable.
+
 ## [0.8.8-beta] — 2026-08-25
 
 ### Security
