@@ -71,8 +71,14 @@ the workspace, regardless of what the command text looks like.
 
 Backed by `bwrap`/bubblewrap on Linux and `sandbox-exec` on macOS; not yet
 available on Windows. If the required binary isn't on `PATH`, `"auto"` and
-`"always"` fall back to an unsandboxed run and say so in the output rather
-than failing silently; `"strict"` refuses the command instead. The sandbox
+`"always"` fall back to an unsandboxed run rather than failing silently:
+in an interactive session, the first such command forces a red warning
+prompt that you must explicitly approve — after that, the session
+remembers and every later fallback just adds a note to that command's
+output instead of prompting again. Headless runs and unattended
+subagents skip the prompt (there's no one to answer it) and go straight
+to the unsandboxed run with the note. `"strict"` refuses the command
+instead of ever falling back. The sandbox
 confines **writes** to the workspace (plus system temp dirs) — reads and
 network access are left open, since restricting those breaks most ordinary
 tooling (dynamic linking, package manager caches, `git push`, etc.). It

@@ -4,6 +4,18 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6-beta] — 2026-08-25
+
+### Changed
+
+- `sandboxExec: "auto"`/`"always"` no longer silently fall back to an
+  unsandboxed run when no sandbox binary is installed. In an interactive
+  session, the first such command now forces a red warning prompt that
+  must be explicitly approved; approving it once is remembered for the
+  rest of the session. Headless runs and unattended write-subagents are
+  unaffected — they still run with the existing after-the-fact note,
+  since there's no one present to answer the prompt.
+
 ## [0.8.5-beta] — 2026-08-25
 
 ### Added
