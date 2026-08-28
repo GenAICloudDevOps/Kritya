@@ -1,8 +1,11 @@
 {
   "name": "kritya",
-  "version": "0.8.10-beta",
+  "version": "0.8.11-beta",
   "description": "Kritya — a lean, provider-agnostic terminal coding agent (NVIDIA, OpenAI, OpenRouter, Groq, Ollama, and more)",
   "type": "module",
+  "publishConfig": {
+    "provenance": true
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/GenAICloudDevOps/Kritya.git"

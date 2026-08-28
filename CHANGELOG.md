@@ -4,6 +4,26 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.11-beta] — 2026-08-28
+
+### Added
+
+- Releases now publish through a tag-triggered GitHub Actions workflow
+  (`.github/workflows/publish.yml`) instead of a local `npm publish`.
+  Uses npm's OIDC trusted publishing for a verifiable build-to-source
+  provenance attestation to the `beta` dist-tag, and creates the
+  matching GitHub prerelease — fully secretless, no stored npm token.
+  Pointing `latest` at a release stays a deliberate manual step
+  (`npm dist-tag add kritya@<version> latest`) while still in beta.
+
+### Fixed
+
+- **Headless mode had no kill switch path** — `Ctrl+C`/`SIGTERM` during
+  a `--prompt` run killed the process outright, skipping the audit log
+  and orphaning background shells/MCP children. Both signals now engage
+  the same kill switch the interactive session's `Ctrl+K` uses, so a
+  headless/CI run stops cleanly and the stop is recorded.
+
 ## [0.8.10-beta] — 2026-08-28
 
 ### Added
