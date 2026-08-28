@@ -10,7 +10,7 @@ Open source, [MIT licensed](LICENSE).
 
 A lean, interctive coding agent for your terminal. Provider-agnostic —
 it works with any OpenAI-compatible endpoint: [build.nvidia.com](https://build.nvidia.com)
-(Qwen3 Coder, Kimi K2, DeepSeek, GLM, Nemotron, ...) by default, plus OpenAI,
+(Qwen3 Coder, Kimi K3, DeepSeek, GLM, Nemotron, ...) by default, plus OpenAI,
 OpenRouter, Groq, DeepSeek, Mistral, Together, and local models via Ollama.
 
 Works on Linux, macOS, and Windows.

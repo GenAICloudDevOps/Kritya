@@ -50,6 +50,12 @@ export const CURATED_MODELS: ModelInfo[] = [
     note: "fast + cheap",
     contextWindow: 128_000,
   },
+  {
+    id: "moonshotai/kimi-k3",
+    label: "Kimi K3",
+    note: "strong agentic tool use",
+    contextWindow: 256_000,
+  },
 ];
 
 export const DEFAULT_MODEL = CURATED_MODELS[0].id;
