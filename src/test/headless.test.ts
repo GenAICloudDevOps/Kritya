@@ -89,3 +89,45 @@ test("runHeadless in text mode prints the same error to stderr instead of stdout
     console_.restore();
   }
 });
+
+test("runHeadless stops cleanly on SIGINT instead of leaving the process to die raw", async () => {
+  await freshHome();
+  process.env.NVIDIA_API_KEY = "test-key";
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-headless-ws-"));
+  const { runHeadless } = await import(`../headless.js?t=${Date.now()}`);
+
+  // Stand in for the model call: never resolves on its own, but rejects like
+  // a real fetch does once its AbortSignal fires — which is what the kill
+  // switch triggers once SIGINT engages it.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_url: unknown, init?: { signal?: AbortSignal }) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        const err = new Error("The operation was aborted.");
+        err.name = "AbortError";
+        reject(err);
+      });
+    })) as typeof fetch;
+
+  const console_ = stubConsole();
+  try {
+    const promise = runHeadless({
+      ...baseArgs,
+      dir: workspace,
+      output: "json",
+      timeoutSeconds: 30,
+    });
+    await new Promise((r) => setTimeout(r, 50)); // let the in-flight "request" start
+    process.emit("SIGINT", "SIGINT");
+    const code = await promise;
+
+    assert.equal(code, 1);
+    const parsed = JSON.parse(console_.logs[0]);
+    assert.equal(parsed.success, false);
+    assert.match(parsed.error, /Stopped \(stopped by SIGINT\)/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.NVIDIA_API_KEY;
+    console_.restore();
+  }
+});

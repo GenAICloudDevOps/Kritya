@@ -1,5 +1,6 @@
 import path from "node:path";
 import { Agent } from "./agent/loop.js";
+import { KillSwitchError } from "./agent/killSwitch.js";
 import {
   CONFIG_DIR,
   legacyGlobalModel,
@@ -277,6 +278,17 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const timer = setTimeout(() => controller.abort(), Math.max(1, args.timeoutSeconds) * 1000);
   timer.unref();
 
+  // Node's default SIGINT/SIGTERM handling kills the process outright —
+  // orphaning background shells/MCP children and leaving no audit trail that
+  // this was a deliberate stop rather than a crash. Route both through the
+  // same kill switch Ctrl+K uses interactively instead, so the turn tears
+  // down cleanly and the stop is logged.
+  const stopForSignal = (sig: NodeJS.Signals) => {
+    agent.kill.engage(`stopped by ${sig}`);
+  };
+  process.on("SIGINT", stopForSignal);
+  process.on("SIGTERM", stopForSignal);
+
   const handlers: AgentHandlers = {
     onTextDelta: () => {},
     onReasoningDelta: () => {},
@@ -327,11 +339,15 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
           `.`
         : " No other provider has an API key configured to fall back to.";
       errorMessage = `${err.message}.${hint}`;
+    } else if (err instanceof KillSwitchError) {
+      errorMessage = `Stopped (${err.killReason ?? "kill switch engaged"})`;
     } else {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
   } finally {
     clearTimeout(timer);
+    process.off("SIGINT", stopForSignal);
+    process.off("SIGTERM", stopForSignal);
     backgroundManager.killAll();
     lspManager.disposeAll();
     shutdownMcp();
