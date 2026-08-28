@@ -236,6 +236,19 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   anywhere, including while a permission prompt is on screen. The statusline
   shows `⛔ KILLED`, and both the stop and the release are written to the audit
   log. It's session-only: restarting kritya comes up in the normal state.
+  Some terminals steal `Ctrl+K` for their own shortcuts before kritya ever
+  sees it — VS Code's integrated terminal is the common case, where it's
+  bound as a chord prefix. `/kill [reason]` always works there instead; to
+  get `Ctrl+K` itself working, add a `terminalFocus`-scoped override to VS
+  Code's `keybindings.json`:
+  ```json
+  {
+    "key": "ctrl+k",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": { "text": "\u000b" },
+    "when": "terminalFocus"
+  }
+  ```
 - **Subagents** — the agent can dispatch one or more focused investigations to
   fresh contexts at once (`spawn_agent`), each returning only its findings —
   keeps the main conversation lean on big searches. It can also dispatch
