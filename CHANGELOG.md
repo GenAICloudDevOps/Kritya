@@ -4,6 +4,13 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.10-beta] — 2026-08-28
+
+### Added
+
+- Added `moonshotai/kimi-k3` ("strong agentic tool use") to the curated
+  model picker. The default model is unchanged.
+
 ## [0.8.9-beta] — 2026-08-26
 
 ### Removed
