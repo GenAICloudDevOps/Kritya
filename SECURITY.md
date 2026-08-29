@@ -32,20 +32,37 @@ Findings from both fall into two buckets:
 - **Socket's supply-chain heuristics** ("obfuscated code," "deprecated,"
   "AI-detected anomaly," etc.) are reviewed rather than acted on
   automatically, since they flag patterns, not confirmed exploits:
-  - "Obfuscated code" on `exceljs`, `pdf-lib`, and `underscore` is a false
-    positive on normal packaging — each ships a minified/bundled `dist`
-    build alongside its source, which is standard for libraries also
-    consumed in browsers. All three are already pinned to their latest
-    published version; there is nothing newer to move to, and the
-    higher-profile alternatives in this space (e.g. SheetJS/`xlsx` in place
-    of `exceljs`) carry a worse CVE history while triggering the same
-    minified-dist flag.
+  - "Obfuscated code" on `exceljs`, `pdf-lib`, `underscore`,
+    `electron-winstaller`, `tiny-async-pool`, and `yargs` is a false positive
+    on normal packaging, not real obfuscation — checked directly: none of
+    the flagged files show minification or bundling signatures (longest
+    lines run 81-1540 characters of readable code, consistent with
+    TypeScript-compiled output or a bundled `dist` shipped for browser use,
+    not mangled/packed code). `exceljs`, `pdf-lib`, and `underscore` are
+    already pinned to their latest published version, and higher-profile
+    alternatives in this space (e.g. SheetJS/`xlsx` in place of `exceljs`)
+    carry a worse CVE history while triggering the same flag.
+    `electron-winstaller`, `tiny-async-pool`, and `yargs` (the latter also
+    via `c8`) are transitive `electron-builder`/dev-tooling dependencies
+    that never ship in the published package (`files: ["dist"]` in
+    `package.json` excludes `dist/test` and `dist/electron`).
   - "Deprecated" on `boolean` and `rimraf@2.6.3` traces to
     `electron-builder`'s own dependency tree (via `@electron/get` →
     `global-agent`, and `electron-builder-squirrel-windows` →
     `electron-winstaller`), 4-5 levels deep. `electron-builder` is already on
     its latest release; this is a maintainer-status flag on transitive deps
     kritya doesn't control, not a vulnerability.
+  - `@xmldom/xmldom@0.8.15` carries a maintainer deprecation notice
+    ("this version has critical issues, please update to the latest
+    version"). The latest release, `0.9.12`, was tried via an `overrides`
+    pin and reverted: `0.9.x` requires an explicit `mimeType` argument to
+    `DOMParser.parseFromString`, which `mammoth@1.12.2` (itself the latest
+    release, and the package that pulls `xmldom` in for `.docx` parsing)
+    calls without one, breaking `.docx` reading (3 test failures in
+    `document.test.js`). `mammoth` still declares `^0.8.6` for `xmldom`, so
+    there is currently no combination that gets the deprecation fix without
+    breaking `.docx` support. Revisit once `mammoth` adapts to the new
+    `xmldom` API.
 
 ## Scope and design notes
 

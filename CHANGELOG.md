@@ -4,6 +4,25 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.14-beta] — 2026-08-29
+
+### Changed
+
+- CI's `supply-chain` job now also runs `socket ci` (Socket's dependency
+  security scan) alongside `npm audit`, catching malware, obfuscated
+  packages, and risky install-script behavior that a CVE-only audit
+  doesn't. Skipped on fork PRs, since GitHub withholds repo secrets there.
+- `SECURITY.md` documents the reasoning behind every reviewed Socket
+  dependency-scanning finding (the 2 allowlisted `image-size` CVEs, 6
+  obfuscated-code false positives, `boolean`/`rimraf` deprecation, and
+  `@xmldom/xmldom`'s deprecation notice — the last confirmed unfixable for
+  now: `0.9.x` breaks `.docx` reading since `mammoth`'s latest release
+  doesn't pass the now-required `mimeType` argument to
+  `DOMParser.parseFromString`).
+- Incidental: `@xmldom/xmldom` (via `mammoth`) moved 0.8.13 → 0.8.15, a
+  patch-level resolution picked up while testing (and reverting) the
+  above.
+
 ## [0.8.13-beta] — 2026-08-29
 
 ### Changed
