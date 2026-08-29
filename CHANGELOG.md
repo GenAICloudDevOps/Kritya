@@ -4,6 +4,19 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.12-beta] — 2026-08-28
+
+### Added
+
+- MCP servers are now checked for tool-shape drift, not just config drift.
+  Approving a server's config (command, url, env keys, ...) only promised
+  you'd reviewed where it runs and what it can reach — a compromised or
+  updated server could still change its actual tools (names, descriptions,
+  input schemas) on any connection without touching its declared config.
+  The first connection after approval records the tool shape; a later
+  mismatch refuses the connection instead of silently loading the new
+  tools, and points at `/mcp trust revoke <name>` to review and re-approve.
+
 ## [0.8.11-beta] — 2026-08-28
 
 ### Added
