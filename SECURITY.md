@@ -12,6 +12,41 @@ automated checks (`npm audit`, Dependabot), but have not had a third-party
 security audit or penetration test — treat them as defense-in-depth, not a
 certified guarantee.
 
+## Dependency scanning
+
+CI runs `npm audit` through a reviewed gate
+(`scripts/check-audit.mjs`) rather than a bare `--audit-level=high`, and the
+package is also monitored on [Socket](https://socket.dev/npm/package/kritya).
+Findings from both fall into two buckets:
+
+- **High-severity CVEs with no available fix** are recorded in
+  `scripts/audit-allowlist.json` with a reachability argument — why the
+  vulnerable code path isn't reachable from kritya's own code — and an expiry
+  date that forces a re-check. As of this writing, that covers two advisories
+  in `image-size`'s ICNS/JXL/HEIF parsers (GHSA-w3rx-r6r6-pgpr,
+  GHSA-5p2g-fcmc-qvqq), pulled in transitively via `pptxgenjs`. The parsers
+  are only reached through `pptxgenjs`'s `addImage()`, which kritya never
+  calls; no patched `image-size` exists, and npm's only suggested fix
+  downgrades `pptxgenjs` to a version that removes the feature rather than
+  fixing it.
+- **Socket's supply-chain heuristics** ("obfuscated code," "deprecated,"
+  "AI-detected anomaly," etc.) are reviewed rather than acted on
+  automatically, since they flag patterns, not confirmed exploits:
+  - "Obfuscated code" on `exceljs`, `pdf-lib`, and `underscore` is a false
+    positive on normal packaging — each ships a minified/bundled `dist`
+    build alongside its source, which is standard for libraries also
+    consumed in browsers. All three are already pinned to their latest
+    published version; there is nothing newer to move to, and the
+    higher-profile alternatives in this space (e.g. SheetJS/`xlsx` in place
+    of `exceljs`) carry a worse CVE history while triggering the same
+    minified-dist flag.
+  - "Deprecated" on `boolean` and `rimraf@2.6.3` traces to
+    `electron-builder`'s own dependency tree (via `@electron/get` →
+    `global-agent`, and `electron-builder-squirrel-windows` →
+    `electron-winstaller`), 4-5 levels deep. `electron-builder` is already on
+    its latest release; this is a maintainer-status flag on transitive deps
+    kritya doesn't control, not a vulnerability.
+
 ## Scope and design notes
 
 kritya runs an autonomous agent that can read and modify files and run shell
