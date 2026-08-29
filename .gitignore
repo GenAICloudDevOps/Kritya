@@ -9,3 +9,4 @@ release/
 ROADMAP.md
 /otelcol
 npm.txt
+.playwright-mcp/
