@@ -31,6 +31,15 @@ export interface McpTrustEntry {
   name: string;
   fingerprint: string;
   trustedAt: string;
+  /** Hash of the tool shape observed the first time this fingerprint connected. */
+  toolsHash?: string;
+}
+
+/** The subset of a tool spec that defines what it does, for shape hashing. */
+interface ToolShapeInput {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
 }
 
 /** Stable identity for a server's declared config — structural shape only, never secret values. */
@@ -49,6 +58,18 @@ export function serverFingerprint(cfg: McpServerConfig): string {
     // exposes tools the user never saw when they approved the server.
     tools: cfg.tools ?? null,
   };
+  return crypto.createHash("sha256").update(JSON.stringify(shape)).digest("hex");
+}
+
+/** Stable identity for a server's live tool list — what it actually does, not where it runs. */
+export function toolsShapeHash(tools: ToolShapeInput[]): string {
+  const shape = tools
+    .map((t) => ({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.inputSchema ?? null,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   return crypto.createHash("sha256").update(JSON.stringify(shape)).digest("hex");
 }
 
@@ -131,4 +152,38 @@ export function partitionByTrust(
     else pending[name] = cfg;
   }
   return { trusted, pending };
+}
+
+/**
+ * Approving a server's *config* (command, url, env keys, ...) only promises
+ * the user reviewed where it runs and what it can reach — not what tools it
+ * actually exposes to the model, which a compromised or malicious server can
+ * change on any connection without touching its declared config at all. This
+ * compares a freshly-connected server's live tool shape (names, descriptions,
+ * input schemas) against what was recorded the first time its config was
+ * trusted.
+ *
+ * There is nothing to compare on that first connection (or after upgrading
+ * from a version that didn't record this), so it's recorded rather than
+ * flagged — otherwise every existing approval would start failing the moment
+ * this check shipped.
+ */
+export function checkToolsShape(
+  fingerprint: string,
+  tools: ToolShapeInput[],
+  storeFile = MCP_TRUST_FILE
+): { ok: boolean; recorded: boolean } {
+  const entries = loadStore(storeFile);
+  const entry = entries.find((e) => e.fingerprint === fingerprint);
+  if (!entry) return { ok: true, recorded: false };
+
+  const hash = toolsShapeHash(tools);
+  if (!entry.toolsHash) {
+    saveStore(
+      storeFile,
+      entries.map((e) => (e === entry ? { ...e, toolsHash: hash } : e))
+    );
+    return { ok: true, recorded: true };
+  }
+  return { ok: entry.toolsHash === hash, recorded: false };
 }

@@ -4,12 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import {
+  checkToolsShape,
   isServerTrusted,
   loadMcpAllowlist,
   partitionByTrust,
   revokeFingerprint,
   revokeServer,
   serverFingerprint,
+  toolsShapeHash,
   trustServer,
 } from "../trust/mcpTrust.js";
 
@@ -139,4 +141,69 @@ test("a revoked server is pending again, not silently re-approved", async () => 
   revokeServer("srv", store);
   // The point of revocation: the same config in any workspace asks again.
   assert.deepEqual(Object.keys(partitionByTrust({ srv: cfg }, store).pending), ["srv"]);
+});
+
+test("toolsShapeHash is stable regardless of tool order", () => {
+  const a = toolsShapeHash([
+    { name: "search", description: "find things" },
+    { name: "fetch", description: "get a thing" },
+  ]);
+  const b = toolsShapeHash([
+    { name: "fetch", description: "get a thing" },
+    { name: "search", description: "find things" },
+  ]);
+  assert.equal(a, b, "hash should not depend on the order tools/list returns them in");
+});
+
+test("toolsShapeHash changes when a tool's description or input schema changes", () => {
+  const base = toolsShapeHash([{ name: "search", description: "find things" }]);
+  assert.notEqual(base, toolsShapeHash([{ name: "search", description: "find OTHER things" }]));
+  assert.notEqual(
+    base,
+    toolsShapeHash([
+      { name: "search", description: "find things", inputSchema: { type: "object" } },
+    ])
+  );
+});
+
+test("checkToolsShape is a no-op when the server has no config-level trust entry", async () => {
+  const store = await makeStoreFile();
+  const result = checkToolsShape("unknown-fp", [{ name: "search" }], store);
+  assert.equal(result.ok, true);
+  assert.equal(result.recorded, false);
+});
+
+test("checkToolsShape records the shape on first check after approval, without flagging it", async () => {
+  const store = await makeStoreFile();
+  const fp = serverFingerprint({ command: "node", args: ["server.js"] });
+  trustServer("srv", fp, store);
+
+  const first = checkToolsShape(fp, [{ name: "search", description: "find things" }], store);
+  assert.equal(first.ok, true);
+  assert.equal(
+    first.recorded,
+    true,
+    "first observation after approval should be recorded, not flagged"
+  );
+
+  const entries = loadMcpAllowlist(store);
+  assert.ok(entries[0].toolsHash, "the recorded hash should be persisted to the manifest");
+});
+
+test("checkToolsShape flags a mismatch once a shape was already recorded", async () => {
+  const store = await makeStoreFile();
+  const fp = serverFingerprint({ command: "node", args: ["server.js"] });
+  trustServer("srv", fp, store);
+  checkToolsShape(fp, [{ name: "search", description: "find things" }], store);
+
+  const changed = checkToolsShape(
+    fp,
+    [{ name: "search", description: "find things and also delete them" }],
+    store
+  );
+  assert.equal(changed.ok, false);
+
+  const unchanged = checkToolsShape(fp, [{ name: "search", description: "find things" }], store);
+  assert.equal(unchanged.ok, true);
+  assert.equal(unchanged.recorded, false);
 });

@@ -10,6 +10,13 @@ import { McpAuthRequiredError } from "./oauth.js";
 import { missingVars } from "./servers.js";
 import { HttpTransport, StdioTransport, type JsonRpcMessage, type Transport } from "./transport.js";
 import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
+import { checkToolsShape, serverFingerprint } from "../trust/mcpTrust.js";
+
+/**
+ * Thrown when a server's live tool shape no longer matches what was recorded
+ * the first time its config was trusted — see checkToolsShape.
+ */
+class McpShapeChangedError extends Error {}
 
 /**
  * Model Context Protocol client with two transports and no SDK dependency
@@ -832,6 +839,8 @@ export interface McpLoadOptions {
     message: string,
     fields: ElicitationField[]
   ): Promise<ElicitationResult>;
+  /** Overrides the trust manifest path (mcp-trusted.json) — tests only. */
+  mcpTrustFile?: string;
 }
 
 /** What /mcp reports for one configured server. */
@@ -846,6 +855,8 @@ export interface McpServerStatus {
   needsAuth?: boolean;
   /** resource_metadata URL from the 401 challenge, so login skips re-discovery. */
   authMetadataUrl?: string;
+  /** The server's live tools no longer match what was recorded at approval — see checkToolsShape. */
+  shapeChanged?: boolean;
   tools: string[];
   /** Prompt names the server contributes as slash commands. */
   prompts: string[];
@@ -1034,6 +1045,8 @@ export async function connectServer(
     });
     const listed = await conn.initialize();
     const specs = listed.tools;
+    const shape = checkToolsShape(serverFingerprint(cfg), specs, trace?.mcpTrustFile);
+    if (!shape.ok) throw new McpShapeChangedError(name);
     connections.push(conn);
     // Reconnects re-derive names from scratch; releasing the old claims first
     // keeps a server from colliding with its own previous incarnation.
@@ -1063,6 +1076,18 @@ export async function connectServer(
       status.error = `needs login — run /mcp login ${name}`;
       span.setAttribute("kritya.mcp_needs_auth", true);
       span.setStatus("OK");
+    } else if (err instanceof McpShapeChangedError) {
+      status.shapeChanged = true;
+      status.error =
+        `its tools no longer match what you approved — run "/mcp trust revoke ${name}" ` +
+        `and restart kritya to review and re-approve it`;
+      span.setAttribute("kritya.mcp_shape_changed", true);
+      span.setStatus("ERROR", "tool shape changed");
+      trace?.audit?.logTool({
+        tool: "mcp_connect",
+        summary: `server "${name}" tool shape changed since approval`,
+        outcome: "error",
+      });
     } else {
       status.error = err instanceof Error ? err.message : String(err);
       process.stderr.write(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);

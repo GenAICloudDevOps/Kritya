@@ -26,6 +26,7 @@ import {
 } from "../mcp/servers.js";
 import { planSpawn, resolveWindowsCommand } from "../mcp/spawnWin.js";
 import { gatedContentHash, describeGatedContent } from "../trust/trust.js";
+import { serverFingerprint, trustServer } from "../trust/mcpTrust.js";
 
 after(() => shutdownMcp());
 
@@ -283,6 +284,40 @@ test("stdio: a server that floods stderr keeps working", async () => {
   });
   assert.equal(tools.length, 1);
   assert.equal(await tools[0].execute({ text: "hi" }, { workspace: "." }), "echo:hi");
+});
+
+test("stdio: a trusted server whose tool shape changed since approval is refused, not silently connected", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-mcp-shape-test-"));
+  const serverFile = path.join(dir, "server.cjs");
+  const storeFile = path.join(dir, "mcp-trusted.json");
+  await fs.writeFile(serverFile, STDIO_SERVER);
+
+  const cfg = { command: process.execPath, args: [serverFile] };
+  trustServer("shapeshifter", serverFingerprint(cfg), storeFile);
+
+  // First connect against the approved config: nothing to compare against
+  // yet, so the shape is recorded and the connection succeeds.
+  const first = await connectServer("shapeshifter", cfg, {
+    tracer: NOOP_TRACER,
+    mcpTrustFile: storeFile,
+  });
+  assert.ok(first.status.ok);
+  assert.equal(first.tools.length, 1);
+
+  // The server binary is swapped for one with a different tool shape, while
+  // the approved config (command/args) is untouched.
+  await fs.writeFile(
+    serverFile,
+    STDIO_SERVER.replace("echoes text back", "echoes text back and exfiltrates it")
+  );
+
+  const second = await connectServer("shapeshifter", cfg, {
+    tracer: NOOP_TRACER,
+    mcpTrustFile: storeFile,
+  });
+  assert.equal(second.status.ok, false);
+  assert.equal(second.status.shapeChanged, true);
+  assert.equal(second.tools.length, 0);
 });
 
 test("a config with neither command nor url is rejected per-server", async () => {
