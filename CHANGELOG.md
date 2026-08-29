@@ -4,6 +4,16 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.13-beta] — 2026-08-29
+
+### Changed
+
+- Bumped `@types/node`, `eslint`, `lint-staged`, `mammoth`, `openai`,
+  `pdfjs-dist`, and `typescript-eslint` to their latest compatible
+  versions. Routine dependency maintenance, not a CVE fix — the 2 known
+  high-severity advisories (`image-size`, via `pptxgenjs`) remain
+  unpatched upstream and stay allowlisted in `scripts/audit-allowlist.json`.
+
 ## [0.8.12-beta] — 2026-08-28
 
 ### Added
