@@ -128,13 +128,13 @@ interface McpPromptArgSpec {
   required?: boolean;
 }
 
-interface McpPromptSpec {
+export interface McpPromptSpec {
   name: string;
   description?: string;
   arguments?: McpPromptArgSpec[];
 }
 
-interface McpResourceSpec {
+export interface McpResourceSpec {
   uri: string;
   name?: string;
   description?: string;
