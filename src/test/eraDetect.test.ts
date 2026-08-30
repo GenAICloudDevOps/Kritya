@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import http from "node:http";
 import {
   modernMeta,
   isRecognizedModernError,
   parseDiscoverResult,
   probeStdioEra,
+  probeHttpEra,
 } from "../mcp/eraDetect.js";
 import { VERSION } from "../version.js";
 
@@ -138,4 +140,94 @@ test("probeStdioEra reports modern era on a recognized version-mismatch error, n
   );
   assert.equal(result.era, "modern");
   assert.equal(result.process, undefined);
+});
+
+// ---------- probeHttpEra ----------
+
+async function withServer(
+  handler: (
+    req: import("node:http").IncomingMessage,
+    res: import("node:http").ServerResponse
+  ) => void
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+function readBody(req: import("node:http").IncomingMessage): Promise<string> {
+  return new Promise((resolve) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => resolve(body));
+  });
+}
+
+test("probeHttpEra detects a modern server from a 200 DiscoverResult", async () => {
+  const srv = await withServer(async (req, res) => {
+    await readBody(req);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "discover-probe",
+        result: {
+          resultType: "complete",
+          supportedVersions: ["2026-07-28"],
+          capabilities: { tools: {} },
+        },
+      })
+    );
+  });
+  try {
+    const result = await probeHttpEra(srv.url, {});
+    assert.equal(result.era, "modern");
+    assert.deepEqual(result.discover?.supportedVersions, ["2026-07-28"]);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("probeHttpEra detects modern from a 400 body carrying a recognized modern error", async () => {
+  const srv = await withServer(async (req, res) => {
+    await readBody(req);
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "discover-probe",
+        error: { code: -32022, message: "Unsupported protocol version" },
+      })
+    );
+  });
+  try {
+    const result = await probeHttpEra(srv.url, {});
+    assert.equal(result.era, "modern");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("probeHttpEra falls back to legacy on a 404 with a non-modern body", async () => {
+  const srv = await withServer(async (req, res) => {
+    await readBody(req);
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  });
+  try {
+    const result = await probeHttpEra(srv.url, {});
+    assert.equal(result.era, "legacy");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("probeHttpEra falls back to legacy when the connection is refused", async () => {
+  const result = await probeHttpEra("http://127.0.0.1:1/mcp", {}, 500);
+  assert.equal(result.era, "legacy");
 });

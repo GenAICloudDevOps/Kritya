@@ -151,3 +151,60 @@ export function probeStdioEra(
     );
   });
 }
+
+export interface HttpProbeResult {
+  era: Era;
+  discover?: DiscoverResult;
+}
+
+const DEFAULT_HTTP_PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * Probe an HTTP server by attempting a modern `server/discover` POST, per
+ * /specification/2026-07-28/basic/transports/streamable-http#backward-compatibility.
+ */
+export async function probeHttpEra(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = DEFAULT_HTTP_PROBE_TIMEOUT_MS
+): Promise<HttpProbeResult> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": MODERN_PROTOCOL_VERSION,
+        "mcp-method": "server/discover",
+        ...headers,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "discover-probe",
+        method: "server/discover",
+        params: { _meta: modernMeta() },
+      }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return { era: "legacy" };
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return { era: "legacy" };
+  }
+  const msg = body as { result?: unknown; error?: { code?: number } };
+
+  if (res.ok) {
+    const discover = parseDiscoverResult(msg.result);
+    if (discover) return { era: "modern", discover };
+    return { era: "legacy" };
+  }
+  if (isRecognizedModernError(msg.error)) return { era: "modern" };
+  return { era: "legacy" };
+}
