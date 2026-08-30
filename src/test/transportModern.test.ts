@@ -94,6 +94,80 @@ test("send() base64-sentinel-encodes an Mcp-Name value with non-ASCII characters
   }
 });
 
+test("send() refuses a cross-origin redirect and never leaks credentials to it", async () => {
+  let serverBHit = false;
+  const srvB = await withServer((_req, res) => {
+    serverBHit = true;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { resultType: "complete" } }));
+  });
+  const srvA = await withServer((_req, res) => {
+    res.writeHead(302, { location: srvB.url });
+    res.end();
+  });
+  try {
+    const transport = new ModernHttpTransport(srvA.url, { authorization: "Bearer secret" });
+    transport.onMessage = () => {};
+    await assert.rejects(
+      transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, 5000),
+      /different origin/
+    );
+    assert.equal(serverBHit, false);
+  } finally {
+    await srvA.close();
+    await srvB.close();
+  }
+});
+
+test("send() includes _meta with protocol version, client info, and client capabilities in the POST body", async () => {
+  let capturedBody: any;
+  const srv = await withServer(async (req, res) => {
+    capturedBody = await readJsonBody(req);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { resultType: "complete" } }));
+  });
+  try {
+    const transport = new ModernHttpTransport(srv.url, {});
+    transport.onMessage = () => {};
+    await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, 5000);
+    const meta = capturedBody?.params?._meta;
+    assert.ok(meta, "expected params._meta to be present in the POST body");
+    assert.ok("io.modelcontextprotocol/protocolVersion" in meta);
+    assert.ok("io.modelcontextprotocol/clientInfo" in meta);
+    assert.ok("io.modelcontextprotocol/clientCapabilities" in meta);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("send() re-encodes an Mcp-Name value that already looks like the base64 sentinel", async () => {
+  const seenHeaders: Record<string, string> = {};
+  const srv = await withServer(async (req, res) => {
+    Object.entries(req.headers).forEach(([k, v]) => (seenHeaders[k] = String(v)));
+    await readJsonBody(req);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { resultType: "complete" } }));
+  });
+  try {
+    const transport = new ModernHttpTransport(srv.url, {});
+    transport.onMessage = () => {};
+    const collision = "=?base64?literal?=";
+    await transport.send(
+      { jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: collision } },
+      5000
+    );
+    assert.notEqual(seenHeaders["mcp-name"], collision);
+    assert.match(seenHeaders["mcp-name"], /^=\?base64\?[A-Za-z0-9+/=]*\?=$/);
+    const decoded = Buffer.from(
+      seenHeaders["mcp-name"].replace(/^=\?base64\?/, "").replace(/\?=$/, ""),
+      "base64"
+    ).toString("utf8");
+    assert.equal(decoded, collision);
+  } finally {
+    await srv.close();
+  }
+});
+
 test("close() does not send a DELETE (no session to terminate)", async () => {
   let deleteCalled = false;
   const srv = await withServer((req, res) => {

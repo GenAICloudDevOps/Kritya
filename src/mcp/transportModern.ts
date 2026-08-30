@@ -16,7 +16,7 @@ function isRedirect(status: number): boolean {
  */
 function isPlainAsciiHeaderSafe(s: string): boolean {
   if (s !== s.trim()) return false;
-  return /^[\x20-\x7E]*$/.test(s) && !/[^\x20-\x7E]/.test(s);
+  return /^[\t\x20-\x7E]*$/.test(s);
 }
 
 const BASE64_SENTINEL_RE = /^=\?base64\?[A-Za-z0-9+/=]*\?=$/;
