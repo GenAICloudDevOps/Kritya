@@ -134,6 +134,7 @@ export function probeStdioEra(
         }
       }
       if (isRecognizedModernError(msg.error)) {
+        proc.kill();
         finish({ era: "modern" });
         return;
       }
