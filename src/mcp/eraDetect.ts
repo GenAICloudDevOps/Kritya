@@ -62,3 +62,91 @@ export function parseDiscoverResult(result: unknown): DiscoverResult | undefined
     instructions: typeof r.instructions === "string" ? r.instructions : undefined,
   };
 }
+
+import { spawn, type ChildProcess } from "node:child_process";
+import { planSpawn } from "./spawnWin.js";
+
+export interface StdioProbeResult {
+  era: Era;
+  process?: ChildProcess;
+  discover?: DiscoverResult;
+}
+
+const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Probe a stdio server with `server/discover`, per
+ * /specification/2026-07-28/basic/transports/stdio#backward-compatibility.
+ * Three outcomes: a DiscoverResult (modern, process kept alive for reuse), a
+ * recognized modern error (modern, but report — don't fall back), or
+ * anything else / a timeout (legacy — the caller launches its own process).
+ */
+export function probeStdioEra(
+  command: string,
+  args: string[],
+  env: Record<string, string> | undefined,
+  cwd: string,
+  timeoutMs = DEFAULT_PROBE_TIMEOUT_MS
+): Promise<StdioProbeResult> {
+  return new Promise((resolve) => {
+    const plan = planSpawn(command, args);
+    const proc = spawn(plan.command, plan.args, {
+      env: { ...process.env, ...env } as Record<string, string>,
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsVerbatimArguments: plan.windowsVerbatimArguments,
+    });
+
+    let buffer = "";
+    let settled = false;
+    const finish = (result: StdioProbeResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.stdout?.removeAllListeners("data");
+      if (result.era === "legacy") proc.kill();
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => finish({ era: "legacy" }), timeoutMs);
+    timer.unref?.();
+
+    proc.on("error", () => finish({ era: "legacy" }));
+    proc.stdout?.setEncoding("utf8");
+    proc.stdout?.on("data", (chunk: string) => {
+      buffer += chunk;
+      const idx = buffer.indexOf("\n");
+      if (idx < 0) return;
+      const line = buffer.slice(0, idx).trim();
+      if (!line) return;
+      let msg: { result?: unknown; error?: { code?: number } };
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        finish({ era: "legacy" });
+        return;
+      }
+      if (msg.result !== undefined) {
+        const discover = parseDiscoverResult(msg.result);
+        if (discover) {
+          finish({ era: "modern", process: proc, discover });
+          return;
+        }
+      }
+      if (isRecognizedModernError(msg.error)) {
+        finish({ era: "modern" });
+        return;
+      }
+      finish({ era: "legacy" });
+    });
+
+    proc.stdin?.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "discover-probe",
+        method: "server/discover",
+        params: { _meta: modernMeta() },
+      }) + "\n"
+    );
+  });
+}
