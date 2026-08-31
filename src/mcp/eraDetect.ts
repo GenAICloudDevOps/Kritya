@@ -65,6 +65,8 @@ export function parseDiscoverResult(result: unknown): DiscoverResult | undefined
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { planSpawn } from "./spawnWin.js";
+import { minimalEnv } from "./transport.js";
+import { OAuthSession } from "./oauth.js";
 
 export interface StdioProbeResult {
   era: Era;
@@ -91,11 +93,22 @@ export function probeStdioEra(
   return new Promise((resolve) => {
     const plan = planSpawn(command, args);
     const proc = spawn(plan.command, plan.args, {
-      env: { ...process.env, ...env } as Record<string, string>,
+      // Minimal env, not the full process env — see StdioTransport's
+      // minimalEnv() doc comment: a probe process is still a third-party MCP
+      // server and must not automatically receive kritya's own API keys.
+      env: { ...minimalEnv(), ...env },
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       windowsVerbatimArguments: plan.windowsVerbatimArguments,
     });
+
+    // Draining stderr is not optional here either: a server that logs more
+    // than the OS pipe buffer blocks in its own write() forever if nobody
+    // reads it, even during just the probe's short wait. Kept attached
+    // (never removed) so a process handed off to ReusedProcessTransport
+    // keeps draining seamlessly across that handoff.
+    proc.stderr?.setEncoding("utf8");
+    proc.stderr?.on("data", () => {});
 
     let buffer = "";
     let settled = false;
@@ -115,30 +128,34 @@ export function probeStdioEra(
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => {
       buffer += chunk;
-      const idx = buffer.indexOf("\n");
-      if (idx < 0) return;
-      const line = buffer.slice(0, idx).trim();
-      if (!line) return;
-      let msg: { result?: unknown; error?: { code?: number } };
-      try {
-        msg = JSON.parse(line);
-      } catch {
+      let idx: number;
+      while ((idx = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        let msg: { result?: unknown; error?: { code?: number } };
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          // Some servers log to stdout — tolerate a non-JSON line the same
+          // way StdioTransport does, and keep listening for the real reply.
+          continue;
+        }
+        if (msg.result !== undefined) {
+          const discover = parseDiscoverResult(msg.result);
+          if (discover) {
+            finish({ era: "modern", process: proc, discover });
+            return;
+          }
+        }
+        if (isRecognizedModernError(msg.error)) {
+          proc.kill();
+          finish({ era: "modern" });
+          return;
+        }
         finish({ era: "legacy" });
         return;
       }
-      if (msg.result !== undefined) {
-        const discover = parseDiscoverResult(msg.result);
-        if (discover) {
-          finish({ era: "modern", process: proc, discover });
-          return;
-        }
-      }
-      if (isRecognizedModernError(msg.error)) {
-        proc.kill();
-        finish({ era: "modern" });
-        return;
-      }
-      finish({ era: "legacy" });
     });
 
     proc.stdin?.write(
@@ -162,23 +179,43 @@ const DEFAULT_HTTP_PROBE_TIMEOUT_MS = 10_000;
 /**
  * Probe an HTTP server by attempting a modern `server/discover` POST, per
  * /specification/2026-07-28/basic/transports/streamable-http#backward-compatibility.
+ *
+ * OAuth-aware: without this, an OAuth-protected modern server answers with a
+ * 401 (neither a DiscoverResult nor a recognized modern error), which used to
+ * be classified as "legacy" — permanently hiding a modern server behind auth,
+ * since the real ModernHttpTransport connection (which *does* handle OAuth)
+ * would then never run against it. A bearer token is injected the same way
+ * `ModernHttpTransport.buildHeaders` does, and a 401 is given one
+ * refresh-and-retry before falling back to "legacy" — matching the retry
+ * shape `ModernHttpTransport.send`/`HttpTransport.send` use post-connect.
  */
 export async function probeHttpEra(
   url: string,
   headers: Record<string, string>,
   timeoutMs = DEFAULT_HTTP_PROBE_TIMEOUT_MS
 ): Promise<HttpProbeResult> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
+  const oauth = new OAuthSession(url);
+  const hasExplicitAuth = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
+
+  const buildHeaders = async (): Promise<Record<string, string>> => {
+    const built: Record<string, string> = {
+      ...headers,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": MODERN_PROTOCOL_VERSION,
+      "mcp-method": "server/discover",
+    };
+    if (!hasExplicitAuth) {
+      const token = await oauth.accessToken();
+      if (token) built.authorization = `Bearer ${token}`;
+    }
+    return built;
+  };
+
+  const post = async (): Promise<Response> =>
+    fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        "mcp-protocol-version": MODERN_PROTOCOL_VERSION,
-        "mcp-method": "server/discover",
-        ...headers,
-      },
+      headers: await buildHeaders(),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: "discover-probe",
@@ -188,6 +225,20 @@ export async function probeHttpEra(
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });
+
+  let res: Response;
+  try {
+    res = await post();
+    if (res.status === 401 && !hasExplicitAuth) {
+      // Give a stored (or freshly refreshed) token a fair shot before
+      // concluding legacy — a server that only needed auth deserves a real
+      // DiscoverResult or recognized modern error, not a guess.
+      const refreshed = await oauth.handleUnauthorized();
+      if (refreshed) {
+        await res.body?.cancel().catch(() => {});
+        res = await post();
+      }
+    }
   } catch {
     return { era: "legacy" };
   }

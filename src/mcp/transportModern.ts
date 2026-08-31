@@ -1,10 +1,14 @@
 import type { ChildProcess } from "node:child_process";
 import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oauth.js";
-import type { JsonRpcMessage, Transport } from "./transport.js";
+import { withTimeout, type JsonRpcMessage, type Transport } from "./transport.js";
 import { modernMeta, MODERN_PROTOCOL_VERSION } from "./eraDetect.js";
 
 /** Same-origin redirects we'll follow before calling it a loop. */
 const MAX_REDIRECTS = 5;
+
+/** How much of a server's stderr to keep for diagnostics, and how much to report. */
+const STDERR_KEEP_BYTES = 8_192;
+const STDERR_REPORT_LINES = 5;
 
 function isRedirect(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
@@ -62,11 +66,11 @@ export class ModernHttpTransport implements Transport {
 
   private async buildHeaders(msg: JsonRpcMessage): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
+      ...this.headers,
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       "mcp-protocol-version": MODERN_PROTOCOL_VERSION,
       "mcp-method": msg.method ?? "",
-      ...this.headers,
     };
     const name = mcpNameFor(msg);
     if (name !== undefined) headers["mcp-name"] = encodeHeaderValue(name);
@@ -136,7 +140,7 @@ export class ModernHttpTransport implements Transport {
         headers: await this.buildHeaders(msg),
         body,
         redirect: "manual",
-        signal: signal ?? AbortSignal.timeout(timeoutMs),
+        signal: withTimeout(timeoutMs, signal),
       });
       if (!isRedirect(res.status)) return res;
       const location = res.headers.get("location");
@@ -204,8 +208,19 @@ export class ReusedProcessTransport implements Transport {
   onMessage: (msg: JsonRpcMessage) => void = () => {};
   onError: (err: Error) => void = () => {};
   private buffer = "";
+  /** Tail of the server's stderr, kept for the exit message (see StdioTransport). */
+  private stderrTail = "";
 
   constructor(private proc: ChildProcess) {
+    // Attached first, before anything else: draining stderr is not optional
+    // (see StdioTransport's doc comment) — a server that logs more than the
+    // OS pipe buffer blocks in its own write() forever if nobody reads it,
+    // and the process may already be mid-flight from probeStdioEra's own
+    // (brief) probe window.
+    this.proc.stderr?.setEncoding("utf8");
+    this.proc.stderr?.on("data", (chunk: string) => {
+      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_KEEP_BYTES);
+    });
     this.proc.stdout?.setEncoding("utf8");
     this.proc.stdout?.on("data", (chunk: string) => this.onData(chunk));
     let reported = false;
@@ -213,7 +228,7 @@ export class ReusedProcessTransport implements Transport {
       if (reported) return;
       reported = true;
       const how = signal ? `killed by ${signal}` : `exited with code ${code ?? 0}`;
-      this.onError(new Error(`server process ${how}`));
+      this.onError(new Error(`server process ${how}${this.stderrDetail()}`));
     };
     // Same close/exit split as StdioTransport: "close" waits for stdio to
     // flush, "exit" arms a short fallback in case a grandchild holds the
@@ -222,7 +237,17 @@ export class ReusedProcessTransport implements Transport {
     this.proc.on("exit", (code, signal) => {
       setTimeout(() => report(code, signal), 200).unref();
     });
-    this.proc.on("error", (err) => this.onError(err));
+    this.proc.on("error", (err) => this.onError(new Error(`${err.message}${this.stderrDetail()}`)));
+  }
+
+  /** The last few non-blank stderr lines, formatted for an error message. */
+  private stderrDetail(): string {
+    const lines = this.stderrTail
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .slice(-STDERR_REPORT_LINES);
+    return lines.length ? ` — stderr: ${lines.join(" | ")}` : "";
   }
 
   private onData(chunk: string): void {
