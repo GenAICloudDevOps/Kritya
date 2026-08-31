@@ -12,7 +12,7 @@ import { HttpTransport, StdioTransport, type JsonRpcMessage, type Transport } fr
 import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
 import { checkToolsShape, serverFingerprint } from "../trust/mcpTrust.js";
 import { probeStdioEra, probeHttpEra } from "./eraDetect.js";
-import { ModernMcpConnection } from "./clientModern.js";
+import { ModernMcpConnection, type McpServerConnection } from "./clientModern.js";
 import { ModernHttpTransport, ReusedProcessTransport } from "./transportModern.js";
 
 /**
@@ -307,7 +307,7 @@ function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 
-class McpConnection {
+class McpConnection implements McpServerConnection {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private closed = false;
@@ -869,7 +869,7 @@ export interface McpServerStatus {
   hiddenTools?: number;
 }
 
-const connections: (McpConnection | ModernMcpConnection)[] = [];
+const connections: McpServerConnection[] = [];
 let statuses: McpServerStatus[] = [];
 /**
  * Exposed tool name -> the identity that claimed it, so a second tool whose
@@ -1034,13 +1034,20 @@ export async function connectServer(
   const span = tracer.startSpan("mcp.connect", {
     attributes: { "kritya.mcp_server": name, "kritya.mcp_transport": status.transport },
   });
-  let conn: McpConnection | ModernMcpConnection | undefined;
+  let conn: McpServerConnection | undefined;
   try {
     // Checked here rather than at expansion time: this is where a per-server
     // failure has somewhere to go (`status.error`, and the /mcp table).
     const missing = missingVars(cfg);
     if (missing.length) {
       throw new Error(`missing env var${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
+    }
+    // Checked here, before era detection branches on cfg.url, so a config
+    // setting both never quietly takes the modern-HTTP path — makeTransport
+    // (the legacy path's own guard) is skipped entirely whenever era
+    // detection resolves to modern, so this can't be left to run there alone.
+    if (cfg.url && cfg.command) {
+      throw new Error(`server "${name}" sets both "command" and "url"; pick one`);
     }
     let modernConn: ModernMcpConnection | undefined;
     if (cfg.url) {
@@ -1156,7 +1163,7 @@ export async function connectServer(
  * quietly redefine /plan.
  */
 function registerPrompts(
-  conn: McpConnection | ModernMcpConnection,
+  conn: McpServerConnection,
   server: string,
   specs: McpPromptSpec[],
   status: McpServerStatus
@@ -1201,7 +1208,7 @@ function splitPromptArgs(argText: string, args: McpPromptArgSpec[]): Record<stri
 
 /** Expose a server's resources as `@mcp:<server>/<name>` attachments. */
 function registerResources(
-  conn: McpConnection | ModernMcpConnection,
+  conn: McpServerConnection,
   server: string,
   specs: McpResourceSpec[],
   status: McpServerStatus
@@ -1271,7 +1278,7 @@ function isReadOnly(spec: McpToolSpec): boolean {
 }
 
 export function mcpToolDef(
-  conn: McpConnection | ModernMcpConnection,
+  conn: McpServerConnection,
   server: string,
   spec: McpToolSpec,
   cfg: Pick<McpServerConfig, "consent" | "tasks"> = {}

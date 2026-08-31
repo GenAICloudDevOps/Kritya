@@ -8,11 +8,43 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
-const REQUEST_TIMEOUT_MS = 120_000;
+/**
+ * Split the same way legacy McpConnection splits its timeouts: connect-time
+ * calls (the three list calls during initialize()) get a short ceiling since
+ * a hung server there should fail fast, while tools/call — which can
+ * legitimately run long — gets the generous one.
+ */
+const CONNECT_TIMEOUT_MS = 15_000;
+const CALL_TIMEOUT_MS = 120_000;
 
 interface McpContentBlock {
   type: string;
   text?: string;
+}
+
+/**
+ * The minimal surface `connectServer()` needs from either transport era, so
+ * it can hold `McpConnection | ModernMcpConnection` through one interface
+ * instead of a bare union everywhere. See the design spec's Architecture
+ * section (docs/superpowers/specs/2026-08-30-mcp-modern-protocol-design.md).
+ */
+export interface McpServerConnection {
+  readonly name: string;
+  initialize(): Promise<{
+    tools: McpToolSpec[];
+    prompts: McpPromptSpec[];
+    resources: McpResourceSpec[];
+  }>;
+  getPrompt(name: string, args: Record<string, string>): Promise<string>;
+  readResource(uri: string): Promise<string>;
+  callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    tasksEnabled?: boolean,
+    onProgress?: (text: string) => void
+  ): Promise<string>;
+  close(): void;
 }
 
 /**
@@ -23,7 +55,7 @@ interface McpContentBlock {
  * "input_required"` (MRTR — sampling/elicitation/roots) is rejected with a
  * clear error here; Sub-project 2 replaces this with the real retry loop.
  */
-export class ModernMcpConnection {
+export class ModernMcpConnection implements McpServerConnection {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private closed = false;
@@ -59,6 +91,7 @@ export class ModernMcpConnection {
   private request(
     method: string,
     params: Record<string, unknown>,
+    timeoutMs: number,
     signal?: AbortSignal
   ): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error(`MCP server "${this.name}" is not running`));
@@ -67,12 +100,12 @@ export class ModernMcpConnection {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP request "${method}" timed out`));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.transport
         .send(
           { jsonrpc: "2.0", id, method, params: { ...params, _meta: modernMeta() } },
-          REQUEST_TIMEOUT_MS,
+          timeoutMs,
           signal
         )
         .catch((err: Error) => {
@@ -107,18 +140,22 @@ export class ModernMcpConnection {
     prompts: McpPromptSpec[];
     resources: McpResourceSpec[];
   }> {
-    const listed = this.unwrap<{ tools?: McpToolSpec[] }>(await this.request("tools/list", {}));
+    const listed = this.unwrap<{ tools?: McpToolSpec[] }>(
+      await this.request("tools/list", {}, CONNECT_TIMEOUT_MS)
+    );
     let prompts: McpPromptSpec[] = [];
     let resources: McpResourceSpec[] = [];
     try {
-      const p = this.unwrap<{ prompts?: McpPromptSpec[] }>(await this.request("prompts/list", {}));
+      const p = this.unwrap<{ prompts?: McpPromptSpec[] }>(
+        await this.request("prompts/list", {}, CONNECT_TIMEOUT_MS)
+      );
       prompts = p.prompts ?? [];
     } catch {
       // prompts unsupported by this server — non-fatal, same as legacy behavior
     }
     try {
       const r = this.unwrap<{ resources?: McpResourceSpec[] }>(
-        await this.request("resources/list", {})
+        await this.request("resources/list", {}, CONNECT_TIMEOUT_MS)
       );
       resources = r.resources ?? [];
     } catch {
@@ -129,7 +166,7 @@ export class ModernMcpConnection {
 
   async getPrompt(name: string, args: Record<string, string>): Promise<string> {
     const result = this.unwrap<{ messages?: { role?: string; content?: McpContentBlock }[] }>(
-      await this.request("prompts/get", { name, arguments: args })
+      await this.request("prompts/get", { name, arguments: args }, CALL_TIMEOUT_MS)
     );
     const messages = result.messages ?? [];
     const multiRole = new Set(messages.map((m) => m.role ?? "user")).size > 1;
@@ -144,7 +181,7 @@ export class ModernMcpConnection {
 
   async readResource(uri: string): Promise<string> {
     const result = this.unwrap<{ contents?: { text?: string }[] }>(
-      await this.request("resources/read", { uri })
+      await this.request("resources/read", { uri }, CALL_TIMEOUT_MS)
     );
     return (result.contents ?? []).map((c) => c.text ?? "").join("\n");
   }
@@ -161,7 +198,7 @@ export class ModernMcpConnection {
     // McpConnection.callTool's, which callers invoke uniformly through the
     // McpConnection | ModernMcpConnection union built in Task 6.
     const result = this.unwrap<{ content?: McpContentBlock[]; isError?: boolean }>(
-      await this.request("tools/call", { name: toolName, arguments: args }, signal)
+      await this.request("tools/call", { name: toolName, arguments: args }, CALL_TIMEOUT_MS, signal)
     );
     const text = (result.content ?? [])
       .filter((b) => b.type === "text")
@@ -172,7 +209,7 @@ export class ModernMcpConnection {
   }
 
   close(): void {
-    this.closed = true;
+    this.fail(new Error(`MCP server "${this.name}" connection closed`));
     this.transport.close();
   }
 }
