@@ -601,6 +601,11 @@ credentials to it.
 kritya answers `roots/list`, so a server that asks can scope itself to your
 workspace instead of guessing from its own config.
 
+Both the classic `initialize`-handshake protocol and the newer 2026-07-28
+per-request protocol (no handshake, no session) are supported transparently
+— kritya probes each server on connect and speaks whichever era it uses. You
+never configure this; it just connects either way.
+
 Servers can contribute more than tools. A server's **prompts** become slash
 commands named `/<server>-<prompt>` (so a Linear server can ship
 `/linear-triage`), matched only after built-ins and your own command files —
