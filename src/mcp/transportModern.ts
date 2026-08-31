@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oauth.js";
 import type { JsonRpcMessage, Transport } from "./transport.js";
 import { modernMeta, MODERN_PROTOCOL_VERSION } from "./eraDetect.js";
@@ -184,5 +185,67 @@ export class ModernHttpTransport implements Transport {
 
   close(): void {
     // No session to terminate — modern mode never sends DELETE.
+  }
+}
+
+/**
+ * Wraps an already-spawned stdio child process — one `probeStdioEra` kept
+ * alive after a successful `server/discover` — as a `Transport`, instead of
+ * paying for a second process launch.
+ *
+ * Mirrors `StdioTransport`'s framing and lifecycle handling (line buffering
+ * across chunk boundaries, `onError` wired to `close`/`exit`/`error`) rather
+ * than a one-shot "resolve on next data event" adapter: `ModernMcpConnection`
+ * can have more than one request in flight (e.g. concurrent tool calls), and
+ * a naive adapter would resolve the wrong `send()` call, or drop data split
+ * across multiple chunks/lines.
+ */
+export class ReusedProcessTransport implements Transport {
+  onMessage: (msg: JsonRpcMessage) => void = () => {};
+  onError: (err: Error) => void = () => {};
+  private buffer = "";
+
+  constructor(private proc: ChildProcess) {
+    this.proc.stdout?.setEncoding("utf8");
+    this.proc.stdout?.on("data", (chunk: string) => this.onData(chunk));
+    let reported = false;
+    const report = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (reported) return;
+      reported = true;
+      const how = signal ? `killed by ${signal}` : `exited with code ${code ?? 0}`;
+      this.onError(new Error(`server process ${how}`));
+    };
+    // Same close/exit split as StdioTransport: "close" waits for stdio to
+    // flush, "exit" arms a short fallback in case a grandchild holds the
+    // pipes open.
+    this.proc.on("close", report);
+    this.proc.on("exit", (code, signal) => {
+      setTimeout(() => report(code, signal), 200).unref();
+    });
+    this.proc.on("error", (err) => this.onError(err));
+  }
+
+  private onData(chunk: string): void {
+    this.buffer += chunk;
+    let idx: number;
+    while ((idx = this.buffer.indexOf("\n")) >= 0) {
+      const line = this.buffer.slice(0, idx).trim();
+      this.buffer = this.buffer.slice(idx + 1);
+      if (!line) continue;
+      try {
+        this.onMessage(JSON.parse(line) as JsonRpcMessage);
+      } catch {
+        // ignore non-JSON (some servers log to stdout)
+      }
+    }
+  }
+
+  send(msg: JsonRpcMessage): Promise<void> {
+    this.proc.stdin?.write(JSON.stringify(msg) + "\n");
+    return Promise.resolve();
+  }
+
+  close(): void {
+    this.proc.kill();
   }
 }

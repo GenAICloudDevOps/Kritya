@@ -29,7 +29,7 @@ export class ModernMcpConnection {
   private closed = false;
 
   constructor(
-    private name: string,
+    public readonly name: string,
     private transport: Transport
   ) {
     transport.onMessage = (msg) => this.onMessage(msg);

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { ModernMcpConnection } from "../mcp/clientModern.js";
 import { StdioTransport } from "../mcp/transport.js";
+import { loadMcpTools, shutdownMcp } from "../mcp/client.js";
+import { NOOP_TRACER } from "../telemetry/tracer.js";
+
+// loadMcpTools registers spawned/connected servers on the module-level
+// `connections` list (see client.ts); closing them here is what lets the
+// spawned child processes exit and the test process itself terminate,
+// matching mcp.test.ts's own after(() => shutdownMcp()) hook.
+after(() => shutdownMcp());
 
 const MODERN_TOOLS_SERVER = [
   "const rl = require('readline').createInterface({ input: process.stdin });",
@@ -9,6 +17,9 @@ const MODERN_TOOLS_SERVER = [
   "rl.on('line', (l) => {",
   "  if (!l.trim()) return;",
   "  const m = JSON.parse(l);",
+  "  if (m.method === 'server/discover')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { supportedVersions: ['2026-07-28'],",
+  "      capabilities: { tools: {} } } });",
   "  if (m.method === 'tools/list')",
   "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete',",
   "      tools: [{ name: 'echo', description: 'echoes input', inputSchema: { type: 'object', properties: {} } }] } });",
@@ -111,4 +122,41 @@ test("callTool() surfaces a JSON-RPC error as a thrown Error", async () => {
   await conn.initialize();
   await assert.rejects(() => conn.callTool("bad", {}), /bad args/);
   conn.close();
+});
+
+test("connectServer detects a modern stdio server and uses it end-to-end via loadMcpTools", async () => {
+  const tools = await loadMcpTools(
+    { modernSrv: { command: process.execPath, args: ["-e", MODERN_TOOLS_SERVER] } },
+    { tracer: NOOP_TRACER }
+  );
+  assert.equal(tools.length, 1);
+  const answer = await tools[0].execute({ hello: "world" }, { workspace: "." });
+  assert.equal(answer, 'echoed: {"hello":"world"}');
+});
+
+test("connectServer still uses the legacy path for a server that doesn't answer server/discover", async () => {
+  const LEGACY_SERVER = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  if (m.method === 'server/discover')",
+    "    return send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });",
+    "  if (m.method === 'initialize')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion,",
+    "      capabilities: { tools: {} }, serverInfo: { name: 'legacy', version: '1' } } });",
+    "  if (m.method === 'tools/list')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ping' }] } });",
+    "  if (m.method === 'tools/call')",
+    "    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'pong' }] } });",
+    "});",
+  ].join("\n");
+  const tools = await loadMcpTools(
+    { legacySrv: { command: process.execPath, args: ["-e", LEGACY_SERVER] } },
+    { tracer: NOOP_TRACER }
+  );
+  assert.equal(tools.length, 1);
+  const answer = await tools[0].execute({}, { workspace: "." });
+  assert.equal(answer, "pong");
 });

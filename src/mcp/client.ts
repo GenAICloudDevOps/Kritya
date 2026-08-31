@@ -11,6 +11,9 @@ import { missingVars } from "./servers.js";
 import { HttpTransport, StdioTransport, type JsonRpcMessage, type Transport } from "./transport.js";
 import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
 import { checkToolsShape, serverFingerprint } from "../trust/mcpTrust.js";
+import { probeStdioEra, probeHttpEra } from "./eraDetect.js";
+import { ModernMcpConnection } from "./clientModern.js";
+import { ModernHttpTransport, ReusedProcessTransport } from "./transportModern.js";
 
 /**
  * Thrown when a server's live tool shape no longer matches what was recorded
@@ -866,7 +869,7 @@ export interface McpServerStatus {
   hiddenTools?: number;
 }
 
-const connections: McpConnection[] = [];
+const connections: (McpConnection | ModernMcpConnection)[] = [];
 let statuses: McpServerStatus[] = [];
 /**
  * Exposed tool name -> the identity that claimed it, so a second tool whose
@@ -1031,7 +1034,7 @@ export async function connectServer(
   const span = tracer.startSpan("mcp.connect", {
     attributes: { "kritya.mcp_server": name, "kritya.mcp_transport": status.transport },
   });
-  let conn: McpConnection | undefined;
+  let conn: McpConnection | ModernMcpConnection | undefined;
   try {
     // Checked here rather than at expansion time: this is where a per-server
     // failure has somewhere to go (`status.error`, and the /mcp table).
@@ -1039,10 +1042,35 @@ export async function connectServer(
     if (missing.length) {
       throw new Error(`missing env var${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
     }
-    conn = new McpConnection(name, makeTransport(name, cfg, workspace), workspace, {
-      onSampling: trace?.onSampling,
-      onElicitation: trace?.onElicitation,
-    });
+    let modernConn: ModernMcpConnection | undefined;
+    if (cfg.url) {
+      assertSafeUrl(name, cfg.url);
+      const probe = await probeHttpEra(cfg.url, cfg.headers ?? {});
+      if (probe.era === "modern") {
+        modernConn = new ModernMcpConnection(
+          name,
+          new ModernHttpTransport(cfg.url, cfg.headers ?? {})
+        );
+      }
+    } else if (cfg.command) {
+      const cwd = cfg.cwd ? path.resolve(workspace, cfg.cwd) : workspace;
+      const probe = await probeStdioEra(cfg.command, cfg.args ?? [], cfg.env, cwd);
+      if (probe.era === "modern") {
+        // Reuse the already-spawned probe process when the server kept it
+        // alive; otherwise (a modern server that rejected our version) fall
+        // through to the ordinary makeTransport path, which will also hit
+        // that same version mismatch and report it clearly via status.error.
+        if (probe.process) {
+          modernConn = new ModernMcpConnection(name, new ReusedProcessTransport(probe.process));
+        }
+      }
+    }
+    conn =
+      modernConn ??
+      new McpConnection(name, makeTransport(name, cfg, workspace), workspace, {
+        onSampling: trace?.onSampling,
+        onElicitation: trace?.onElicitation,
+      });
     const listed = await conn.initialize();
     const specs = listed.tools;
     const shape = checkToolsShape(serverFingerprint(cfg), specs, trace?.mcpTrustFile);
@@ -1114,7 +1142,7 @@ export async function connectServer(
  * quietly redefine /plan.
  */
 function registerPrompts(
-  conn: McpConnection,
+  conn: McpConnection | ModernMcpConnection,
   server: string,
   specs: McpPromptSpec[],
   status: McpServerStatus
@@ -1159,7 +1187,7 @@ function splitPromptArgs(argText: string, args: McpPromptArgSpec[]): Record<stri
 
 /** Expose a server's resources as `@mcp:<server>/<name>` attachments. */
 function registerResources(
-  conn: McpConnection,
+  conn: McpConnection | ModernMcpConnection,
   server: string,
   specs: McpResourceSpec[],
   status: McpServerStatus
@@ -1229,7 +1257,7 @@ function isReadOnly(spec: McpToolSpec): boolean {
 }
 
 export function mcpToolDef(
-  conn: McpConnection,
+  conn: McpConnection | ModernMcpConnection,
   server: string,
   spec: McpToolSpec,
   cfg: Pick<McpServerConfig, "consent" | "tasks"> = {}
