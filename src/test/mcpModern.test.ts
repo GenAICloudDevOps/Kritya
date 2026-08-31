@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { ModernMcpConnection } from "../mcp/clientModern.js";
 import { StdioTransport } from "../mcp/transport.js";
-import { loadMcpTools, shutdownMcp } from "../mcp/client.js";
+import { loadMcpTools, shutdownMcp, connectServer } from "../mcp/client.js";
 import { NOOP_TRACER } from "../telemetry/tracer.js";
 
 // loadMcpTools registers spawned/connected servers on the module-level
@@ -159,4 +159,26 @@ test("connectServer still uses the legacy path for a server that doesn't answer 
   assert.equal(tools.length, 1);
   const answer = await tools[0].execute({}, { workspace: "." });
   assert.equal(answer, "pong");
+});
+
+test("a modern server rejecting our protocol version reports a clear status.error, not a hang", async () => {
+  const VERSION_MISMATCH_SERVER = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+    "rl.on('line', (l) => {",
+    "  if (!l.trim()) return;",
+    "  const m = JSON.parse(l);",
+    "  const err = { code: -32022, message: 'Unsupported protocol version',",
+    "    data: { supported: ['2099-01-01'], requested: '2026-07-28' } };",
+    "  return send({ jsonrpc: '2.0', id: m.id, error: err });",
+    "});",
+  ].join("\n");
+  const { status } = await connectServer(
+    "mismatched",
+    { command: process.execPath, args: ["-e", VERSION_MISMATCH_SERVER] },
+    { tracer: NOOP_TRACER }
+  );
+  assert.equal(status.ok, false);
+  assert.match(status.error ?? "", /protocol version|not.*support/i);
+  assert.match(status.error ?? "", /rejected protocol version/);
 });

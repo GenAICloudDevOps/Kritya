@@ -1047,21 +1047,35 @@ export async function connectServer(
       assertSafeUrl(name, cfg.url);
       const probe = await probeHttpEra(cfg.url, cfg.headers ?? {});
       if (probe.era === "modern") {
-        modernConn = new ModernMcpConnection(
-          name,
-          new ModernHttpTransport(cfg.url, cfg.headers ?? {})
-        );
+        if (probe.discover) {
+          modernConn = new ModernMcpConnection(
+            name,
+            new ModernHttpTransport(cfg.url, cfg.headers ?? {})
+          );
+        } else {
+          throw new Error(
+            `server "${name}" speaks the modern MCP protocol but rejected protocol version ` +
+              `"2026-07-28" — this server may require a newer or older kritya`
+          );
+        }
       }
     } else if (cfg.command) {
       const cwd = cfg.cwd ? path.resolve(workspace, cfg.cwd) : workspace;
       const probe = await probeStdioEra(cfg.command, cfg.args ?? [], cfg.env, cwd);
       if (probe.era === "modern") {
         // Reuse the already-spawned probe process when the server kept it
-        // alive; otherwise (a modern server that rejected our version) fall
-        // through to the ordinary makeTransport path, which will also hit
-        // that same version mismatch and report it clearly via status.error.
+        // alive. A modern server that rejected our protocol version keeps no
+        // process alive — don't fall through to the legacy path, which would
+        // spawn a second process against a server that just told us it can't
+        // speak our version, producing a misleading "method not found"-style
+        // error instead of naming the real problem.
         if (probe.process) {
           modernConn = new ModernMcpConnection(name, new ReusedProcessTransport(probe.process));
+        } else {
+          throw new Error(
+            `server "${name}" speaks the modern MCP protocol but rejected protocol version ` +
+              `"2026-07-28" — this server may require a newer or older kritya`
+          );
         }
       }
     }
