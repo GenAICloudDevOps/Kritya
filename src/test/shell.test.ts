@@ -56,7 +56,13 @@ test("background process runs, reports output, and can be killed", async () => {
   assert.match(info!.output, /bg-hello/);
   assert.strictEqual(info!.running, true);
   assert.strictEqual(backgroundManager.kill(id), true);
-  await new Promise((r) => setTimeout(r, 500));
+  // Process exit is reported asynchronously via the child's exit/close
+  // event, and Windows in particular can take well over 500ms to deliver
+  // it under CI load — poll instead of a fixed sleep so this isn't flaky.
+  const deadline = Date.now() + 5000;
+  while (backgroundManager.read(id)!.running && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
   assert.strictEqual(backgroundManager.read(id)!.running, false);
 });
 
