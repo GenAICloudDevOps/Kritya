@@ -4,6 +4,25 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.17-beta] — 2026-09-01
+
+### Added
+
+- Modern-era MCP servers can now ask kritya for help mid-call (MRTR):
+  `sampling/createMessage`, `elicitation/create`, and `roots/list` are
+  answered the same way legacy servers' requests already are, retrying the
+  original call with the server's answer attached until it completes. A
+  declined or unsupported request is sent back as a proper answer rather
+  than aborting the call.
+- `x-mcp-header`: a modern HTTP server can annotate a tool parameter so its
+  value is also mirrored into an `Mcp-Param-*` request header. Invalid
+  annotations exclude just that tool, not the whole server.
+- Every MCP tool, from every server (legacy or modern, stdio or HTTP), is
+  now checked for schema safety before being exposed to the agent: an
+  unsupported JSON Schema dialect, a `$ref` that would require a network
+  fetch, or a pathologically deep/large schema all get the tool excluded
+  (with a logged reason) instead of silently accepted.
+
 ## [0.8.16-beta] — 2026-09-01
 
 ### Changed
