@@ -4,6 +4,26 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.15-beta] — 2026-08-31
+
+### Added
+
+- MCP connections now support the 2026-07-28 protocol revision's
+  per-request wire format (no `initialize` handshake, no session) alongside
+  the existing handshake-based protocol. kritya probes each configured
+  server (stdio and Streamable HTTP) on connect and speaks whichever era it
+  uses — nothing to configure, and servers still on the older protocol
+  connect exactly as before. Sampling, elicitation, and roots on a
+  modern-era server aren't supported yet (a tool call that needs one
+  reports a clear "not yet supported" error rather than hanging).
+
+### Fixed
+
+- `background process runs, reports output, and can be killed` (shell
+  tests) polls for process exit instead of a fixed 500ms sleep — the fixed
+  sleep was flaky on Windows CI, where exit-event delivery can take longer
+  under load.
+
 ## [0.8.14-beta] — 2026-08-29
 
 ### Changed
