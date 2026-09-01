@@ -4,6 +4,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { ModernMcpConnection } from "../mcp/clientModern.js";
 import { StdioTransport } from "../mcp/transport.js";
 import { loadMcpTools, shutdownMcp, connectServer } from "../mcp/client.js";
@@ -253,13 +254,19 @@ const MRTR_ROOTS_SERVER = [
 ].join("\n");
 
 test("MRTR: roots/list is answered locally without a callback, using the configured workspace", async () => {
-  const conn = modernConnWithOptions(MRTR_ROOTS_SERVER, "/tmp/my-workspace", {});
+  // A platform-appropriate absolute path — a hardcoded POSIX path like
+  // "/tmp/my-workspace" resolves to a different (and wrong) file:// URI on
+  // Windows (pathToFileURL treats a leading "/" as relative to the current
+  // drive), so build the expected URI with pathToFileURL too rather than
+  // asserting a literal string.
+  const workspace = path.join(os.tmpdir(), "my-workspace");
+  const conn = modernConnWithOptions(MRTR_ROOTS_SERVER, workspace, {});
   try {
     await conn.initialize();
     const answer = await conn.callTool("ask", {});
     const got = JSON.parse(answer.replace("got: ", ""));
     assert.deepEqual(got.r1, {
-      roots: [{ uri: "file:///tmp/my-workspace", name: "my-workspace" }],
+      roots: [{ uri: pathToFileURL(workspace).href, name: "my-workspace" }],
     });
   } finally {
     conn.close();
