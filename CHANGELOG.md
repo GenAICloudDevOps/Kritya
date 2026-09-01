@@ -4,6 +4,15 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.16-beta] — 2026-09-01
+
+### Changed
+
+- Bumped `electron` (devDependency, desktop-wrapper build only — not part
+  of the published package) 43.4.1 → 44.0.0, and `github/codeql-action`'s
+  `init`/`analyze`/`upload-sarif` 4.37.7 → 4.37.9 in CI. Routine dependency
+  maintenance.
+
 ## [0.8.15-beta] — 2026-08-31
 
 ### Added
