@@ -259,12 +259,18 @@ test("MRTR: declining an elicitation request surfaces as a clear thrown error, n
   conn.close();
 });
 
-test("MRTR: declining a sampling request ({ ok: false }) surfaces as a clear thrown error", async () => {
+test("MRTR: declining a sampling request ({ ok: false }) sends an error-shaped inputResponses entry, not a thrown error", async () => {
   const conn = modernConnWithOptions(MRTR_SAMPLING_SERVER, ".", {
     onSampling: async (): Promise<SamplingResult> => ({ ok: false, reason: "user declined" }),
   });
   await conn.initialize();
-  await assert.rejects(() => conn.callTool("ask", {}), /user declined/);
+  // A decline is a valid SamplingResult, not a thrown error at the callback
+  // level — it becomes the inputResponses entry (matching legacy McpConnection's
+  // sampling/createMessage error-reply shape), and the server (in this test
+  // fixture) just echoes it back rather than treating decline specially.
+  const answer = await conn.callTool("ask", {});
+  const got = JSON.parse(answer.replace("got: ", ""));
+  assert.deepEqual(got.s1, { error: { code: -32603, message: "user declined" } });
   conn.close();
 });
 
@@ -302,7 +308,7 @@ test("MRTR: a server that keeps asking for input_required forever eventually giv
   });
   await conn.initialize();
   await assert.rejects(() => conn.callTool("ask", {}), /too many|more than \d+ times|giving up/i);
-  assert.ok(calls > 0 && calls <= 10, `expected a bounded number of rounds, got ${calls}`);
+  assert.equal(calls, 10, `expected exactly MAX_MRTR_ROUNDS (10) rounds, got ${calls}`);
   conn.close();
 });
 

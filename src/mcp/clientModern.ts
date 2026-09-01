@@ -240,7 +240,8 @@ export class ModernMcpConnection implements McpServerConnection {
         };
         const result = await this.options.onSampling(this.name, samplingReq);
         if (!result.ok) {
-          throw new Error(result.reason);
+          inputResponses[key] = { error: { code: -32603, message: result.reason } };
+          continue;
         }
         inputResponses[key] = {
           role: "assistant",
