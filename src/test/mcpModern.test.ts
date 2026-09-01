@@ -63,28 +63,37 @@ test("initialize() lists tools without ever sending initialize or notifications/
     (c: Buffer) => stderrChunks.push(c.toString())
   );
   const conn = new ModernMcpConnection("t", transport);
-  const result = await conn.initialize();
-  assert.deepEqual(result.tools, []);
-  await new Promise((r) => setTimeout(r, 50));
-  const methods = stderrChunks.join("").trim().split("\n");
-  assert.deepEqual(methods, ["tools/list", "prompts/list", "resources/list"]);
-  conn.close();
+  try {
+    const result = await conn.initialize();
+    assert.deepEqual(result.tools, []);
+    await new Promise((r) => setTimeout(r, 50));
+    const methods = stderrChunks.join("").trim().split("\n");
+    assert.deepEqual(methods, ["tools/list", "prompts/list", "resources/list"]);
+  } finally {
+    conn.close();
+  }
 });
 
 test("initialize() returns tools from tools/list under modern resultType shape", async () => {
   const conn = modernConn(MODERN_TOOLS_SERVER);
-  const result = await conn.initialize();
-  assert.equal(result.tools.length, 1);
-  assert.equal(result.tools[0].name, "echo");
-  conn.close();
+  try {
+    const result = await conn.initialize();
+    assert.equal(result.tools.length, 1);
+    assert.equal(result.tools[0].name, "echo");
+  } finally {
+    conn.close();
+  }
 });
 
 test("callTool() sends _meta and unwraps a resultType: complete response", async () => {
   const conn = modernConn(MODERN_TOOLS_SERVER);
-  await conn.initialize();
-  const answer = await conn.callTool("echo", { hello: "world" });
-  assert.equal(answer, 'echoed: {"hello":"world"}');
-  conn.close();
+  try {
+    await conn.initialize();
+    const answer = await conn.callTool("echo", { hello: "world" });
+    assert.equal(answer, 'echoed: {"hello":"world"}');
+  } finally {
+    conn.close();
+  }
 });
 
 test("callTool() throws a clear error naming the missing capability when no onSampling is configured", async () => {
@@ -104,9 +113,12 @@ test("callTool() throws a clear error naming the missing capability when no onSa
     "});",
   ].join("\n");
   const conn = modernConn(script);
-  await conn.initialize();
-  await assert.rejects(() => conn.callTool("ask", {}), /sampling.*not supported/i);
-  conn.close();
+  try {
+    await conn.initialize();
+    await assert.rejects(() => conn.callTool("ask", {}), /sampling.*not supported/i);
+  } finally {
+    conn.close();
+  }
 });
 
 // ---------- MRTR: sampling/elicitation/roots ----------
@@ -148,15 +160,18 @@ test("MRTR: an elicitation/create input_required round is answered and the retry
       return { action: "accept", content: { ok: true } };
     },
   });
-  await conn.initialize();
-  const answer = await conn.callTool("ask", {});
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].message, "Proceed?");
-  assert.deepEqual(calls[0].fields, [{ name: "ok", kind: "boolean", label: "OK" }]);
-  assert.deepEqual(JSON.parse(answer.replace("got: ", "")), {
-    proceed: { action: "accept", content: { ok: true } },
-  });
-  conn.close();
+  try {
+    await conn.initialize();
+    const answer = await conn.callTool("ask", {});
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].message, "Proceed?");
+    assert.deepEqual(calls[0].fields, [{ name: "ok", kind: "boolean", label: "OK" }]);
+    assert.deepEqual(JSON.parse(answer.replace("got: ", "")), {
+      proceed: { action: "accept", content: { ok: true } },
+    });
+  } finally {
+    conn.close();
+  }
 });
 
 const MRTR_SAMPLING_SERVER = [
@@ -195,22 +210,25 @@ test("MRTR: a sampling/createMessage input_required round is answered and the re
       };
     },
   });
-  await conn.initialize();
-  const answer = await conn.callTool("ask", {});
-  assert.equal(calls.length, 1);
-  assert.deepEqual((calls[0].req as { messages: unknown[] }).messages, [
-    { role: "user", content: "hi" },
-  ]);
-  assert.equal((calls[0].req as { systemPrompt: string }).systemPrompt, "be nice");
-  assert.equal((calls[0].req as { maxTokens: number }).maxTokens, 50);
-  const got = JSON.parse(answer.replace("got: ", ""));
-  assert.deepEqual(got.s1, {
-    role: "assistant",
-    content: { type: "text", text: "the answer" },
-    model: "test-model",
-    stopReason: "stop",
-  });
-  conn.close();
+  try {
+    await conn.initialize();
+    const answer = await conn.callTool("ask", {});
+    assert.equal(calls.length, 1);
+    assert.deepEqual((calls[0].req as { messages: unknown[] }).messages, [
+      { role: "user", content: "hi" },
+    ]);
+    assert.equal((calls[0].req as { systemPrompt: string }).systemPrompt, "be nice");
+    assert.equal((calls[0].req as { maxTokens: number }).maxTokens, 50);
+    const got = JSON.parse(answer.replace("got: ", ""));
+    assert.deepEqual(got.s1, {
+      role: "assistant",
+      content: { type: "text", text: "the answer" },
+      model: "test-model",
+      stopReason: "stop",
+    });
+  } finally {
+    conn.close();
+  }
 });
 
 const MRTR_ROOTS_SERVER = [
@@ -236,49 +254,61 @@ const MRTR_ROOTS_SERVER = [
 
 test("MRTR: roots/list is answered locally without a callback, using the configured workspace", async () => {
   const conn = modernConnWithOptions(MRTR_ROOTS_SERVER, "/tmp/my-workspace", {});
-  await conn.initialize();
-  const answer = await conn.callTool("ask", {});
-  const got = JSON.parse(answer.replace("got: ", ""));
-  assert.deepEqual(got.r1, {
-    roots: [{ uri: "file:///tmp/my-workspace", name: "my-workspace" }],
-  });
-  conn.close();
+  try {
+    await conn.initialize();
+    const answer = await conn.callTool("ask", {});
+    const got = JSON.parse(answer.replace("got: ", ""));
+    assert.deepEqual(got.r1, {
+      roots: [{ uri: "file:///tmp/my-workspace", name: "my-workspace" }],
+    });
+  } finally {
+    conn.close();
+  }
 });
 
 test("MRTR: declining an elicitation request surfaces as a clear thrown error, not a hang", async () => {
   const conn = modernConnWithOptions(MRTR_ELICITATION_SERVER, ".", {
     onElicitation: async () => ({ action: "decline" }),
   });
-  await conn.initialize();
-  // A decline is a valid ElicitationResult, not a thrown error at the callback
-  // level — it becomes the inputResponses entry, and the server (in this test
-  // fixture) just echoes it back rather than treating decline specially.
-  const answer = await conn.callTool("ask", {});
-  const got = JSON.parse(answer.replace("got: ", ""));
-  assert.deepEqual(got.proceed, { action: "decline" });
-  conn.close();
+  try {
+    await conn.initialize();
+    // A decline is a valid ElicitationResult, not a thrown error at the callback
+    // level — it becomes the inputResponses entry, and the server (in this test
+    // fixture) just echoes it back rather than treating decline specially.
+    const answer = await conn.callTool("ask", {});
+    const got = JSON.parse(answer.replace("got: ", ""));
+    assert.deepEqual(got.proceed, { action: "decline" });
+  } finally {
+    conn.close();
+  }
 });
 
 test("MRTR: declining a sampling request ({ ok: false }) sends an error-shaped inputResponses entry, not a thrown error", async () => {
   const conn = modernConnWithOptions(MRTR_SAMPLING_SERVER, ".", {
     onSampling: async (): Promise<SamplingResult> => ({ ok: false, reason: "user declined" }),
   });
-  await conn.initialize();
-  // A decline is a valid SamplingResult, not a thrown error at the callback
-  // level — it becomes the inputResponses entry (matching legacy McpConnection's
-  // sampling/createMessage error-reply shape), and the server (in this test
-  // fixture) just echoes it back rather than treating decline specially.
-  const answer = await conn.callTool("ask", {});
-  const got = JSON.parse(answer.replace("got: ", ""));
-  assert.deepEqual(got.s1, { error: { code: -32603, message: "user declined" } });
-  conn.close();
+  try {
+    await conn.initialize();
+    // A decline is a valid SamplingResult, not a thrown error at the callback
+    // level — it becomes the inputResponses entry (matching legacy McpConnection's
+    // sampling/createMessage error-reply shape), and the server (in this test
+    // fixture) just echoes it back rather than treating decline specially.
+    const answer = await conn.callTool("ask", {});
+    const got = JSON.parse(answer.replace("got: ", ""));
+    assert.deepEqual(got.s1, { error: { code: -32603, message: "user declined" } });
+  } finally {
+    conn.close();
+  }
 });
 
 test("MRTR: an elicitation request with no onElicitation configured throws naming what's missing", async () => {
   const conn = modernConnWithOptions(MRTR_ELICITATION_SERVER, ".", {});
-  await conn.initialize();
-  await assert.rejects(() => conn.callTool("ask", {}), /elicitation.*not supported/i);
-  conn.close();
+  try {
+    await conn.initialize();
+    await assert.rejects(() => conn.callTool("ask", {}), /elicitation.*not supported/i);
+  } finally {
+    conn.close();
+  }
 });
 
 const MRTR_INFINITE_SERVER = [
@@ -306,10 +336,13 @@ test("MRTR: a server that keeps asking for input_required forever eventually giv
       return { action: "accept", content: { ok: true } };
     },
   });
-  await conn.initialize();
-  await assert.rejects(() => conn.callTool("ask", {}), /too many|more than \d+ times|giving up/i);
-  assert.equal(calls, 10, `expected exactly MAX_MRTR_ROUNDS (10) rounds, got ${calls}`);
-  conn.close();
+  try {
+    await conn.initialize();
+    await assert.rejects(() => conn.callTool("ask", {}), /too many|more than \d+ times|giving up/i);
+    assert.equal(calls, 10, `expected exactly MAX_MRTR_ROUNDS (10) rounds, got ${calls}`);
+  } finally {
+    conn.close();
+  }
 });
 
 test("callTool() surfaces a JSON-RPC error as a thrown Error", async () => {
@@ -328,9 +361,12 @@ test("callTool() surfaces a JSON-RPC error as a thrown Error", async () => {
     "});",
   ].join("\n");
   const conn = modernConn(script);
-  await conn.initialize();
-  await assert.rejects(() => conn.callTool("bad", {}), /bad args/);
-  conn.close();
+  try {
+    await conn.initialize();
+    await assert.rejects(() => conn.callTool("bad", {}), /bad args/);
+  } finally {
+    conn.close();
+  }
 });
 
 test("connectServer detects a modern stdio server and uses it end-to-end via loadMcpTools", async () => {
@@ -419,18 +455,24 @@ const PROMPT_AND_RESOURCE_SERVER = [
 
 test("getPrompt() unwraps a modern resultType: complete response into rendered text", async () => {
   const conn = modernConn(PROMPT_AND_RESOURCE_SERVER);
-  await conn.initialize();
-  const text = await conn.getPrompt("greet", { who: "world" });
-  assert.equal(text, "hi world");
-  conn.close();
+  try {
+    await conn.initialize();
+    const text = await conn.getPrompt("greet", { who: "world" });
+    assert.equal(text, "hi world");
+  } finally {
+    conn.close();
+  }
 });
 
 test("readResource() unwraps a modern resultType: complete response into joined text", async () => {
   const conn = modernConn(PROMPT_AND_RESOURCE_SERVER);
-  await conn.initialize();
-  const text = await conn.readResource("file:///doc.txt");
-  assert.equal(text, "the document body");
-  conn.close();
+  try {
+    await conn.initialize();
+    const text = await conn.readResource("file:///doc.txt");
+    assert.equal(text, "the document body");
+  } finally {
+    conn.close();
+  }
 });
 
 test("unwrap() throws on an unrecognized resultType rather than silently passing it through", async () => {
@@ -449,9 +491,15 @@ test("unwrap() throws on an unrecognized resultType rather than silently passing
     "});",
   ].join("\n");
   const conn = modernConn(script);
-  await conn.initialize();
-  await assert.rejects(() => conn.callTool("weird", {}), /unrecognized resultType "somethingElse"/);
-  conn.close();
+  try {
+    await conn.initialize();
+    await assert.rejects(
+      () => conn.callTool("weird", {}),
+      /unrecognized resultType "somethingElse"/
+    );
+  } finally {
+    conn.close();
+  }
 });
 
 // ---------- HTTP end-to-end: connectServer -> probeHttpEra -> ModernHttpTransport -> ModernMcpConnection ----------

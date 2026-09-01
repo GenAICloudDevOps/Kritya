@@ -17,7 +17,17 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ["--test", ...files], {
+// A cap on how long any single thing node:test is timing can run: without
+// this, a hung test (a leaked child process, a promise nobody rejects) burns
+// the whole CI job's timeout with zero diagnostic output — the run just gets
+// killed with no indication of what was stuck. When multiple files are
+// passed on the CLI like this, node:test times each FILE's cumulative
+// runtime as one unit (not each individual test() call within it) — so this
+// has to clear the slowest file's legitimate total duration, not just its
+// slowest single test. 5 minutes comfortably clears that (the whole suite,
+// every file combined, normally finishes in ~3.5 minutes) while still
+// failing well before CI's 15-minute job timeout and naming what hung.
+const result = spawnSync(process.execPath, ["--test", "--test-timeout=300000", ...files], {
   stdio: "inherit",
 });
 
