@@ -4,6 +4,29 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.18-beta] — 2026-09-01
+
+### Fixed
+
+- A leaked child process could hang CI's Windows test job for the full
+  15-minute job timeout: several new MCP tests only closed their
+  connection on the happy path, so a failed assertion left the spawned
+  process (and its open stdin pipe) running with nothing to clean it up.
+  Every such test now closes its connection in a `finally` block.
+- `node --test` now runs with a 5-minute per-file timeout, so a future
+  hang like the above fails fast with a named test instead of silently
+  consuming the whole CI job.
+- A test asserting an MRTR `roots/list` answer used a hardcoded POSIX
+  path (`/tmp/...`), which resolves to the wrong `file://` URI on
+  Windows. Builds the path with `os.tmpdir()` and the expected URI with
+  `pathToFileURL()` instead of a literal string.
+
+### Changed
+
+- Bumped `electron` 44.0.0 → 44.1.0, `tsx` 4.23.12 → 4.23.13, and
+  `typescript-eslint` 8.68.0 → 8.69.0. Routine dependency maintenance;
+  TypeScript itself stays at 6.0.3 pending its own major-version pass.
+
 ## [0.8.17-beta] — 2026-09-01
 
 ### Added
