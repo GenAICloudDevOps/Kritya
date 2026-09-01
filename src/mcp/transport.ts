@@ -27,7 +27,7 @@ const PASSTHROUGH_ENV_VARS = [
   "NODE_PATH",
 ];
 
-function minimalEnv(): Record<string, string> {
+export function minimalEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of PASSTHROUGH_ENV_VARS) {
     const value = process.env[key];
@@ -64,7 +64,7 @@ export interface Transport {
  * `AbortSignal.any` only landed in Node 20 and we support 18, hence the manual
  * bridge.
  */
-function withTimeout(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+export function withTimeout(timeoutMs: number, signal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(timeoutMs);
   if (!signal) return timeout;
   const any = (AbortSignal as unknown as { any?(s: AbortSignal[]): AbortSignal }).any;

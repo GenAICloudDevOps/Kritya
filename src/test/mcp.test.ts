@@ -409,6 +409,19 @@ function startHttpMcpServer(opts: { hangOnCall?: boolean } = {}): Promise<{
           `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: m.id, result })}\n\n`
         );
         res.end();
+      } else {
+        // Unrecognized method (e.g. the modern-era `server/discover` probe):
+        // answer with a JSON-RPC error immediately, matching how a real
+        // legacy server would reject a method it doesn't implement, instead
+        // of leaving the request hanging until probeHttpEra's timeout.
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: m.id,
+            error: { code: -32601, message: "Method not found" },
+          })
+        );
       }
     });
   });
@@ -451,7 +464,9 @@ test("http: initializes, tracks the session id, sends headers, and parses SSE re
     // Every request carried the expanded Authorization header.
     assert.ok(srv.seen.every((r) => r.auth === "Bearer sekret"));
     // The session id from initialize is echoed on all subsequent requests.
-    const afterInit = srv.seen.filter((r) => r.method !== "initialize");
+    const afterInit = srv.seen.filter(
+      (r) => r.method !== "initialize" && r.method !== "server/discover"
+    );
     assert.ok(afterInit.length >= 2);
     assert.ok(afterInit.every((r) => r.sessionId === "sess-42"));
     // The negotiated protocol version is sent after initialize.
