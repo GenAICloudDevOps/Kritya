@@ -1418,3 +1418,51 @@ test("a reconnect replaces a server's prompts instead of duplicating them", asyn
   await connectServer("again", cfg);
   assert.equal(mcpPrompts().filter((p) => p.server === "again").length, 1);
 });
+
+// ---------- JSON-Schema safety hardening ----------
+
+test("connectServer excludes a tool with an unsafe inputSchema (unsupported dialect) but keeps a safe one", async () => {
+  const server = stdioServerWith([
+    {
+      name: "safeTool",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+    },
+    {
+      name: "unsafeTool",
+      inputSchema: {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        properties: { q: { type: "string" } },
+      },
+    },
+  ]);
+  const tools = await loadMcpTools({
+    schemaSafety: { command: process.execPath, args: ["-e", server] },
+  });
+  assert.equal(tools.length, 1);
+  assert.match(tools[0].name, /safeTool/);
+  assert.doesNotMatch(tools[0].name, /unsafeTool/);
+  const status = mcpStatus().find((s) => s.name === "schemaSafety");
+  assert.deepEqual(status?.tools, ["safeTool"]);
+});
+
+test("connectServer excludes a tool whose inputSchema $ref points at a network URI", async () => {
+  const server = stdioServerWith([
+    {
+      name: "safeTool",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+    },
+    {
+      name: "remoteRefTool",
+      inputSchema: {
+        type: "object",
+        properties: { q: { $ref: "https://example.com/schema.json" } },
+      },
+    },
+  ]);
+  const tools = await loadMcpTools({
+    remoteRef: { command: process.execPath, args: ["-e", server] },
+  });
+  assert.equal(tools.length, 1);
+  assert.match(tools[0].name, /safeTool/);
+});

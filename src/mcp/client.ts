@@ -18,6 +18,7 @@ import {
   ReusedProcessTransport,
   validateToolHeaders,
 } from "./transportModern.js";
+import { checkSchemaSafety } from "./schemaSafety.js";
 
 /**
  * Thrown when a server's live tool shape no longer matches what was recorded
@@ -1006,6 +1007,32 @@ function filterHeaderAnnotatedTools(
 }
 
 /**
+ * JSON-Schema safety hardening: exclude any tool whose declared `inputSchema`
+ * fails `checkSchemaSafety` (an unsupported dialect, a `$ref` that would
+ * require a network fetch, or a schema that busts the depth/node-count
+ * bounds) before it's ever exposed to the model or the user. Applies to
+ * every MCP tool from every server — legacy and modern, stdio and HTTP —
+ * unlike `filterHeaderAnnotatedTools`, which is HTTP-only and checks a
+ * narrower, unrelated thing. Logged the same way other "skip with a
+ * warning" MCP failures are.
+ */
+function filterSchemaSafeTools(server: string, specs: McpToolSpec[]): McpToolSpec[] {
+  const kept: McpToolSpec[] = [];
+  for (const spec of specs) {
+    const result = checkSchemaSafety(spec.inputSchema);
+    if (!result.ok) {
+      process.stderr.write(
+        `kritya: MCP server "${server}" tool "${spec.name}" excluded — unsafe inputSchema: ` +
+          `${result.reason}\n`
+      );
+      continue;
+    }
+    kept.push(spec);
+  }
+  return kept;
+}
+
+/**
  * Connect to all configured MCP servers and return their tools as ToolDefs.
  * Resilient: a server that fails to start is skipped with a warning (and shows
  * as failed in /mcp), never crashing kritya. Returns an empty list when
@@ -1138,9 +1165,10 @@ export async function connectServer(
         onElicitation: trace?.onElicitation,
       });
     const listed = await conn.initialize();
-    const specs = modernHttpTransport
+    const headerFiltered = modernHttpTransport
       ? filterHeaderAnnotatedTools(name, listed.tools, modernHttpTransport)
       : listed.tools;
+    const specs = filterSchemaSafeTools(name, headerFiltered);
     const shape = checkToolsShape(serverFingerprint(cfg), specs, trace?.mcpTrustFile);
     if (!shape.ok) throw new McpShapeChangedError(name);
     connections.push(conn);

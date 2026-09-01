@@ -720,6 +720,61 @@ test("connectServer mirrors an x-mcp-header-annotated argument into a real Mcp-P
   }
 });
 
+// ---------- JSON-Schema safety hardening: end-to-end via connectServer/loadMcpTools (modern HTTP) ----------
+
+test("connectServer excludes a modern HTTP tool with an unsafe inputSchema but keeps a safe one", async () => {
+  const srv = await withModernHttpServer((m) => {
+    if (m.method === "server/discover") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } },
+      };
+    }
+    if (m.method === "tools/list") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: {
+          resultType: "complete",
+          tools: [
+            {
+              name: "safeTool",
+              inputSchema: { type: "object", properties: { q: { type: "string" } } },
+            },
+            {
+              name: "unsafeTool",
+              inputSchema: {
+                type: "object",
+                properties: { q: { $ref: "https://example.com/schema.json" } },
+              },
+            },
+          ],
+        },
+      };
+    }
+    if (m.method === "tools/call") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: { resultType: "complete", content: [{ type: "text", text: "ok" }] },
+      };
+    }
+    return { jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } };
+  });
+  try {
+    const tools = await loadMcpTools(
+      { schemaSafetySrv: { url: srv.url } },
+      { tracer: NOOP_TRACER }
+    );
+    assert.equal(tools.length, 1);
+    assert.match(tools[0].name, /safeTool/);
+    assert.doesNotMatch(tools[0].name, /unsafeTool/);
+  } finally {
+    await srv.close();
+  }
+});
+
 test("a tool with no x-mcp-header annotations at all still works normally through loadMcpTools (regression)", async () => {
   const srv = await withModernHttpServer((m) => {
     if (m.method === "server/discover") {
