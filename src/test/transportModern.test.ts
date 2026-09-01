@@ -432,6 +432,37 @@ test("validateToolHeaders: rejects an annotation reachable only through oneOf", 
   assert.equal(result.ok, false);
 });
 
+test("validateToolHeaders: rejects x-mcp-header co-located with $ref on the same node", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      a: { $ref: "#/definitions/Thing", type: "string", "x-mcp-header": "X-A" },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: an x-mcp-header nested inside a $ref target (not co-located) is simply never found, not rejected", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      a: { $ref: "#/definitions/Thing" },
+    },
+    definitions: {
+      Thing: {
+        type: "object",
+        properties: {
+          b: { type: "string", "x-mcp-header": "X-B" },
+        },
+      },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.entries, []);
+});
+
 test("validateToolHeaders: rejects x-mcp-header applied to a number-typed property", () => {
   const schema = {
     type: "object",

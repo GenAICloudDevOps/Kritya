@@ -129,6 +129,13 @@ export function validateToolHeaders(inputSchema: unknown): ValidateHeadersResult
           `chain of only "properties" keys`
         );
       }
+      if (Object.prototype.hasOwnProperty.call(obj, "$ref")) {
+        return (
+          `x-mcp-header "${raw}" is co-located with "$ref" on the same schema node; the ` +
+          `resolved shape comes from the ref target, so this annotation is not statically ` +
+          `reachable`
+        );
+      }
       const nameErr = checkHeaderName(raw);
       if (nameErr) return nameErr;
       const type = obj["type"];
