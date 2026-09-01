@@ -13,7 +13,11 @@ import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
 import { checkToolsShape, serverFingerprint } from "../trust/mcpTrust.js";
 import { probeStdioEra, probeHttpEra } from "./eraDetect.js";
 import { ModernMcpConnection, type McpServerConnection } from "./clientModern.js";
-import { ModernHttpTransport, ReusedProcessTransport } from "./transportModern.js";
+import {
+  ModernHttpTransport,
+  ReusedProcessTransport,
+  validateToolHeaders,
+} from "./transportModern.js";
 
 /**
  * Thrown when a server's live tool shape no longer matches what was recorded
@@ -971,6 +975,37 @@ function exposedToolName(server: string, toolName: string): string {
 }
 
 /**
+ * Sub-project 3 (`x-mcp-header` parameter mirroring, HTTP only): validate
+ * every modern tool's `inputSchema` for `x-mcp-header` annotations and drop
+ * any tool with an invalid one, per spec ("clients MUST exclude the invalid
+ * tool from the result of tools/list"). A valid tool's resolved header map
+ * is registered on the transport so `tools/call` can mirror argument values
+ * into `Mcp-Param-{Name}` headers later — see `ModernHttpTransport.
+ * setToolHeaderMap`/`send`. Logged the same way other "skip with a warning"
+ * MCP failures are (`process.stderr.write("kritya: ...")`).
+ */
+function filterHeaderAnnotatedTools(
+  server: string,
+  specs: McpToolSpec[],
+  transport: ModernHttpTransport
+): McpToolSpec[] {
+  const kept: McpToolSpec[] = [];
+  for (const spec of specs) {
+    const result = validateToolHeaders(spec.inputSchema);
+    if (!result.ok) {
+      process.stderr.write(
+        `kritya: MCP server "${server}" tool "${spec.name}" excluded — invalid x-mcp-header ` +
+          `annotation: ${result.reason}\n`
+      );
+      continue;
+    }
+    transport.setToolHeaderMap(spec.name, result.entries);
+    kept.push(spec);
+  }
+  return kept;
+}
+
+/**
  * Connect to all configured MCP servers and return their tools as ToolDefs.
  * Resilient: a server that fails to start is skipped with a warning (and shows
  * as failed in /mcp), never crashing kritya. Returns an empty list when
@@ -1050,17 +1085,20 @@ export async function connectServer(
       throw new Error(`server "${name}" sets both "command" and "url"; pick one`);
     }
     let modernConn: ModernMcpConnection | undefined;
+    // Set only for the modern+HTTP case — the one combination x-mcp-header
+    // mirroring applies to (stdio MAY ignore it per spec, and legacy HTTP
+    // never speaks the modern per-request wire format at all).
+    let modernHttpTransport: ModernHttpTransport | undefined;
     if (cfg.url) {
       assertSafeUrl(name, cfg.url);
       const probe = await probeHttpEra(cfg.url, cfg.headers ?? {});
       if (probe.era === "modern") {
         if (probe.discover) {
-          modernConn = new ModernMcpConnection(
-            name,
-            new ModernHttpTransport(cfg.url, cfg.headers ?? {}),
-            workspace,
-            { onSampling: trace?.onSampling, onElicitation: trace?.onElicitation }
-          );
+          modernHttpTransport = new ModernHttpTransport(cfg.url, cfg.headers ?? {});
+          modernConn = new ModernMcpConnection(name, modernHttpTransport, workspace, {
+            onSampling: trace?.onSampling,
+            onElicitation: trace?.onElicitation,
+          });
         } else {
           throw new Error(
             `server "${name}" speaks the modern MCP protocol but rejected protocol version ` +
@@ -1100,7 +1138,9 @@ export async function connectServer(
         onElicitation: trace?.onElicitation,
       });
     const listed = await conn.initialize();
-    const specs = listed.tools;
+    const specs = modernHttpTransport
+      ? filterHeaderAnnotatedTools(name, listed.tools, modernHttpTransport)
+      : listed.tools;
     const shape = checkToolsShape(serverFingerprint(cfg), specs, trace?.mcpTrustFile);
     if (!shape.ok) throw new McpShapeChangedError(name);
     connections.push(conn);

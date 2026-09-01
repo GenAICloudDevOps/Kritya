@@ -4,7 +4,12 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ModernHttpTransport } from "../mcp/transportModern.js";
+import {
+  ModernHttpTransport,
+  validateToolHeaders,
+  buildParamHeaders,
+  type ParamHeaderEntry,
+} from "../mcp/transportModern.js";
 import type { JsonRpcMessage } from "../mcp/transport.js";
 import { saveAuth, type StoredAuth } from "../mcp/tokens.js";
 import { McpAuthRequiredError } from "../mcp/oauth.js";
@@ -314,4 +319,172 @@ test("close() does not send a DELETE (no session to terminate)", async () => {
   } finally {
     await srv.close();
   }
+});
+
+// ---------- x-mcp-header parameter mirroring: validateToolHeaders / buildParamHeaders ----------
+
+test("validateToolHeaders: valid top-level string annotation resolves to an entry, and buildParamHeaders mirrors it", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      apiKey: { type: "string", "x-mcp-header": "X-Api-Key" },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.entries, [{ path: ["apiKey"], header: "X-Api-Key" }]);
+  const headers = buildParamHeaders(result.entries, { apiKey: "secret123" });
+  assert.deepEqual(headers, { "mcp-param-x-api-key": "secret123" });
+});
+
+test("validateToolHeaders: a nested property reached purely via properties chains is found", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      outer: {
+        type: "object",
+        properties: {
+          inner: {
+            type: "object",
+            properties: {
+              tenant: { type: "string", "x-mcp-header": "X-Tenant-Id" },
+            },
+          },
+        },
+      },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.entries, [{ path: ["outer", "inner", "tenant"], header: "X-Tenant-Id" }]);
+  const headers = buildParamHeaders(result.entries, { outer: { inner: { tenant: "acme" } } });
+  assert.deepEqual(headers, { "mcp-param-x-tenant-id": "acme" });
+});
+
+test("buildParamHeaders: base64-sentinel-encodes a non-ASCII string value", () => {
+  const entries: ParamHeaderEntry[] = [{ path: ["name"], header: "X-Name" }];
+  const headers = buildParamHeaders(entries, { name: "café" });
+  assert.match(headers["mcp-param-x-name"], /^=\?base64\?[A-Za-z0-9+/=]*\?=$/);
+  const decoded = Buffer.from(
+    headers["mcp-param-x-name"].replace(/^=\?base64\?/, "").replace(/\?=$/, ""),
+    "base64"
+  ).toString("utf8");
+  assert.equal(decoded, "café");
+});
+
+test("buildParamHeaders: omits a null value and an absent property entirely", () => {
+  const entries: ParamHeaderEntry[] = [
+    { path: ["present"], header: "X-Present" },
+    { path: ["nullish"], header: "X-Nullish" },
+    { path: ["missing"], header: "X-Missing" },
+  ];
+  const headers = buildParamHeaders(entries, { present: "value", nullish: null });
+  assert.deepEqual(headers, { "mcp-param-x-present": "value" });
+});
+
+test("buildParamHeaders: converts integer and boolean values to decimal/lowercase strings", () => {
+  const entries: ParamHeaderEntry[] = [
+    { path: ["count"], header: "X-Count" },
+    { path: ["flag"], header: "X-Flag" },
+  ];
+  const headers = buildParamHeaders(entries, { count: 42, flag: true });
+  assert.equal(headers["mcp-param-x-count"], "42");
+  assert.equal(headers["mcp-param-x-flag"], "true");
+  const headers2 = buildParamHeaders(entries, { count: 0, flag: false });
+  assert.equal(headers2["mcp-param-x-count"], "0");
+  assert.equal(headers2["mcp-param-x-flag"], "false");
+});
+
+test("validateToolHeaders: rejects a schema with case-insensitively colliding header names", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      a: { type: "string", "x-mcp-header": "X-Tenant" },
+      b: { type: "string", "x-mcp-header": "x-tenant" },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: rejects an annotation reachable only through items (array)", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      list: {
+        type: "array",
+        items: { type: "string", "x-mcp-header": "X-Item" },
+      },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: rejects an annotation reachable only through oneOf", () => {
+  const schema = {
+    type: "object",
+    oneOf: [{ properties: { a: { type: "string", "x-mcp-header": "X-A" } } }],
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: rejects x-mcp-header applied to a number-typed property", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      amount: { type: "number", "x-mcp-header": "X-Amount" },
+    },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: rejects an empty x-mcp-header value", () => {
+  const schema = {
+    type: "object",
+    properties: { a: { type: "string", "x-mcp-header": "" } },
+  };
+  const result = validateToolHeaders(schema);
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: rejects x-mcp-header values containing an invalid character", () => {
+  const schemaSpace = {
+    type: "object",
+    properties: { a: { type: "string", "x-mcp-header": "X Header" } },
+  };
+  assert.equal(validateToolHeaders(schemaSpace).ok, false);
+
+  const schemaColon = {
+    type: "object",
+    properties: { a: { type: "string", "x-mcp-header": "X:Header" } },
+  };
+  assert.equal(validateToolHeaders(schemaColon).ok, false);
+});
+
+test("validateToolHeaders: rejects a schema exceeding the max nesting depth, quickly and without hanging", () => {
+  let schema: unknown = { type: "string" };
+  for (let i = 0; i < 60; i++) {
+    schema = { type: "object", properties: { next: schema } };
+  }
+  const start = Date.now();
+  const result = validateToolHeaders(schema);
+  assert.ok(Date.now() - start < 1000, "should reject quickly, not hang");
+  assert.equal(result.ok, false);
+});
+
+test("validateToolHeaders: rejects a schema exceeding the max node count, quickly and without hanging", () => {
+  const properties: Record<string, unknown> = {};
+  for (let i = 0; i < 5001; i++) {
+    properties[`p${i}`] = { type: "string" };
+  }
+  const schema = { type: "object", properties };
+  const start = Date.now();
+  const result = validateToolHeaders(schema);
+  assert.ok(Date.now() - start < 1000, "should reject quickly, not hang");
+  assert.equal(result.ok, false);
 });

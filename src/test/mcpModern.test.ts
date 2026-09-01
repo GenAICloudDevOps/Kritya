@@ -606,3 +606,164 @@ test("a modern HTTP server behind OAuth is detected as modern (not legacy) once 
     };
   }
 });
+
+// ---------- x-mcp-header parameter mirroring (Sub-project 3): end-to-end via connectServer/loadMcpTools ----------
+
+test("connectServer excludes a tool with an invalid x-mcp-header annotation but keeps a valid one", async () => {
+  const srv = await withModernHttpServer((m) => {
+    if (m.method === "server/discover") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } },
+      };
+    }
+    if (m.method === "tools/list") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: {
+          resultType: "complete",
+          tools: [
+            {
+              name: "goodTool",
+              inputSchema: {
+                type: "object",
+                properties: { apiKey: { type: "string", "x-mcp-header": "X-Api-Key" } },
+              },
+            },
+            {
+              name: "badTool",
+              inputSchema: {
+                // number type is not a permitted x-mcp-header target -> whole tool excluded
+                type: "object",
+                properties: { amount: { type: "number", "x-mcp-header": "X-Amount" } },
+              },
+            },
+          ],
+        },
+      };
+    }
+    if (m.method === "tools/call") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: { resultType: "complete", content: [{ type: "text", text: "ok" }] },
+      };
+    }
+    return { jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } };
+  });
+  try {
+    const tools = await loadMcpTools({ headerSrv: { url: srv.url } }, { tracer: NOOP_TRACER });
+    assert.equal(tools.length, 1);
+    assert.match(tools[0].name, /goodTool/);
+    assert.doesNotMatch(tools[0].name, /badTool/);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("connectServer mirrors an x-mcp-header-annotated argument into a real Mcp-Param-* HTTP header on tools/call", async () => {
+  const capturedHeaders: Record<string, string> = {};
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const msg = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    let body: unknown;
+    if (msg.method === "server/discover") {
+      body = {
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } },
+      };
+    } else if (msg.method === "tools/list") {
+      body = {
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: {
+          resultType: "complete",
+          tools: [
+            {
+              name: "annotated",
+              inputSchema: {
+                type: "object",
+                properties: { tenant: { type: "string", "x-mcp-header": "X-Tenant-Id" } },
+              },
+            },
+          ],
+        },
+      };
+    } else if (msg.method === "tools/call") {
+      Object.entries(req.headers).forEach(([k, v]) => (capturedHeaders[k] = String(v)));
+      body = {
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { resultType: "complete", content: [{ type: "text", text: "ok" }] },
+      };
+    } else {
+      body = { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Method not found" } };
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  const url = `http://127.0.0.1:${port}/mcp`;
+  try {
+    const tools = await loadMcpTools({ paramHdrSrv: { url } }, { tracer: NOOP_TRACER });
+    assert.equal(tools.length, 1);
+    await tools[0].execute({ tenant: "acme-corp" }, { workspace: "." });
+    assert.equal(capturedHeaders["mcp-param-x-tenant-id"], "acme-corp");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a tool with no x-mcp-header annotations at all still works normally through loadMcpTools (regression)", async () => {
+  const srv = await withModernHttpServer((m) => {
+    if (m.method === "server/discover") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } },
+      };
+    }
+    if (m.method === "tools/list") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: {
+          resultType: "complete",
+          tools: [
+            {
+              name: "plain",
+              inputSchema: { type: "object", properties: { msg: { type: "string" } } },
+            },
+          ],
+        },
+      };
+    }
+    if (m.method === "tools/call") {
+      return {
+        jsonrpc: "2.0",
+        id: m.id,
+        result: {
+          resultType: "complete",
+          content: [
+            { type: "text", text: "no headers needed: " + JSON.stringify(m.params.arguments) },
+          ],
+        },
+      };
+    }
+    return { jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } };
+  });
+  try {
+    const tools = await loadMcpTools({ plainSrv: { url: srv.url } }, { tracer: NOOP_TRACER });
+    assert.equal(tools.length, 1);
+    const answer = await tools[0].execute({ msg: "hi" }, { workspace: "." });
+    assert.equal(answer, 'no headers needed: {"msg":"hi"}');
+  } finally {
+    await srv.close();
+  }
+});
