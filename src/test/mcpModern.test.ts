@@ -7,6 +7,7 @@ import path from "node:path";
 import { ModernMcpConnection } from "../mcp/clientModern.js";
 import { StdioTransport } from "../mcp/transport.js";
 import { loadMcpTools, shutdownMcp, connectServer } from "../mcp/client.js";
+import type { McpConnectionOptions, SamplingResult } from "../mcp/client.js";
 import { NOOP_TRACER } from "../telemetry/tracer.js";
 import { saveAuth, type StoredAuth } from "../mcp/tokens.js";
 
@@ -86,7 +87,7 @@ test("callTool() sends _meta and unwraps a resultType: complete response", async
   conn.close();
 });
 
-test("callTool() throws a clear error on resultType: input_required (MRTR not yet supported)", async () => {
+test("callTool() throws a clear error naming the missing capability when no onSampling is configured", async () => {
   const script = [
     "const rl = require('readline').createInterface({ input: process.stdin });",
     "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
@@ -97,14 +98,211 @@ test("callTool() throws a clear error on resultType: input_required (MRTR not ye
     "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: [{ name: 'ask', inputSchema: {} }] } });",
     "  if (m.method === 'tools/call')",
     "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'input_required',",
-    "      inputRequests: { a: { method: 'elicitation/create', params: {} } } } });",
+    "      inputRequests: { a: { method: 'sampling/createMessage', params: {} } } } });",
     "  if (m.method === 'prompts/list' || m.method === 'resources/list')",
     "    return send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });",
     "});",
   ].join("\n");
   const conn = modernConn(script);
   await conn.initialize();
-  await assert.rejects(() => conn.callTool("ask", {}), /does not yet support/i);
+  await assert.rejects(() => conn.callTool("ask", {}), /sampling.*not supported/i);
+  conn.close();
+});
+
+// ---------- MRTR: sampling/elicitation/roots ----------
+
+function modernConnWithOptions(script: string, workspace: string, options: McpConnectionOptions) {
+  const transport = new StdioTransport(process.execPath, ["-e", script], undefined, ".");
+  return new ModernMcpConnection("modern-mrtr-test", transport, workspace, options);
+}
+
+const MRTR_ELICITATION_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "let lastCallParams = null;",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: [{ name: 'ask', inputSchema: {} }] } });",
+  "  if (m.method === 'tools/call') {",
+  "    lastCallParams = m.params;",
+  "    if (!m.params.inputResponses) {",
+  "      return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'input_required',",
+  "        inputRequests: { proceed: { method: 'elicitation/create', params: { message: 'Proceed?',",
+  "          requestedSchema: { properties: { ok: { type: 'boolean', title: 'OK' } } } } } } } });",
+  "    }",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete',",
+  "      content: [{ type: 'text', text: 'got: ' + JSON.stringify(m.params.inputResponses) }] } });",
+  "  }",
+  "  if (m.method === 'prompts/list' || m.method === 'resources/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });",
+  "});",
+].join("\n");
+
+test("MRTR: an elicitation/create input_required round is answered and the retry carries inputResponses", async () => {
+  const calls: { message: string; fields: unknown }[] = [];
+  const conn = modernConnWithOptions(MRTR_ELICITATION_SERVER, ".", {
+    onElicitation: async (_server, message, fields) => {
+      calls.push({ message, fields });
+      return { action: "accept", content: { ok: true } };
+    },
+  });
+  await conn.initialize();
+  const answer = await conn.callTool("ask", {});
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].message, "Proceed?");
+  assert.deepEqual(calls[0].fields, [{ name: "ok", kind: "boolean", label: "OK" }]);
+  assert.deepEqual(JSON.parse(answer.replace("got: ", "")), {
+    proceed: { action: "accept", content: { ok: true } },
+  });
+  conn.close();
+});
+
+const MRTR_SAMPLING_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: [{ name: 'ask', inputSchema: {} }] } });",
+  "  if (m.method === 'tools/call') {",
+  "    if (!m.params.inputResponses) {",
+  "      return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'input_required',",
+  "        inputRequests: { s1: { method: 'sampling/createMessage', params: { messages: [{ role: 'user',",
+  "          content: { type: 'text', text: 'hi' } }], systemPrompt: 'be nice', maxTokens: 50 } } } } });",
+  "    }",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete',",
+  "      content: [{ type: 'text', text: 'got: ' + JSON.stringify(m.params.inputResponses) }] } });",
+  "  }",
+  "  if (m.method === 'prompts/list' || m.method === 'resources/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });",
+  "});",
+].join("\n");
+
+test("MRTR: a sampling/createMessage input_required round is answered and the retry carries inputResponses", async () => {
+  const calls: { req: unknown }[] = [];
+  const conn = modernConnWithOptions(MRTR_SAMPLING_SERVER, ".", {
+    onSampling: async (_server, req): Promise<SamplingResult> => {
+      calls.push({ req });
+      return {
+        ok: true,
+        role: "assistant",
+        content: "the answer",
+        model: "test-model",
+        stopReason: "stop",
+      };
+    },
+  });
+  await conn.initialize();
+  const answer = await conn.callTool("ask", {});
+  assert.equal(calls.length, 1);
+  assert.deepEqual((calls[0].req as { messages: unknown[] }).messages, [
+    { role: "user", content: "hi" },
+  ]);
+  assert.equal((calls[0].req as { systemPrompt: string }).systemPrompt, "be nice");
+  assert.equal((calls[0].req as { maxTokens: number }).maxTokens, 50);
+  const got = JSON.parse(answer.replace("got: ", ""));
+  assert.deepEqual(got.s1, {
+    role: "assistant",
+    content: { type: "text", text: "the answer" },
+    model: "test-model",
+    stopReason: "stop",
+  });
+  conn.close();
+});
+
+const MRTR_ROOTS_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: [{ name: 'ask', inputSchema: {} }] } });",
+  "  if (m.method === 'tools/call') {",
+  "    if (!m.params.inputResponses) {",
+  "      return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'input_required',",
+  "        inputRequests: { r1: { method: 'roots/list', params: {} } } } });",
+  "    }",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete',",
+  "      content: [{ type: 'text', text: 'got: ' + JSON.stringify(m.params.inputResponses) }] } });",
+  "  }",
+  "  if (m.method === 'prompts/list' || m.method === 'resources/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });",
+  "});",
+].join("\n");
+
+test("MRTR: roots/list is answered locally without a callback, using the configured workspace", async () => {
+  const conn = modernConnWithOptions(MRTR_ROOTS_SERVER, "/tmp/my-workspace", {});
+  await conn.initialize();
+  const answer = await conn.callTool("ask", {});
+  const got = JSON.parse(answer.replace("got: ", ""));
+  assert.deepEqual(got.r1, {
+    roots: [{ uri: "file:///tmp/my-workspace", name: "my-workspace" }],
+  });
+  conn.close();
+});
+
+test("MRTR: declining an elicitation request surfaces as a clear thrown error, not a hang", async () => {
+  const conn = modernConnWithOptions(MRTR_ELICITATION_SERVER, ".", {
+    onElicitation: async () => ({ action: "decline" }),
+  });
+  await conn.initialize();
+  // A decline is a valid ElicitationResult, not a thrown error at the callback
+  // level — it becomes the inputResponses entry, and the server (in this test
+  // fixture) just echoes it back rather than treating decline specially.
+  const answer = await conn.callTool("ask", {});
+  const got = JSON.parse(answer.replace("got: ", ""));
+  assert.deepEqual(got.proceed, { action: "decline" });
+  conn.close();
+});
+
+test("MRTR: declining a sampling request ({ ok: false }) surfaces as a clear thrown error", async () => {
+  const conn = modernConnWithOptions(MRTR_SAMPLING_SERVER, ".", {
+    onSampling: async (): Promise<SamplingResult> => ({ ok: false, reason: "user declined" }),
+  });
+  await conn.initialize();
+  await assert.rejects(() => conn.callTool("ask", {}), /user declined/);
+  conn.close();
+});
+
+test("MRTR: an elicitation request with no onElicitation configured throws naming what's missing", async () => {
+  const conn = modernConnWithOptions(MRTR_ELICITATION_SERVER, ".", {});
+  await conn.initialize();
+  await assert.rejects(() => conn.callTool("ask", {}), /elicitation.*not supported/i);
+  conn.close();
+});
+
+const MRTR_INFINITE_SERVER = [
+  "const rl = require('readline').createInterface({ input: process.stdin });",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (l) => {",
+  "  if (!l.trim()) return;",
+  "  const m = JSON.parse(l);",
+  "  if (m.method === 'tools/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: [{ name: 'ask', inputSchema: {} }] } });",
+  "  if (m.method === 'tools/call')",
+  "    return send({ jsonrpc: '2.0', id: m.id, result: { resultType: 'input_required',",
+  "      inputRequests: { proceed: { method: 'elicitation/create', params: { message: 'Proceed?',",
+  "        requestedSchema: { properties: { ok: { type: 'boolean', title: 'OK' } } } } } } } });",
+  "  if (m.method === 'prompts/list' || m.method === 'resources/list')",
+  "    return send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });",
+  "});",
+].join("\n");
+
+test("MRTR: a server that keeps asking for input_required forever eventually gives up", async () => {
+  let calls = 0;
+  const conn = modernConnWithOptions(MRTR_INFINITE_SERVER, ".", {
+    onElicitation: async () => {
+      calls++;
+      return { action: "accept", content: { ok: true } };
+    },
+  });
+  await conn.initialize();
+  await assert.rejects(() => conn.callTool("ask", {}), /too many|more than \d+ times|giving up/i);
+  assert.ok(calls > 0 && calls <= 10, `expected a bounded number of rounds, got ${calls}`);
   conn.close();
 });
 

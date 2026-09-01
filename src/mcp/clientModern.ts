@@ -1,6 +1,16 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Transport, JsonRpcMessage } from "./transport.js";
 import { modernMeta } from "./eraDetect.js";
-import type { McpToolSpec, McpPromptSpec, McpResourceSpec } from "./client.js";
+import type {
+  McpToolSpec,
+  McpPromptSpec,
+  McpResourceSpec,
+  McpConnectionOptions,
+  SamplingRequest,
+} from "./client.js";
+import { toElicitationFields } from "./client.js";
+import type { ElicitationResult } from "../types.js";
 
 interface Pending {
   resolve(value: unknown): void;
@@ -17,9 +27,24 @@ interface Pending {
 const CONNECT_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 120_000;
 
+/** MRTR round-trip ceiling — a misbehaving server can't loop us forever. */
+const MAX_MRTR_ROUNDS = 10;
+
 interface McpContentBlock {
   type: string;
   text?: string;
+}
+
+/** A full JSON-RPC request object, as carried inside `inputRequests` (MRTR). */
+interface McpInputRequest {
+  method: string;
+  params?: Record<string, unknown>;
+}
+
+/** A modern response that needs sampling/elicitation/roots before it can complete. */
+interface McpInputRequiredResult {
+  resultType: "input_required";
+  inputRequests: Record<string, McpInputRequest>;
 }
 
 /**
@@ -51,9 +76,16 @@ export interface McpServerConnection {
  * Modern (2026-07-28+) MCP client: no `initialize`, every request carries
  * its own `_meta`. Implements the same minimal surface as the legacy
  * `McpConnection` (see docs/superpowers/specs/2026-08-30-mcp-modern-protocol-design.md)
- * so `connectServer()` can use either interchangeably. `resultType:
- * "input_required"` (MRTR — sampling/elicitation/roots) is rejected with a
- * clear error here; Sub-project 2 replaces this with the real retry loop.
+ * so `connectServer()` can use either interchangeably.
+ *
+ * MRTR (sampling/elicitation/roots): a modern server never sends its own
+ * JSON-RPC request for these — instead a response comes back with
+ * `resultType: "input_required"` and an `inputRequests` map. `requestWithMRTR`
+ * answers each entry (via `answerInputRequired`, modeled on legacy's
+ * `onServerRequest`/`McpConnection.answerInputRequired`) and resends the
+ * original request with `inputResponses` attached, repeating until the
+ * server returns `resultType: "complete"` (or errors) — bounded by
+ * `MAX_MRTR_ROUNDS` so a misbehaving server can't loop forever.
  */
 export class ModernMcpConnection implements McpServerConnection {
   private nextId = 1;
@@ -62,7 +94,10 @@ export class ModernMcpConnection implements McpServerConnection {
 
   constructor(
     public readonly name: string,
-    private transport: Transport
+    private transport: Transport,
+    /** The workspace this session is working on — what `roots/list` reports. */
+    private workspace: string = process.cwd(),
+    private options: McpConnectionOptions = {}
   ) {
     transport.onMessage = (msg) => this.onMessage(msg);
     transport.onError = (err) => this.fail(new Error(`MCP server "${name}": ${err.message}`));
@@ -88,6 +123,15 @@ export class ModernMcpConnection implements McpServerConnection {
     else p.resolve(msg.result);
   }
 
+  /** The capabilities this connection can actually back, for `_meta.clientCapabilities` —
+   *  only claim what a callback is actually configured to answer, plus roots (always local). */
+  private clientCapabilities(): Record<string, unknown> {
+    const caps: Record<string, unknown> = { roots: {} };
+    if (this.options.onSampling) caps.sampling = {};
+    if (this.options.onElicitation) caps.elicitation = {};
+    return caps;
+  }
+
   private request(
     method: string,
     params: Record<string, unknown>,
@@ -104,7 +148,12 @@ export class ModernMcpConnection implements McpServerConnection {
       this.pending.set(id, { resolve, reject, timer });
       this.transport
         .send(
-          { jsonrpc: "2.0", id, method, params: { ...params, _meta: modernMeta() } },
+          {
+            jsonrpc: "2.0",
+            id,
+            method,
+            params: { ...params, _meta: modernMeta(this.clientCapabilities()) },
+          },
           timeoutMs,
           signal
         )
@@ -118,21 +167,126 @@ export class ModernMcpConnection implements McpServerConnection {
     });
   }
 
-  /** Unwrap a modern result's resultType, throwing for input_required (MRTR — Sub-project 2). */
-  private unwrap<T>(result: unknown): T {
-    const r = result as { resultType?: string };
-    if (r.resultType === "input_required") {
-      throw new Error(
-        `MCP server "${this.name}" requires an interactive capability (sampling, elicitation, ` +
-          `or roots) that modern-mode kritya does not yet support`
-      );
-    }
-    if (r.resultType !== undefined && r.resultType !== "complete") {
+  /**
+   * Send `method`/`params`, answering any `input_required` rounds (MRTR) and
+   * resending with `inputResponses` until the server completes or errors.
+   */
+  private async requestWithMRTR<T>(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<T> {
+    let currentParams = params;
+    for (let round = 0; round < MAX_MRTR_ROUNDS; round++) {
+      const result = await this.request(method, currentParams, timeoutMs, signal);
+      const r = result as { resultType?: string };
+      if (r.resultType === undefined || r.resultType === "complete") {
+        return result as T;
+      }
+      if (r.resultType === "input_required") {
+        const inputRequired = result as McpInputRequiredResult;
+        const inputResponses = await this.answerInputRequired(inputRequired.inputRequests ?? {});
+        currentParams = { ...params, inputResponses };
+        continue;
+      }
       throw new Error(
         `MCP server "${this.name}" returned an unrecognized resultType "${r.resultType}"`
       );
     }
-    return result as T;
+    throw new Error(
+      `MCP server "${this.name}" requested input more than ${MAX_MRTR_ROUNDS} times in a row for ` +
+        `"${method}" — giving up`
+    );
+  }
+
+  /**
+   * Answer every `inputRequests` entry (sampling/elicitation/roots), same
+   * capability dispatch and field/result shapes as legacy's
+   * `McpConnection.onServerRequest` — but building an `inputResponses` map
+   * to send back in the retry rather than replying to a server-sent request.
+   */
+  private async answerInputRequired(
+    inputRequests: Record<string, McpInputRequest>
+  ): Promise<Record<string, unknown>> {
+    const inputResponses: Record<string, unknown> = {};
+    for (const [key, req] of Object.entries(inputRequests)) {
+      if (req.method === "roots/list") {
+        inputResponses[key] = {
+          roots: [{ uri: pathToFileURL(this.workspace).href, name: path.basename(this.workspace) }],
+        };
+        continue;
+      }
+
+      if (req.method === "sampling/createMessage") {
+        if (!this.options.onSampling) {
+          throw new Error(
+            `MCP server "${this.name}" requires sampling, but sampling is not supported here`
+          );
+        }
+        const p = req.params as {
+          messages?: { role: string; content: { type: string; text: string } }[];
+          systemPrompt?: string;
+          maxTokens?: number;
+        };
+        const samplingReq: SamplingRequest = {
+          server: this.name,
+          messages: (p?.messages ?? []).map((m) => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            content: m.content?.text ?? "",
+          })),
+          systemPrompt: p?.systemPrompt,
+          maxTokens: p?.maxTokens,
+        };
+        const result = await this.options.onSampling(this.name, samplingReq);
+        if (!result.ok) {
+          throw new Error(result.reason);
+        }
+        inputResponses[key] = {
+          role: "assistant",
+          content: { type: "text", text: result.content },
+          model: result.model,
+          stopReason: result.stopReason,
+        };
+        continue;
+      }
+
+      if (req.method === "elicitation/create") {
+        if (!this.options.onElicitation) {
+          throw new Error(
+            `MCP server "${this.name}" requires elicitation, but elicitation is not supported here`
+          );
+        }
+        const p = req.params as {
+          message?: string;
+          requestedSchema?: {
+            properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
+          };
+        };
+        let fields;
+        try {
+          fields = toElicitationFields(p?.requestedSchema ?? {});
+        } catch (err) {
+          throw new Error(
+            `MCP server "${this.name}" sent an unsupported elicitation schema: ` +
+              (err instanceof Error ? err.message : String(err)),
+            { cause: err }
+          );
+        }
+        const result: ElicitationResult = await this.options.onElicitation(
+          this.name,
+          p?.message ?? "",
+          fields
+        );
+        inputResponses[key] = result;
+        continue;
+      }
+
+      throw new Error(
+        `MCP server "${this.name}" requires unsupported input method "${req.method}"`
+      );
+    }
+    return inputResponses;
   }
 
   async initialize(): Promise<{
@@ -140,22 +294,28 @@ export class ModernMcpConnection implements McpServerConnection {
     prompts: McpPromptSpec[];
     resources: McpResourceSpec[];
   }> {
-    const listed = this.unwrap<{ tools?: McpToolSpec[] }>(
-      await this.request("tools/list", {}, CONNECT_TIMEOUT_MS)
+    const listed = await this.requestWithMRTR<{ tools?: McpToolSpec[] }>(
+      "tools/list",
+      {},
+      CONNECT_TIMEOUT_MS
     );
     let prompts: McpPromptSpec[] = [];
     let resources: McpResourceSpec[] = [];
     try {
-      const p = this.unwrap<{ prompts?: McpPromptSpec[] }>(
-        await this.request("prompts/list", {}, CONNECT_TIMEOUT_MS)
+      const p = await this.requestWithMRTR<{ prompts?: McpPromptSpec[] }>(
+        "prompts/list",
+        {},
+        CONNECT_TIMEOUT_MS
       );
       prompts = p.prompts ?? [];
     } catch {
       // prompts unsupported by this server — non-fatal, same as legacy behavior
     }
     try {
-      const r = this.unwrap<{ resources?: McpResourceSpec[] }>(
-        await this.request("resources/list", {}, CONNECT_TIMEOUT_MS)
+      const r = await this.requestWithMRTR<{ resources?: McpResourceSpec[] }>(
+        "resources/list",
+        {},
+        CONNECT_TIMEOUT_MS
       );
       resources = r.resources ?? [];
     } catch {
@@ -165,9 +325,9 @@ export class ModernMcpConnection implements McpServerConnection {
   }
 
   async getPrompt(name: string, args: Record<string, string>): Promise<string> {
-    const result = this.unwrap<{ messages?: { role?: string; content?: McpContentBlock }[] }>(
-      await this.request("prompts/get", { name, arguments: args }, CALL_TIMEOUT_MS)
-    );
+    const result = await this.requestWithMRTR<{
+      messages?: { role?: string; content?: McpContentBlock }[];
+    }>("prompts/get", { name, arguments: args }, CALL_TIMEOUT_MS);
     const messages = result.messages ?? [];
     const multiRole = new Set(messages.map((m) => m.role ?? "user")).size > 1;
     return messages
@@ -180,8 +340,10 @@ export class ModernMcpConnection implements McpServerConnection {
   }
 
   async readResource(uri: string): Promise<string> {
-    const result = this.unwrap<{ contents?: { text?: string }[] }>(
-      await this.request("resources/read", { uri }, CALL_TIMEOUT_MS)
+    const result = await this.requestWithMRTR<{ contents?: { text?: string }[] }>(
+      "resources/read",
+      { uri },
+      CALL_TIMEOUT_MS
     );
     return (result.contents ?? []).map((c) => c.text ?? "").join("\n");
   }
@@ -197,8 +359,11 @@ export class ModernMcpConnection implements McpServerConnection {
     // scope"); the params exist only so this signature matches
     // McpConnection.callTool's, which callers invoke uniformly through the
     // McpConnection | ModernMcpConnection union built in Task 6.
-    const result = this.unwrap<{ content?: McpContentBlock[]; isError?: boolean }>(
-      await this.request("tools/call", { name: toolName, arguments: args }, CALL_TIMEOUT_MS, signal)
+    const result = await this.requestWithMRTR<{ content?: McpContentBlock[]; isError?: boolean }>(
+      "tools/call",
+      { name: toolName, arguments: args },
+      CALL_TIMEOUT_MS,
+      signal
     );
     const text = (result.content ?? [])
       .filter((b) => b.type === "text")

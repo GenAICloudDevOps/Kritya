@@ -1057,7 +1057,9 @@ export async function connectServer(
         if (probe.discover) {
           modernConn = new ModernMcpConnection(
             name,
-            new ModernHttpTransport(cfg.url, cfg.headers ?? {})
+            new ModernHttpTransport(cfg.url, cfg.headers ?? {}),
+            workspace,
+            { onSampling: trace?.onSampling, onElicitation: trace?.onElicitation }
           );
         } else {
           throw new Error(
@@ -1077,7 +1079,12 @@ export async function connectServer(
         // speak our version, producing a misleading "method not found"-style
         // error instead of naming the real problem.
         if (probe.process) {
-          modernConn = new ModernMcpConnection(name, new ReusedProcessTransport(probe.process));
+          modernConn = new ModernMcpConnection(
+            name,
+            new ReusedProcessTransport(probe.process),
+            workspace,
+            { onSampling: trace?.onSampling, onElicitation: trace?.onElicitation }
+          );
         } else {
           throw new Error(
             `server "${name}" speaks the modern MCP protocol but rejected protocol version ` +
@@ -1257,7 +1264,7 @@ export function replaceStatus(status: McpServerStatus): void {
  * ElicitationFields the UI can render. Anything with nesting or an
  * unrecognized type is rejected outright, rather than guessed at.
  */
-function toElicitationFields(schema: {
+export function toElicitationFields(schema: {
   properties?: Record<string, { type?: string; title?: string; enum?: string[] }>;
 }): ElicitationField[] {
   const props = schema.properties ?? {};
