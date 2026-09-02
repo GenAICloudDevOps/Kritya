@@ -16,8 +16,12 @@ certified guarantee.
 
 CI runs `npm audit` through a reviewed gate
 (`scripts/check-audit.mjs`) rather than a bare `--audit-level=high`, and the
-package is also monitored on [Socket](https://socket.dev/npm/package/kritya).
-Findings from both fall into two buckets:
+package is also monitored on [Socket](https://socket.dev/npm/package/kritya)
+under an org-level Team plan, with dependency reachability analysis enabled —
+Socket auto-determines whether a vulnerable transitive dependency path is
+actually reachable from kritya's code, rather than requiring a hand-written
+reachability argument for every new finding. Findings from both fall into two
+buckets:
 
 - **High-severity CVEs with no available fix** are recorded in
   `scripts/audit-allowlist.json` with a reachability argument — why the
