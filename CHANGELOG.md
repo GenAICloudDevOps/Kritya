@@ -4,6 +4,19 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.19-beta] — 2026-09-01
+
+### Changed
+
+- Bumped `@types/node` 26.4.0 → 26.4.1, `electron` 44.1.0 → 44.1.1, and
+  `globals` 17.11.0 → 17.12.0. Routine dependency maintenance.
+
+### Docs
+
+- Noted in `SECURITY.md` that Socket's org-level dependency reachability
+  analysis is enabled, so future transitive-dependency CVEs get
+  auto-triaged instead of requiring a hand-written reachability argument.
+
 ## [0.8.18-beta] — 2026-09-01
 
 ### Fixed
