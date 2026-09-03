@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.8.20-beta] — 2026-09-02
 
+### Security
+
+- Overrode the transitive `fast-uri` dependency (`electron-builder` →
+  `ajv` → `fast-uri`) to `^3.1.7`, patching four high-severity advisories
+  (host confusion via IDN/percent-encoding, SSRF via IPv6/hostname
+  normalization) in the vulnerable 3.0.0–3.1.5 range.
+
 ### Changed
 
 - Bumped `openai` 7.8.0 → 7.9.0. Routine dependency maintenance.
