@@ -4,6 +4,31 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.21-beta] — 2026-09-04
+
+### Added
+
+- The TUI status line now always shows `sandbox:active` (green) or
+  `sandbox:inactive` (red), reflecting whether shell commands are
+  actually being confined by a sandbox backend (`bwrap` on Linux,
+  `sandbox-exec` on macOS) rather than running unsandboxed.
+
+### Fixed
+
+- CI's `supply-chain` job now retries `npm audit` up to 3 times (each
+  attempt capped at 90s) on registry-side failures — an npm registry
+  endpoint that occasionally hangs or errors was failing the job with
+  no findings to act on. Non-retryable failures (unparseable output)
+  still fail immediately.
+- The Socket security scan step now runs even when an earlier step in
+  the same job (e.g. a flaky `npm audit`) fails, so a registry hiccup
+  no longer also withholds Socket's independent findings for that push.
+
+### Changed
+
+- Bumped `electron` 44.1.1 → 44.2.0 and `openai` 7.9.0 → 7.10.0.
+  Routine dependency maintenance.
+
 ## [0.8.20-beta] — 2026-09-02
 
 ### Security
