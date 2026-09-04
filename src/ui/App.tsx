@@ -10,6 +10,7 @@ import type { CliConfig } from "../config/config.js";
 import { modelDisplaySlug } from "../config/models.js";
 import type { ProviderClient } from "../provider/client.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
+import { defaultSandboxMode, sandboxAvailable } from "../shell/sandbox.js";
 import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
@@ -751,6 +752,9 @@ export function App({
           totalCost={totalCost}
           verbose={verbose}
           workspace={workspace}
+          sandboxActive={
+            (config.sandboxExec ?? defaultSandboxMode()) !== "off" && sandboxAvailable()
+          }
         />
       </Box>
     </Box>

@@ -23,6 +23,7 @@ export interface StatusLineProps {
   totalCost: number;
   verbose: boolean;
   workspace: string;
+  sandboxActive: boolean;
 }
 
 /** The single dim status bar pinned to the bottom of the screen. */
@@ -46,6 +47,7 @@ export function StatusLine({
   totalCost,
   verbose,
   workspace,
+  sandboxActive,
 }: StatusLineProps) {
   return (
     <Text dimColor>
@@ -66,6 +68,10 @@ export function StatusLine({
         ""
       )}
       {model}
+      <Text color={sandboxActive ? "green" : "red"}>
+        {" "}
+        · {sandboxActive ? "🔒 sandbox:active" : "🔓 sandbox:inactive"}
+      </Text>
       {workflow ? (
         <Text color="magenta">
           {" "}
