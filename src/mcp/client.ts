@@ -9,7 +9,7 @@ import { NOOP_TRACER, type Tracer } from "../telemetry/tracer.js";
 import { McpAuthRequiredError } from "./oauth.js";
 import { missingVars } from "./servers.js";
 import { HttpTransport, StdioTransport, type JsonRpcMessage, type Transport } from "./transport.js";
-import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
+import { assertSafeUrl as assertSafeUrlShared } from "../net/urlSafety.js";
 import { checkToolsShape, serverFingerprint } from "../trust/mcpTrust.js";
 import { probeStdioEra, probeHttpEra } from "./eraDetect.js";
 import { ModernMcpConnection, type McpServerConnection } from "./clientModern.js";
@@ -775,44 +775,17 @@ export function toolAllowed(name: string, filter: McpToolFilter | undefined): bo
   return filter.allow.some((p) => matchesPattern(name, p));
 }
 
-/** Loopback is exempt from the https requirement: there's no network to sniff. */
-function isLoopback(hostname: string): boolean {
-  const h = hostname.replace(/^\[|\]$/g, "");
-  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h.endsWith(".localhost");
-}
-
 /**
- * Reject a remote server reachable only over plaintext. `/mcp add` already
- * refuses these, but that guards one entrance: a server hand-written into
- * ~/.kritya/config.json or a repo's .mcp.json never passes through it and
- * would happily POST a bearer token in the clear. This is the choke point all
- * three sources share.
+ * Reject a remote server reachable only over plaintext, or pointed at a
+ * private/internal address. `/mcp add` already refuses these, but that
+ * guards one entrance: a server hand-written into ~/.kritya/config.json or a
+ * repo's .mcp.json never passes through it and would happily POST a bearer
+ * token in the clear. This is the choke point all three sources share —
+ * delegates to the same check used for OAuth discovery/token endpoints
+ * (src/mcp/oauth.ts) so the two can't silently drift apart.
  */
 export function assertSafeUrl(name: string, url: string): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`server "${name}" has an invalid url: ${url}`);
-  }
-  // https alone doesn't mean the traffic (incl. any bearer token in headers)
-  // stays where the user intends — a config pointing at 169.254.169.254 or
-  // another private/internal address would still ship credentials there.
-  // Loopback is exempt: that's this app talking to itself, nothing to leak to.
-  if (!isLoopback(parsed.hostname) && isPrivateOrLoopbackHost(parsed.hostname)) {
-    throw new Error(
-      `server "${name}" points at a private/internal address (${parsed.hostname}) — refusing to connect.`
-    );
-  }
-  if (parsed.protocol === "https:") return parsed;
-  if (parsed.protocol === "http:" && isLoopback(parsed.hostname)) return parsed;
-  if (parsed.protocol !== "http:") {
-    throw new Error(`server "${name}" uses unsupported scheme "${parsed.protocol}" — use https://`);
-  }
-  throw new Error(
-    `server "${name}" uses plain http:// (${parsed.host}) — an MCP session carries ` +
-      `your credentials in cleartext over it. Use https:// (localhost is exempt).`
-  );
+  return assertSafeUrlShared(`server "${name}"`, url);
 }
 
 function makeTransport(name: string, cfg: McpServerConfig, workspace: string): Transport {

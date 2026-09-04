@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { VERSION } from "../version.js";
 import { debugLog } from "../config/debug.js";
 import { isExpired, loadAuth, saveAuth, type StoredAuth } from "./tokens.js";
+import { assertSafeUrl } from "../net/urlSafety.js";
 
 /**
  * OAuth 2.1 for remote (Streamable HTTP) MCP servers.
@@ -63,8 +64,18 @@ function ua(): Record<string, string> {
   return { "user-agent": `kritya/${VERSION}`, accept: "application/json" };
 }
 
+/**
+ * Fetches JSON from a URL that isn't necessarily one kritya's own config
+ * chose — the .well-known candidates are built from a `serverUrl`/`issuer`,
+ * but a caller can also pass a `resource_metadata` URL taken straight off a
+ * server's WWW-Authenticate header, or an `authorization_servers` entry
+ * from that server's own metadata document. Both are attacker-controlled if
+ * the MCP server is malicious or compromised, so validate here rather than
+ * trust every candidate this module constructs.
+ */
 async function getJson(url: string, timeoutMs = DISCOVERY_TIMEOUT_MS): Promise<unknown> {
-  const res = await fetch(url, { headers: ua(), signal: AbortSignal.timeout(timeoutMs) });
+  const safe = assertSafeUrl("OAuth discovery endpoint", url);
+  const res = await fetch(safe, { headers: ua(), signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
   return res.json();
 }
@@ -209,7 +220,7 @@ export async function registerClient(
         `register kritya manually and put the client_id in mcp-auth.json`
     );
   }
-  const res = await fetch(meta.registrationEndpoint, {
+  const res = await fetch(assertSafeUrl("OAuth registration endpoint", meta.registrationEndpoint), {
     method: "POST",
     headers: { ...ua(), "content-type": "application/json" },
     body: JSON.stringify({
@@ -280,7 +291,7 @@ async function postToken(
     const basic = Buffer.from(`${params.client_id}:${clientSecret}`).toString("base64");
     headers.authorization = `Basic ${basic}`;
   }
-  const res = await fetch(tokenEndpoint, {
+  const res = await fetch(assertSafeUrl("OAuth token endpoint", tokenEndpoint), {
     method: "POST",
     headers,
     body: new URLSearchParams(params).toString(),
@@ -363,7 +374,7 @@ export async function revokeToken(auth: StoredAuth): Promise<boolean> {
   const token = auth.refreshToken ?? auth.accessToken;
   const hint = auth.refreshToken ? "refresh_token" : "access_token";
   try {
-    const res = await fetch(auth.revocationEndpoint, {
+    const res = await fetch(assertSafeUrl("OAuth revocation endpoint", auth.revocationEndpoint), {
       method: "POST",
       headers: { ...ua(), "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

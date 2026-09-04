@@ -155,3 +155,38 @@ export function isLoopbackHost(rawHost: string): boolean {
 
   return false;
 }
+
+/**
+ * Reject a URL reachable only over plaintext, or pointed at a private/
+ * internal address — the shared choke point for every URL kritya's own
+ * process fetches on the user's behalf with credentials attached (MCP
+ * server URLs, OAuth discovery/token/revocation endpoints, …). `label`
+ * identifies the source in the thrown error (a server name, "OAuth token
+ * endpoint", etc). Loopback is exempt from the https requirement: that's
+ * this app talking to itself, nothing on the wire to sniff.
+ */
+export function assertSafeUrl(label: string, url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`${label} has an invalid url: ${url}`);
+  }
+  // https alone doesn't mean the traffic (incl. any bearer token) stays
+  // where the caller intends — a URL pointing at 169.254.169.254 or another
+  // private/internal address would still ship credentials there.
+  if (!isLoopbackHost(parsed.hostname) && isPrivateOrLoopbackHost(parsed.hostname)) {
+    throw new Error(
+      `${label} points at a private/internal address (${parsed.hostname}) — refusing to connect.`
+    );
+  }
+  if (parsed.protocol === "https:") return parsed;
+  if (parsed.protocol === "http:" && isLoopbackHost(parsed.hostname)) return parsed;
+  if (parsed.protocol !== "http:") {
+    throw new Error(`${label} uses unsupported scheme "${parsed.protocol}" — use https://`);
+  }
+  throw new Error(
+    `${label} uses plain http:// (${parsed.host}), which would carry credentials in cleartext. ` +
+      `Use https:// (localhost is exempt).`
+  );
+}
