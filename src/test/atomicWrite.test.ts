@@ -77,6 +77,20 @@ test("writeFileAtomic writes through a symlink instead of replacing it", async (
   assert.ok((await fsp.lstat(link)).isSymbolicLink(), "the link itself was not replaced");
 });
 
+test("writeFileAtomic honors an explicit mode from the very first write, not just after a later chmod", async (t) => {
+  if (process.platform === "win32") return t.skip("POSIX modes are not meaningful on Windows");
+  const dir = await makeDir();
+  const file = path.join(dir, "secret.json");
+
+  await writeFileAtomic(file, '{"apiKey":"x"}\n', { mode: 0o600 });
+
+  // An explicit mode must win over both the umask and any inherited mode —
+  // config.json holds secrets, so there must be no window where the temp
+  // file sits at a more permissive default mode before being narrowed.
+  assert.equal((await fsp.stat(file)).mode & 0o777, 0o600);
+  assert.deepEqual(await siblings(dir), ["secret.json"]);
+});
+
 test("writeFileAtomic leaves the old content intact when the write fails", async () => {
   const dir = await makeDir();
   const file = path.join(dir, "keep.txt");

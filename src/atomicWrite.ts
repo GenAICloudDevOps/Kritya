@@ -74,18 +74,23 @@ export async function writeFileAtomic(
   const target = resolveTarget(filePath);
   const mode = options.mode ?? existingMode(target);
   const tmp = tempPathFor(target);
+  const encoding = options.encoding ?? (typeof data === "string" ? "utf8" : null);
   try {
-    await fsp.writeFile(tmp, data, options.encoding ?? (typeof data === "string" ? "utf8" : null));
+    // Pass `mode` to the create itself rather than chmod-ing afterward: a
+    // separate chmod call leaves a window where the temp file sits at
+    // Node's default (umask-derived, typically world/group-readable) mode
+    // before being narrowed — for a sensitive target (e.g. config.json) that
+    // briefly exposes contents a caller explicitly asked to keep owner-only.
+    // The chmod is kept too, since umask can still trim bits `mode` set on
+    // some platforms.
+    await fsp.writeFile(tmp, data, { encoding, ...(mode !== undefined ? { mode } : {}) });
     if (mode !== undefined) await fsp.chmod(tmp, mode);
     await fsp.rename(tmp, target);
   } catch (err) {
     await fsp.rm(tmp, { force: true }).catch(() => {});
     if (!isRenameFallback(err)) throw err;
-    await fsp.writeFile(
-      filePath,
-      data,
-      options.encoding ?? (typeof data === "string" ? "utf8" : null)
-    );
+    await fsp.writeFile(filePath, data, { encoding, ...(mode !== undefined ? { mode } : {}) });
+    if (mode !== undefined) await fsp.chmod(filePath, mode);
   }
 }
 
@@ -118,6 +123,9 @@ export function writeFileAtomicSync(
       ...(options.encoding ? { encoding: options.encoding } : {}),
       ...(mode !== undefined ? { mode } : {}),
     });
+    // Same umask concern as the primary path above: `mode` on writeFileSync
+    // can still be trimmed by umask, so enforce it explicitly.
+    if (mode !== undefined) fs.chmodSync(filePath, mode);
   }
 }
 

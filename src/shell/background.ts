@@ -8,8 +8,11 @@ import {
   shouldSandbox,
   type SandboxMode,
 } from "./sandbox.js";
+import { redactSecrets } from "../tools/secretScan.js";
 
 const MAX_BUFFER_CHARS = 50_000;
+const MAX_COMPLETED_PROCESSES = 100;
+const COMPLETED_PROCESS_RETENTION_MS = 5 * 60_000;
 
 interface BgProcess {
   proc: ChildProcess;
@@ -17,6 +20,7 @@ interface BgProcess {
   buffer: string;
   exitCode: number | null;
   running: boolean;
+  finishedAt?: number;
 }
 
 /**
@@ -72,10 +76,20 @@ class BackgroundManager {
       proc = spawn(command, { ...spawnOpts, shell: true });
     }
 
-    const entry: BgProcess = { proc, command, buffer: "", exitCode: null, running: true };
+    // Keep secrets out of the long-lived registry. The child still receives
+    // the original command, but the retained command is redacted.
+    const entry: BgProcess = {
+      proc,
+      command: redactSecrets(command).redacted,
+      buffer: "",
+      exitCode: null,
+      running: true,
+    };
 
     const append = (chunk: Buffer) => {
-      entry.buffer += chunk.toString();
+      // Re-scan the rolling buffer so a secret split across stream chunks is
+      // redacted before it is retained.
+      entry.buffer = redactSecrets(entry.buffer + chunk.toString()).redacted;
       if (entry.buffer.length > MAX_BUFFER_CHARS) {
         entry.buffer = entry.buffer.slice(-MAX_BUFFER_CHARS);
       }
@@ -87,21 +101,44 @@ class BackgroundManager {
     proc.on("exit", (code) => {
       entry.running = false;
       entry.exitCode = code;
+      entry.finishedAt = Date.now();
       proc.stdout?.destroy();
       proc.stderr?.destroy();
       cleanup?.();
+      this.scheduleCleanup(id, entry);
     });
     proc.on("error", (err) => {
       entry.running = false;
-      entry.buffer += `\n[failed to start: ${err.message}]`;
+      entry.finishedAt = Date.now();
+      entry.buffer = redactSecrets(`${entry.buffer}\n[failed to start: ${err.message}]`).redacted;
       // If the sandbox binary itself fails to spawn, "exit" may never fire, so
       // the macOS temp profile would leak. cleanup is fs.rm({force:true}),
       // which is idempotent, so running it from both handlers is safe.
       cleanup?.();
+      this.scheduleCleanup(id, entry);
     });
 
     this.procs.set(id, entry);
+    this.pruneCompleted();
     return { id };
+  }
+
+  private scheduleCleanup(id: string, entry: BgProcess): void {
+    const timer = setTimeout(() => {
+      if (this.procs.get(id) === entry && !entry.running) this.procs.delete(id);
+    }, COMPLETED_PROCESS_RETENTION_MS);
+    timer.unref();
+    this.pruneCompleted();
+  }
+
+  private pruneCompleted(): void {
+    const completed = [...this.procs.entries()]
+      .filter(([, entry]) => !entry.running)
+      .sort(([, a], [, b]) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0));
+    while (completed.length > MAX_COMPLETED_PROCESSES) {
+      const [id] = completed.shift()!;
+      this.procs.delete(id);
+    }
   }
 
   private signal(entry: BgProcess, sig: NodeJS.Signals): boolean {

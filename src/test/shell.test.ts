@@ -9,6 +9,13 @@ import type { ToolContext } from "../types.js";
 
 const ctx: ToolContext = { workspace: os.tmpdir() };
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 test("truncateTail keeps the end of long output", () => {
   const s = "start" + "x".repeat(100) + "END";
   const out = truncateTail(s, 20);
@@ -50,7 +57,7 @@ test("background process runs, reports output, and can be killed", async () => {
     `node -e "console.log('bg-hello'); setInterval(() => {}, 1000)"`,
     os.tmpdir()
   );
-  await new Promise((r) => setTimeout(r, 800));
+  await waitFor(() => backgroundManager.read(id)?.output.includes("bg-hello") ?? false);
   const info = backgroundManager.read(id);
   assert.ok(info, "process is registered");
   assert.match(info!.output, /bg-hello/);

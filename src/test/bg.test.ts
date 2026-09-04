@@ -8,6 +8,13 @@ import type { ToolContext } from "../types.js";
 
 const ctx: ToolContext = { workspace: os.tmpdir() };
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 test("bg_output with no id lists every background process", async () => {
   const { id } = backgroundManager.start(`node -e "setInterval(() => {}, 1000)"`, os.tmpdir());
   try {
@@ -25,7 +32,7 @@ test("bg_output reports a running process's captured output", async () => {
     os.tmpdir()
   );
   try {
-    await new Promise((r) => setTimeout(r, 500));
+    await waitFor(() => backgroundManager.read(id)?.output.includes("hello-from-bg") ?? false);
     const out = await bgOutputTool.execute({ id }, ctx);
     assert.match(out, /still running/);
     assert.match(out, /hello-from-bg/);
@@ -41,7 +48,7 @@ test("bg_output reports an unknown id as an error", async () => {
 
 test("bg_output reports the exit code once a process has finished", async () => {
   const { id } = backgroundManager.start(`node -e "process.exit(3)"`, os.tmpdir());
-  await new Promise((r) => setTimeout(r, 500));
+  await waitFor(() => backgroundManager.read(id)?.running === false);
   const out = await bgOutputTool.execute({ id }, ctx);
   assert.match(out, /exited with code 3/);
 });
@@ -50,7 +57,7 @@ test("bg_kill stops a running process", async () => {
   const { id } = backgroundManager.start(`node -e "setInterval(() => {}, 1000)"`, os.tmpdir());
   const out = await bgKillTool.execute({ id }, ctx);
   assert.match(out, new RegExp(`Sent SIGTERM to ${id}`));
-  await new Promise((r) => setTimeout(r, 500));
+  await waitFor(() => backgroundManager.read(id)?.running === false);
   assert.equal(backgroundManager.read(id)!.running, false);
 });
 
@@ -91,7 +98,7 @@ test("background process is sandboxed when sandboxMode requests it and writes ou
 
 test("background process without a sandboxMode runs unsandboxed, unchanged from today", async () => {
   const { id } = backgroundManager.start(`node -e "console.log('bg-plain')"`, os.tmpdir());
-  await new Promise((r) => setTimeout(r, 500));
+  await waitFor(() => backgroundManager.read(id)?.output.includes("bg-plain") ?? false);
   const info = backgroundManager.read(id);
   assert.match(info!.output, /bg-plain/);
 });
@@ -102,7 +109,7 @@ test("bg_output redacts secrets from a background process's captured output", as
     os.tmpdir()
   );
   try {
-    await new Promise((r) => setTimeout(r, 500));
+    await waitFor(() => backgroundManager.read(id)?.output.length !== 0);
     const out = await bgOutputTool.execute({ id }, ctx);
     assert.doesNotMatch(out, /AKIAABCDEFGHIJKLMNOP/);
     assert.match(out, /REDACTED/);
@@ -119,7 +126,7 @@ test("bg_output keeps the status header even when the output is truncated", asyn
     os.tmpdir()
   );
   try {
-    await new Promise((r) => setTimeout(r, 500));
+    await waitFor(() => (backgroundManager.read(id)?.output.length ?? 0) >= 40_000);
     const out = await bgOutputTool.execute({ id }, ctx);
     assert.match(out, new RegExp(`^Process ${id} \\(.*\\) — still running`, "m"));
     assert.ok(out.includes("truncated") || out.length < 40000);
