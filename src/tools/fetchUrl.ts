@@ -1,9 +1,21 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, type Dispatcher } from "undici";
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
 import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
+
+/**
+ * Node's global `fetch` is backed by the same undici engine as the `undici`
+ * package and honors this option at runtime, but the DOM-derived RequestInit
+ * type it's typed against doesn't declare it. Extending locally (rather than
+ * importing `fetch` straight from `undici`) keeps calls going through
+ * `globalThis.fetch` — tests reassign that to mock responses, and a direct
+ * `undici` import would silently bypass the mock and hit the real network.
+ */
+interface FetchInitWithDispatcher extends RequestInit {
+  dispatcher?: Dispatcher;
+}
 
 /** Cap on how much text a single fetch returns, unless the caller asks for less. */
 const DEFAULT_MAX_CHARS = 20_000;
@@ -136,16 +148,17 @@ async function fetchFollowingRedirects(
         `Refusing to fetch ${current.hostname}: resolves to a private/internal address`
       );
     }
-    const res = await undiciFetch(current, {
+    const init: FetchInitWithDispatcher = {
       redirect: "manual",
       signal,
       headers,
       dispatcher: pinnedDispatcher,
-    });
+    };
+    const res = await fetch(current, init);
     const isRedirect = res.status >= 300 && res.status < 400;
     const location = res.headers.get("location");
     if (!isRedirect || !location) {
-      return { res: res as unknown as Response, finalUrl: current };
+      return { res, finalUrl: current };
     }
     if (hop >= MAX_REDIRECTS) {
       throw new Error(`Too many redirects fetching ${url.href} (stopped at ${current.href})`);
