@@ -4,6 +4,42 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.22-beta] — 2026-09-04
+
+### Security
+
+- Closed a DNS-rebinding TOCTOU gap in `fetch_url`: the validated
+  hostname's DNS answer and the address `fetch()` actually connected to
+  could differ on attacker-controlled or short-TTL DNS, letting a
+  public-looking URL rebind to a private/internal address after passing
+  the check. DNS resolution is now pinned to a single lookup for every
+  redirect hop.
+- Routed the OAuth flow's protected-resource metadata, auth-server
+  metadata, dynamic client registration, token exchange, and token
+  revocation requests through the same SSRF-safe URL check already
+  applied to MCP server URLs, so a malicious or compromised MCP server
+  can no longer redirect a bearer token to an internal address via its
+  OAuth metadata.
+- Hardened `SessionStore.isSessionFile` to resolve symlinks before
+  checking containment, closing a gap where a symlink inside the
+  session directory could point at an arbitrary file elsewhere and pass
+  the check.
+- `config.json` (which holds API keys) is now written atomically via
+  `writeFileAtomicSync`, so a crash or power loss mid-write can no
+  longer leave a half-written, unparseable config file behind; the
+  0o600 permission is now applied on every save.
+- Custom provider base URLs are now validated for SSRF safety.
+- Hardened the background process registry: commands and output are
+  redacted before being stored in memory, completed processes expire
+  after five minutes, and the number of retained completed entries is
+  capped.
+
+### Fixed
+
+- Fixed `fetch_url`'s DNS-pinned fetch to import `fetch` from
+  `globalThis` instead of directly from `undici`, so `fetch` mocks in
+  tests are honored again.
+
 ## [0.8.21-beta] — 2026-09-04
 
 ### Added
