@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NVIDIA_BASE_URL } from "../config/config.js";
+import { assertSafeUrl } from "../net/urlSafety.js";
 import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 import type { ChatMessage, ToolDef, Usage } from "../types.js";
 import { recoverToolCalls } from "./textToolCalls.js";
@@ -273,6 +274,11 @@ export class ProviderClient {
     sampling: SamplingOptions = {},
     timeouts: TimeoutOptions = {}
   ) {
+    // Provider URLs can carry an API key, so apply the same scheme and
+    // private-network protections used by MCP HTTP endpoints before handing
+    // the URL to the SDK.
+    assertSafeUrl("provider base URL", baseURL);
+
     // We do our own streaming-aware retry loop, so disable the SDK's.
     this.client = new OpenAI({
       apiKey,
