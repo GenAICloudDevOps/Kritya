@@ -182,3 +182,23 @@ test("isSessionFile rejects a path from a different workspace's session director
 
   assert.equal(SessionStore.isSessionFile(workspaceA, sessionB.file), false);
 });
+
+test("isSessionFile rejects a symlink inside the session dir that points outside it", async () => {
+  const home = await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-10`);
+  const workspace = "/tmp/some-workspace-k";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "hi" });
+  const [session] = SessionStore.listSessions(workspace);
+  const dir = path.dirname(session.file);
+
+  const secret = path.join(home, "secret.jsonl");
+  await fs.writeFile(secret, JSON.stringify({ role: "user", content: "top secret" }) + "\n");
+
+  const link = path.join(dir, "escape.jsonl");
+  await fs.symlink(secret, link);
+
+  assert.equal(SessionStore.isSessionFile(workspace, link), false);
+});

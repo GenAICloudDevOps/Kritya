@@ -171,17 +171,47 @@ export class SessionStore {
    * accept a session path from outside the process (e.g. the Electron
    * renderer over IPC) must check this before loading it: without it,
    * "load this session" is really "read any file the OS user can read".
+   *
+   * The lexical check (path.relative on the unresolved names) only rules out
+   * `..` segments in the string itself — it doesn't notice a symlink planted
+   * inside the session directory that points somewhere else entirely. Such a
+   * symlink would have a path that lexically resolves inside the session dir
+   * while the filesystem happily follows it out. Canonicalizing with
+   * fs.realpathSync and re-checking containment against that catches it: a
+   * symlink escaping the directory resolves to a real path outside it and
+   * gets rejected, exactly like an out-of-tree file would.
    */
   static isSessionFile(workspace: string, filePath: string): boolean {
     const dir = sessionDir(workspace);
     const resolved = path.resolve(dir, filePath);
     const relative = path.relative(dir, resolved);
-    return (
-      resolved.endsWith(".jsonl") &&
-      relative !== "" &&
-      !relative.startsWith("..") &&
-      !path.isAbsolute(relative)
-    );
+    if (
+      !resolved.endsWith(".jsonl") ||
+      relative === "" ||
+      relative.startsWith("..") ||
+      path.isAbsolute(relative)
+    ) {
+      return false;
+    }
+    let realDir: string;
+    let realFile: string;
+    try {
+      realDir = fs.realpathSync(dir);
+      realFile = fs.realpathSync(resolved);
+    } catch {
+      // Doesn't exist, or a component along the way isn't accessible —
+      // either way there's nothing real to load.
+      return false;
+    }
+    const realRelative = path.relative(realDir, realFile);
+    if (realRelative === "" || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      return false;
+    }
+    try {
+      return fs.statSync(realFile).isFile();
+    } catch {
+      return false;
+    }
   }
 
   static loadFile(filePath: string): ChatMessage[] {
