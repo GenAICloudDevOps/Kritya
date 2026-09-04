@@ -21,6 +21,19 @@ import { fileURLToPath } from "node:url";
 const FAIL_AT = "high";
 const SEVERITY_ORDER = ["info", "low", "moderate", "high", "critical"];
 
+// `npm audit`'s registry call is occasionally slow/unreliable (observed:
+// hanging for several minutes then returning an empty `error` object with no
+// summary or detail). Retrying a few times, with a per-attempt timeout so a
+// hung call doesn't eat the whole CI job budget, turns that transient
+// flakiness into a pass instead of a red build with nothing to fix.
+const MAX_ATTEMPTS = 3;
+const ATTEMPT_TIMEOUT_MS = 90_000;
+const RETRY_DELAY_MS = 5_000;
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const allowlistPath = path.join(repoRoot, "scripts", "audit-allowlist.json");
 
@@ -33,7 +46,12 @@ function ghsaId(url) {
   return /\/(GHSA-[\w-]+)$/.exec(url ?? "")?.[1];
 }
 
-function runAudit() {
+/**
+ * One `npm audit` attempt. Returns the parsed report on success; on failure,
+ * says whether the failure is worth retrying (a hung/unreachable registry)
+ * or terminal (unparseable or unrecognized output, which a retry won't fix).
+ */
+function attemptAudit() {
   // npm audit exits non-zero whenever it finds anything, so the exit code says
   // nothing about whether the run itself worked — the output is what matters.
   //
@@ -47,20 +65,27 @@ function runAudit() {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
     shell: isWindows,
+    timeout: ATTEMPT_TIMEOUT_MS,
   });
+  if (result.signal) {
+    return {
+      retryable: true,
+      message: `\`npm audit\` timed out after ${ATTEMPT_TIMEOUT_MS / 1000}s (killed with ${result.signal}).`,
+    };
+  }
   if (result.error) {
-    console.error(`Could not run \`npm audit\`: ${result.error.message}`);
-    process.exit(1);
+    return { retryable: true, message: `Could not run \`npm audit\`: ${result.error.message}` };
   }
   let report;
   try {
     report = JSON.parse(result.stdout);
   } catch {
-    console.error(
-      `\`npm audit\` did not return JSON — treating that as a failure rather than a pass.\n` +
-        `Exit code ${result.status}.\n${result.stderr || result.stdout}`
-    );
-    process.exit(1);
+    return {
+      retryable: false,
+      message:
+        `\`npm audit\` did not return JSON — treating that as a failure rather than a pass.\n` +
+        `Exit code ${result.status}.\n${result.stderr || result.stdout}`,
+    };
   }
   // npm reports its own failures (a missing lockfile, a registry it couldn't
   // reach) as well-formed JSON with an `error` key and no findings. Parsing
@@ -68,20 +93,36 @@ function runAudit() {
   // without having checked anything, so both that and a report missing the
   // expected shape are failures.
   if (report?.error) {
-    console.error(
-      `\`npm audit\` could not run: ${report.error.summary ?? report.error.code ?? "unknown error"}\n` +
-        `${report.error.detail ?? ""}`
-    );
-    process.exit(1);
+    return {
+      retryable: true,
+      message:
+        `\`npm audit\` could not run: ${report.error.summary ?? report.error.code ?? "unknown error"}\n` +
+        `${report.error.detail ?? ""}`,
+    };
   }
   if (!report?.auditReportVersion || typeof report.vulnerabilities !== "object") {
-    console.error(
-      `\`npm audit\` returned JSON in an unrecognized shape — refusing to report a pass ` +
-        `from a report this script can't read.\n${result.stdout.slice(0, 500)}`
-    );
-    process.exit(1);
+    return {
+      retryable: false,
+      message:
+        `\`npm audit\` returned JSON in an unrecognized shape — refusing to report a pass ` +
+        `from a report this script can't read.\n${result.stdout.slice(0, 500)}`,
+    };
   }
-  return report;
+  return { report };
+}
+
+function runAudit() {
+  let lastMessage = "";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const outcome = attemptAudit();
+    if (outcome.report) return outcome.report;
+    lastMessage = outcome.message;
+    if (!outcome.retryable || attempt === MAX_ATTEMPTS) break;
+    console.error(`${outcome.message}\nRetrying (attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
+    sleep(RETRY_DELAY_MS);
+  }
+  console.error(lastMessage);
+  process.exit(1);
 }
 
 /**
