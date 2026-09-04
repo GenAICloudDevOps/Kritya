@@ -1,4 +1,6 @@
 import { lookup as dnsLookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
+import { Agent, fetch as undiciFetch } from "undici";
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
 import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
@@ -51,10 +53,13 @@ function assertPublicUrl(raw: string): URL {
 /**
  * Resolve `hostname` and check whether any answer is private/loopback.
  * assertPublicUrl only checks the literal hostname string, so a
- * public-looking name that resolves (now, or on a later request) to an
- * internal IP — DNS rebinding, or simply attacker-controlled DNS — slips
- * past it. This closes that gap for the initial request; lookupFn is
- * injectable for tests, and defaults to a real DNS resolution.
+ * public-looking name that resolves to an internal IP — DNS rebinding, or
+ * simply attacker-controlled DNS — slips past it. This is only a fast,
+ * friendly pre-check (a clear "refusing to fetch" error instead of a raw
+ * connection failure); the actual boundary is the pinned lookup on
+ * `pinnedDispatcher` below, which validates the one DNS answer that's
+ * actually connected to rather than resolving twice. lookupFn is injectable
+ * for tests, and defaults to a real DNS resolution.
  */
 export async function hostResolvesToPrivateAddress(
   hostname: string,
@@ -73,36 +78,79 @@ export async function hostResolvesToPrivateAddress(
 const MAX_REDIRECTS = 5;
 
 /**
- * Fetch `url`, following redirects manually so every hop — not just the
- * original URL — is checked against assertPublicUrl. A public URL that
- * 302s to 169.254.169.254 or localhost would otherwise sail straight past
- * the initial check, since `redirect: "follow"` never re-validates.
+ * The actual SSRF boundary: a connect-time `lookup` on a dedicated undici
+ * Agent, so the address that gets validated is the exact address the socket
+ * connects to — one DNS answer, not two. Checking the hostname up front and
+ * then letting `fetch` re-resolve it independently (the previous approach)
+ * left a TOCTOU window: attacker-controlled or short-TTL DNS can answer
+ * differently the second time (classic DNS rebinding). Pinning the lookup
+ * closes that regardless of hop, hostname, or TTL.
  */
-async function assertNotDnsRebound(url: URL): Promise<void> {
-  if (await hostResolvesToPrivateAddress(url.hostname)) {
-    throw new Error(`Refusing to fetch ${url.hostname}: resolves to a private/internal address`);
-  }
-}
+const pinnedDispatcher = new Agent({
+  connect: {
+    lookup(hostname, options, callback) {
+      dnsLookup(hostname, { all: true })
+        .then((addresses: LookupAddress[]) => {
+          if (addresses.length === 0) {
+            callback(new Error(`Could not resolve ${hostname}`), []);
+            return;
+          }
+          const bad = addresses.find((a) => isPrivateOrLoopbackHost(a.address));
+          if (bad) {
+            callback(
+              new Error(
+                `Refusing to connect to ${hostname}: resolves to private/internal address ${bad.address}`
+              ),
+              []
+            );
+            return;
+          }
+          if (options.all) {
+            callback(null, addresses);
+          } else {
+            const chosen = addresses[0];
+            callback(null, chosen.address, chosen.family);
+          }
+        })
+        .catch((err: Error) => callback(err, []));
+    },
+  },
+});
 
+/**
+ * Fetch `url`, following redirects manually so every hop — not just the
+ * original URL — is checked against assertPublicUrl before the (DNS-pinned)
+ * connection is even attempted. A public URL that 302s to 169.254.169.254
+ * or localhost would otherwise sail straight past the initial check, since
+ * `redirect: "follow"` never re-validates.
+ */
 async function fetchFollowingRedirects(
   url: URL,
   signal: AbortSignal,
   headers: Record<string, string>
 ): Promise<{ res: Response; finalUrl: URL }> {
   let current = url;
-  await assertNotDnsRebound(current);
   for (let hop = 0; ; hop++) {
-    const res = await fetch(current, { redirect: "manual", signal, headers });
+    if (await hostResolvesToPrivateAddress(current.hostname)) {
+      throw new Error(
+        `Refusing to fetch ${current.hostname}: resolves to a private/internal address`
+      );
+    }
+    const res = await undiciFetch(current, {
+      redirect: "manual",
+      signal,
+      headers,
+      dispatcher: pinnedDispatcher,
+    });
     const isRedirect = res.status >= 300 && res.status < 400;
     const location = res.headers.get("location");
     if (!isRedirect || !location) {
-      return { res, finalUrl: current };
+      return { res: res as unknown as Response, finalUrl: current };
     }
     if (hop >= MAX_REDIRECTS) {
       throw new Error(`Too many redirects fetching ${url.href} (stopped at ${current.href})`);
     }
     current = assertPublicUrl(new URL(location, current).href);
-    await assertNotDnsRebound(current);
   }
 }
 
