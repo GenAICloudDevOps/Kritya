@@ -39,6 +39,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fixed `fetch_url`'s DNS-pinned fetch to import `fetch` from
   `globalThis` instead of directly from `undici`, so `fetch` mocks in
   tests are honored again.
+- The new `saveConfig` atomic-write test asserted an exact `0o600` file
+  mode without the Windows guard used elsewhere in the suite, failing
+  CI on `windows-latest` where NTFS doesn't honor Unix permission bits.
+  Skip the mode assertion there, matching `atomicWrite.test.ts`.
 
 ## [0.8.21-beta] — 2026-09-04
 

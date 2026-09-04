@@ -54,7 +54,7 @@ test("legacyGlobalModel treats an absent provider as the nvidia default", async 
   assert.equal(legacyGlobalModel(config, "switchyard"), undefined);
 });
 
-test("saveConfig writes atomically: round-trips, forces 0o600, and leaves no stray temp file", async () => {
+test("saveConfig writes atomically: round-trips, forces 0o600, and leaves no stray temp file", async (t) => {
   await freshHome();
   const { saveConfig, loadConfig, CONFIG_FILE } = await import(
     `../config/config.js?t=${Date.now()}`
@@ -68,8 +68,12 @@ test("saveConfig writes atomically: round-trips, forces 0o600, and leaves no str
   // force it back to owner-only.
   await fs.chmod(CONFIG_FILE, 0o644);
   saveConfig({ apiKey: "sk-test" });
-  const mode = (await fs.stat(CONFIG_FILE)).mode & 0o777;
-  assert.equal(mode, 0o600);
+  if (process.platform === "win32") {
+    t.skip("POSIX modes are not meaningful on Windows");
+  } else {
+    const mode = (await fs.stat(CONFIG_FILE)).mode & 0o777;
+    assert.equal(mode, 0o600);
+  }
   assert.equal(loadConfig().apiKey, "sk-test");
   assert.equal(loadConfig().provider, "openai");
 
