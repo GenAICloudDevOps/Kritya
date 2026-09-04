@@ -87,8 +87,13 @@ jobs:
       # fork-triggered `pull_request` runs, so SOCKET_CLI_API_TOKEN would be
       # empty there — failing the job on a missing token would be a false
       # red, not a real finding.
+      #
+      # Runs even if an earlier step in this job failed (e.g. npm audit's
+      # registry endpoint timing out) — `!cancelled()` skips this only if the
+      # job itself was cancelled, so a flaky npm audit doesn't also deny us
+      # Socket's independent coverage for the same push.
       - name: Socket security scan
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: npx --yes @socketsecurity/cli ci
         env:
           SOCKET_CLI_API_TOKEN: ${{ secrets.SOCKET_CLI_API_TOKEN }}
