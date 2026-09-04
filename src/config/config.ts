@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { hardenWindowsDir } from "./winAcl.js";
 import { debugLog } from "./debug.js";
+import { writeFileAtomicSync } from "../atomicWrite.js";
 
 /** A named, OpenAI-compatible model provider. */
 export interface ProviderConfig {
@@ -159,7 +160,7 @@ export interface McpToolFilter {
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+export const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 
@@ -310,14 +311,13 @@ export function saveConfig(patch: Partial<CliConfig>): void {
   // config.json can hold a literal apiKey — keep it readable only by the owner.
   fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   hardenWindowsDir(CONFIG_DIR);
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
-  // `mode` on writeFileSync only applies when creating a new file; enforce it
-  // even if config.json pre-existed with looser permissions.
-  try {
-    fs.chmodSync(CONFIG_FILE, 0o600);
-  } catch (err) {
-    debugLog(`saveConfig chmod(${CONFIG_FILE})`, err);
-  }
+  // Atomic (write-to-temp-then-rename) rather than a direct write: config.json
+  // holds API keys, and a crash mid-write would otherwise leave it truncated
+  // and unreadable on next launch. `mode: 0o600` is forced on every save
+  // (rather than only applying on creation, like a plain writeFileSync would),
+  // so a config.json that pre-existed with looser permissions still ends up
+  // owner-only.
+  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
 }
 
 /**
