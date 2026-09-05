@@ -1,33 +1,15 @@
 import ExcelJS from "exceljs";
-import JSZip from "jszip";
 import type { XlsxSheet, CellEdit, AppliedCellEdit } from "./types.js";
+import { loadSafeZip } from "./zipSafety.js";
 
 const CELL_REF_RE = /^[A-Za-z]{1,3}[1-9][0-9]*$/;
 
 // exceljs's xlsx loader decompresses every entry of the .xlsx zip with no
-// size limit (CVE-2026-78206, unpatched upstream as of this writing) — a
-// small file whose declared uncompressed size is huge can exhaust memory
-// before exceljs itself ever runs. JSZip.loadAsync only reads the central
-// directory (cheap, no inflation), so summing each entry's *declared*
-// uncompressed size here rejects a bomb before handing the buffer to exceljs.
-const MAX_XLSX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
-
+// size limit (CVE-2026-78206, unpatched upstream as of this writing) — see
+// zipSafety.ts for why checking declared sizes up front (via JSZip, which
+// doesn't inflate) catches this before exceljs itself ever runs.
 async function assertSafeXlsxSize(buf: Buffer): Promise<void> {
-  const zip = await JSZip.loadAsync(buf);
-  let total = 0;
-  for (const entry of Object.values(zip.files)) {
-    // `_data` is JSZip's internal CompressedObject; there is no public API
-    // for a zip entry's declared (pre-inflation) uncompressed size.
-    total +=
-      (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0;
-    if (total > MAX_XLSX_UNCOMPRESSED_BYTES) {
-      throw new Error(
-        `This .xlsx file's declared uncompressed size exceeds ` +
-          `${MAX_XLSX_UNCOMPRESSED_BYTES / (1024 * 1024)}MB and was refused ` +
-          `as a likely decompression bomb rather than risk exhausting memory.`
-      );
-    }
-  }
+  await loadSafeZip(buf);
 }
 
 export async function readXlsx(buf: Buffer): Promise<string> {

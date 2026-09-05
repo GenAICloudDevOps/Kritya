@@ -14,6 +14,16 @@ const STANDARD_FONT_DATA_URL = fileURLToPath(
   new URL("../../../node_modules/pdfjs-dist/standard_fonts/", import.meta.url)
 ).replace(/\\/g, "/");
 
+/**
+ * A hostile or corrupt PDF can declare an enormous page count, or pack a
+ * huge amount of text into a single page; without a cap, extracting text
+ * page-by-page has no upper bound on how long it runs or how much memory the
+ * accumulated text consumes. Both caps stop the extraction early rather than
+ * failing outright — the caller gets whatever was read so far, plus a note.
+ */
+const MAX_PDF_PAGES = 5_000;
+const MAX_PDF_TEXT_CHARS = 5_000_000;
+
 export async function readPdf(buf: Buffer): Promise<string> {
   const loadingTask = getDocument({
     data: new Uint8Array(buf),
@@ -21,16 +31,28 @@ export async function readPdf(buf: Buffer): Promise<string> {
   });
   const doc = await loadingTask.promise;
   const pageTexts: string[] = [];
-  for (let i = 1; i <= doc.numPages; i++) {
+  let totalChars = 0;
+  let truncated = false;
+  const pageCount = Math.min(doc.numPages, MAX_PDF_PAGES);
+  for (let i = 1; i <= pageCount; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const text = content.items
       .map((item) => ("str" in item ? (item as TextItem).str : ""))
       .join(" ");
     pageTexts.push(text);
+    totalChars += text.length;
+    if (totalChars > MAX_PDF_TEXT_CHARS) {
+      truncated = true;
+      break;
+    }
   }
   await loadingTask.destroy();
-  return pageTexts.join("\n\n");
+  if (pageCount < doc.numPages) truncated = true;
+  return (
+    pageTexts.join("\n\n") +
+    (truncated ? `\n\n... [truncated: read ${pageTexts.length} of ${doc.numPages} page(s)]` : "")
+  );
 }
 
 const PAGE_WIDTH = 612; // US Letter, points

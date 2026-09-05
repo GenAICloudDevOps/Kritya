@@ -86,7 +86,23 @@ function summarizeOutputs(outputs: unknown[]): string {
   );
 }
 
+/**
+ * Cell *output* text is already capped post-parse (MAX_OUTPUT_CHARS above),
+ * but nothing bounded the input file itself — a pathologically large
+ * .ipynb (corrupt, or a runaway export) would otherwise be read and
+ * JSON.parse'd whole regardless of size. Real notebooks are nowhere near
+ * this large even with heavy output.
+ */
+const MAX_NOTEBOOK_FILE_BYTES = 50 * 1024 * 1024;
+
 async function loadNotebook(abs: string): Promise<Notebook> {
+  const { size } = await fs.stat(abs);
+  if (size > MAX_NOTEBOOK_FILE_BYTES) {
+    throw new Error(
+      `Notebook file is ${Math.round(size / (1024 * 1024))}MB, over the ` +
+        `${MAX_NOTEBOOK_FILE_BYTES / (1024 * 1024)}MB limit for reading a .ipynb file.`
+    );
+  }
   const text = await fs.readFile(abs, "utf8");
   let nb: Notebook;
   try {

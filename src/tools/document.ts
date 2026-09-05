@@ -11,6 +11,14 @@ import type { DocumentContent, CellEdit, PdfEdit } from "./document/types.js";
 
 const READABLE_EXTENSIONS = [".docx", ".xlsx", ".pptx", ".pdf"];
 
+/**
+ * Bound the raw file read before it's dispatched to any format-specific
+ * reader. Each reader has its own internal limits (zip decompression caps,
+ * PDF page/text caps), but those only kick in once parsing has started —
+ * this stops an absurdly large file from being buffered into memory at all.
+ */
+const MAX_DOCUMENT_FILE_BYTES = 200 * 1024 * 1024;
+
 const BLOCK_SCHEMA = {
   type: "array",
   description: "Flowed content blocks, in document order.",
@@ -45,6 +53,13 @@ export const readDocumentTool: ToolDef = {
     const relPath = String(args.path);
     const abs = resolveSafe(ctx.workspace, relPath);
     const ext = path.extname(abs).toLowerCase();
+    const { size } = await fs.stat(abs);
+    if (size > MAX_DOCUMENT_FILE_BYTES) {
+      throw new Error(
+        `${relPath} is ${Math.round(size / (1024 * 1024))}MB, over the ` +
+          `${MAX_DOCUMENT_FILE_BYTES / (1024 * 1024)}MB limit for read_document.`
+      );
+    }
     const buf = await fs.readFile(abs);
 
     switch (ext) {

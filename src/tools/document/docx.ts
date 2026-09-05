@@ -1,8 +1,14 @@
 import mammoth from "mammoth";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { validateBlocks, type DocBlock } from "./types.js";
+import { loadSafeZip } from "./zipSafety.js";
 
 export async function readDocx(buf: Buffer): Promise<string> {
+  // .docx is a zip container, and mammoth decompresses every entry with no
+  // size limit — same decompression-bomb exposure as .xlsx (see
+  // zipSafety.ts). Validate declared uncompressed size before handing the
+  // buffer to mammoth.
+  await loadSafeZip(buf);
   const result = await mammoth.extractRawText({ buffer: buf });
   return result.value;
 }

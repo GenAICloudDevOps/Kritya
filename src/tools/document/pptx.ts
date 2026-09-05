@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
-import JSZip from "jszip";
 import type { PptxSlide } from "./types.js";
+import { loadSafeZip } from "./zipSafety.js";
 
 interface PptxGenSlide {
   addText(
@@ -26,7 +26,10 @@ const PptxGenJS = require("pptxgenjs") as new () => PptxGen;
 const TEXT_RUN_RE = /<a:t>([^<]*)<\/a:t>/g;
 
 export async function readPptx(buf: Buffer): Promise<string> {
-  const zip = await JSZip.loadAsync(buf);
+  // .pptx is a zip container; same decompression-bomb exposure as .xlsx/.docx
+  // (see zipSafety.ts) — validate declared uncompressed size before reading
+  // any entry's content.
+  const zip = await loadSafeZip(buf);
   const slideFiles = Object.keys(zip.files)
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
     .sort((a, b) => slideNumber(a) - slideNumber(b));
