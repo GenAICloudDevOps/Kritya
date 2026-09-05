@@ -67,6 +67,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { planSpawn } from "./spawnWin.js";
 import { minimalEnv } from "./transport.js";
 import { OAuthSession } from "./oauth.js";
+import { pinnedDispatcherAllowLoopback, type FetchInitWithDispatcher } from "../net/urlSafety.js";
 
 export interface StdioProbeResult {
   era: Era;
@@ -212,8 +213,8 @@ export async function probeHttpEra(
     return built;
   };
 
-  const post = async (): Promise<Response> =>
-    fetch(url, {
+  const post = async (): Promise<Response> => {
+    const init: FetchInitWithDispatcher = {
       method: "POST",
       headers: await buildHeaders(),
       body: JSON.stringify({
@@ -224,7 +225,10 @@ export async function probeHttpEra(
       }),
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
-    });
+      dispatcher: pinnedDispatcherAllowLoopback,
+    };
+    return fetch(url, init);
+  };
 
   let res: Response;
   try {

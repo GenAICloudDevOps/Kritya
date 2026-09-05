@@ -1,21 +1,11 @@
 import { lookup as dnsLookup } from "node:dns/promises";
-import type { LookupAddress } from "node:dns";
-import { Agent, type Dispatcher } from "undici";
 import type { ToolDef } from "../types.js";
 import { truncateResult } from "./common.js";
-import { isPrivateOrLoopbackHost } from "../net/urlSafety.js";
-
-/**
- * Node's global `fetch` is backed by the same undici engine as the `undici`
- * package and honors this option at runtime, but the DOM-derived RequestInit
- * type it's typed against doesn't declare it. Extending locally (rather than
- * importing `fetch` straight from `undici`) keeps calls going through
- * `globalThis.fetch` — tests reassign that to mock responses, and a direct
- * `undici` import would silently bypass the mock and hit the real network.
- */
-interface FetchInitWithDispatcher extends RequestInit {
-  dispatcher?: Dispatcher;
-}
+import {
+  isPrivateOrLoopbackHost,
+  pinnedDispatcher,
+  type FetchInitWithDispatcher,
+} from "../net/urlSafety.js";
 
 /** Cap on how much text a single fetch returns, unless the caller asks for less. */
 const DEFAULT_MAX_CHARS = 20_000;
@@ -88,46 +78,6 @@ export async function hostResolvesToPrivateAddress(
 
 /** Refuse to keep chasing redirects forever. */
 const MAX_REDIRECTS = 5;
-
-/**
- * The actual SSRF boundary: a connect-time `lookup` on a dedicated undici
- * Agent, so the address that gets validated is the exact address the socket
- * connects to — one DNS answer, not two. Checking the hostname up front and
- * then letting `fetch` re-resolve it independently (the previous approach)
- * left a TOCTOU window: attacker-controlled or short-TTL DNS can answer
- * differently the second time (classic DNS rebinding). Pinning the lookup
- * closes that regardless of hop, hostname, or TTL.
- */
-const pinnedDispatcher = new Agent({
-  connect: {
-    lookup(hostname, options, callback) {
-      dnsLookup(hostname, { all: true })
-        .then((addresses: LookupAddress[]) => {
-          if (addresses.length === 0) {
-            callback(new Error(`Could not resolve ${hostname}`), []);
-            return;
-          }
-          const bad = addresses.find((a) => isPrivateOrLoopbackHost(a.address));
-          if (bad) {
-            callback(
-              new Error(
-                `Refusing to connect to ${hostname}: resolves to private/internal address ${bad.address}`
-              ),
-              []
-            );
-            return;
-          }
-          if (options.all) {
-            callback(null, addresses);
-          } else {
-            const chosen = addresses[0];
-            callback(null, chosen.address, chosen.family);
-          }
-        })
-        .catch((err: Error) => callback(err, []));
-    },
-  },
-});
 
 /**
  * Fetch `url`, following redirects manually so every hop — not just the

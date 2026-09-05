@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oauth.js";
 import { planSpawn } from "./spawnWin.js";
+import { pinnedDispatcherAllowLoopback, type FetchInitWithDispatcher } from "../net/urlSafety.js";
 
 /** Same-origin redirects we'll follow before calling it a loop. */
 const MAX_REDIRECTS = 5;
@@ -249,7 +250,7 @@ export class HttpTransport implements Transport {
     let url = this.url;
     // Bounded, because a redirect chain is otherwise a free loop.
     for (let hop = 0; ; hop++) {
-      const res = await fetch(url, {
+      const init: FetchInitWithDispatcher = {
         method: "POST",
         headers: await this.buildHeaders(),
         body,
@@ -261,7 +262,12 @@ export class HttpTransport implements Transport {
         // Cancelling has to tear the socket down too, or the request stays in
         // flight for the full timeout after the user has walked away.
         signal: withTimeout(timeoutMs, signal),
-      });
+        // DNS-pin every connection, not just the URL kritya validated once at
+        // server-config time — closes the DNS-rebinding gap between that
+        // check and the actual connect.
+        dispatcher: pinnedDispatcherAllowLoopback,
+      };
+      const res = await fetch(url, init);
       if (!isRedirect(res.status)) return res;
 
       const location = res.headers.get("location");
@@ -319,14 +325,16 @@ export class HttpTransport implements Transport {
     // Best-effort explicit session termination, per the Streamable HTTP spec.
     if (!this.sessionId) return;
     this.buildHeaders()
-      .then((headers) =>
-        fetch(this.url, {
+      .then((headers) => {
+        const init: FetchInitWithDispatcher = {
           method: "DELETE",
           headers,
           redirect: "manual",
           signal: AbortSignal.timeout(3_000),
-        })
-      )
+          dispatcher: pinnedDispatcherAllowLoopback,
+        };
+        return fetch(this.url, init);
+      })
       .catch(() => {});
   }
 }

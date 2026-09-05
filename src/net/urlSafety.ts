@@ -1,3 +1,7 @@
+import { lookup as dnsLookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
+import { Agent, type Dispatcher } from "undici";
+
 /**
  * Shared "is this host on a private/internal network" check, used by both
  * fetch_url (src/tools/fetchUrl.ts) and the MCP HTTP transport guard
@@ -190,3 +194,76 @@ export function assertSafeUrl(label: string, url: string): URL {
       `Use https:// (localhost is exempt).`
   );
 }
+
+/**
+ * The DOM-derived RequestInit type `fetch` is typed against doesn't declare
+ * undici's `dispatcher` option, even though Node's global fetch honors it at
+ * runtime (it's backed by the same undici engine). Every caller that needs
+ * to pass `pinnedDispatcher` casts through this instead of `any`.
+ */
+export interface FetchInitWithDispatcher extends RequestInit {
+  dispatcher?: Dispatcher;
+}
+
+/**
+ * The actual SSRF boundary, shared by every outbound fetch kritya's own
+ * process makes on the user's behalf (fetch_url, MCP HTTP/SSE transports,
+ * OAuth discovery/registration/token/revocation, OTLP export): a connect-time
+ * `lookup` on a dedicated undici Agent, so the address that gets validated is
+ * the exact address the socket connects to — one DNS answer, not two.
+ * Checking a hostname once up front (assertSafeUrl) and letting `fetch`
+ * re-resolve it independently leaves a TOCTOU window: attacker-controlled or
+ * short-TTL DNS can answer differently the second time (DNS rebinding).
+ * Pinning the lookup closes that regardless of hop, hostname, or TTL.
+ *
+ * `isBlockedAddress` is pluggable because the two callers disagree on
+ * loopback: fetch_url refuses it outright (assertPublicUrl), while MCP
+ * servers and OAuth endpoints are routinely run locally during development
+ * and assertSafeUrl deliberately exempts loopback there. Each dispatcher
+ * instance holds no per-host state beyond ordinary connection pooling, so
+ * it's safe to share across every call site that uses the same policy.
+ */
+function createPinnedDispatcher(isBlockedAddress: (address: string) => boolean): Agent {
+  return new Agent({
+    connect: {
+      lookup(hostname, options, callback) {
+        dnsLookup(hostname, { all: true })
+          .then((addresses: LookupAddress[]) => {
+            if (addresses.length === 0) {
+              callback(new Error(`Could not resolve ${hostname}`), []);
+              return;
+            }
+            const bad = addresses.find((a) => isBlockedAddress(a.address));
+            if (bad) {
+              callback(
+                new Error(
+                  `Refusing to connect to ${hostname}: resolves to private/internal address ${bad.address}`
+                ),
+                []
+              );
+              return;
+            }
+            if (options.all) {
+              callback(null, addresses);
+            } else {
+              const chosen = addresses[0];
+              callback(null, chosen.address, chosen.family);
+            }
+          })
+          .catch((err: Error) => callback(err, []));
+      },
+    },
+  });
+}
+
+/** For callers that never allow loopback either (fetch_url). */
+export const pinnedDispatcher = createPinnedDispatcher(isPrivateOrLoopbackHost);
+
+/**
+ * For callers that follow assertSafeUrl's policy: loopback is fine (a locally
+ * running MCP server or OAuth endpoint during development), other private/
+ * internal ranges are not.
+ */
+export const pinnedDispatcherAllowLoopback = createPinnedDispatcher(
+  (address) => !isLoopbackHost(address) && isPrivateOrLoopbackHost(address)
+);

@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import { VERSION } from "../version.js";
 import { debugLog } from "../config/debug.js";
 import { isExpired, loadAuth, saveAuth, type StoredAuth } from "./tokens.js";
-import { assertSafeUrl } from "../net/urlSafety.js";
+import {
+  assertSafeUrl,
+  pinnedDispatcherAllowLoopback,
+  type FetchInitWithDispatcher,
+} from "../net/urlSafety.js";
 
 /**
  * OAuth 2.1 for remote (Streamable HTTP) MCP servers.
@@ -75,7 +79,12 @@ function ua(): Record<string, string> {
  */
 async function getJson(url: string, timeoutMs = DISCOVERY_TIMEOUT_MS): Promise<unknown> {
   const safe = assertSafeUrl("OAuth discovery endpoint", url);
-  const res = await fetch(safe, { headers: ua(), signal: AbortSignal.timeout(timeoutMs) });
+  const init: FetchInitWithDispatcher = {
+    headers: ua(),
+    signal: AbortSignal.timeout(timeoutMs),
+    dispatcher: pinnedDispatcherAllowLoopback,
+  };
+  const res = await fetch(safe, init);
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
   return res.json();
 }
@@ -220,7 +229,7 @@ export async function registerClient(
         `register kritya manually and put the client_id in mcp-auth.json`
     );
   }
-  const res = await fetch(assertSafeUrl("OAuth registration endpoint", meta.registrationEndpoint), {
+  const registrationInit: FetchInitWithDispatcher = {
     method: "POST",
     headers: { ...ua(), "content-type": "application/json" },
     body: JSON.stringify({
@@ -233,7 +242,12 @@ export async function registerClient(
       ...(scope ? { scope } : {}),
     }),
     signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
-  });
+    dispatcher: pinnedDispatcherAllowLoopback,
+  };
+  const res = await fetch(
+    assertSafeUrl("OAuth registration endpoint", meta.registrationEndpoint),
+    registrationInit
+  );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(
@@ -291,12 +305,14 @@ async function postToken(
     const basic = Buffer.from(`${params.client_id}:${clientSecret}`).toString("base64");
     headers.authorization = `Basic ${basic}`;
   }
-  const res = await fetch(assertSafeUrl("OAuth token endpoint", tokenEndpoint), {
+  const tokenInit: FetchInitWithDispatcher = {
     method: "POST",
     headers,
     body: new URLSearchParams(params).toString(),
     signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
-  });
+    dispatcher: pinnedDispatcherAllowLoopback,
+  };
+  const res = await fetch(assertSafeUrl("OAuth token endpoint", tokenEndpoint), tokenInit);
   const doc = (await res.json().catch(() => ({}))) as TokenResponse;
   if (!res.ok || doc.error || !doc.access_token) {
     const detail = doc.error_description ?? doc.error ?? `HTTP ${res.status}`;
@@ -374,7 +390,7 @@ export async function revokeToken(auth: StoredAuth): Promise<boolean> {
   const token = auth.refreshToken ?? auth.accessToken;
   const hint = auth.refreshToken ? "refresh_token" : "access_token";
   try {
-    const res = await fetch(assertSafeUrl("OAuth revocation endpoint", auth.revocationEndpoint), {
+    const revokeInit: FetchInitWithDispatcher = {
       method: "POST",
       headers: { ...ua(), "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -383,7 +399,12 @@ export async function revokeToken(auth: StoredAuth): Promise<boolean> {
         client_id: auth.clientId,
       }).toString(),
       signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
-    });
+      dispatcher: pinnedDispatcherAllowLoopback,
+    };
+    const res = await fetch(
+      assertSafeUrl("OAuth revocation endpoint", auth.revocationEndpoint),
+      revokeInit
+    );
     return res.ok;
   } catch (err) {
     debugLog(`mcp oauth revoke ${auth.revocationEndpoint}`, err);

@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { McpAuthRequiredError, OAuthSession, parseWwwAuthenticate } from "./oauth.js";
 import { withTimeout, type JsonRpcMessage, type Transport } from "./transport.js";
 import { modernMeta, MODERN_PROTOCOL_VERSION } from "./eraDetect.js";
+import { pinnedDispatcherAllowLoopback, type FetchInitWithDispatcher } from "../net/urlSafety.js";
 
 /** Same-origin redirects we'll follow before calling it a loop. */
 const MAX_REDIRECTS = 5;
@@ -362,13 +363,17 @@ export class ModernHttpTransport implements Transport {
     const body = JSON.stringify(msg);
     let url = this.url;
     for (let hop = 0; ; hop++) {
-      const res = await fetch(url, {
+      const init: FetchInitWithDispatcher = {
         method: "POST",
         headers: await this.buildHeaders(msg),
         body,
         redirect: "manual",
         signal: withTimeout(timeoutMs, signal),
-      });
+        // DNS-pin the connection so a rebind between server-config validation
+        // and this request can't redirect it to a private address.
+        dispatcher: pinnedDispatcherAllowLoopback,
+      };
+      const res = await fetch(url, init);
       if (!isRedirect(res.status)) return res;
       const location = res.headers.get("location");
       await res.body?.cancel().catch(() => {});

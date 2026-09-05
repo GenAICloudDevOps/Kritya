@@ -1,5 +1,10 @@
 import { warnUser } from "../config/debug.js";
 import type { AttrValue, SpanExport } from "./tracer.js";
+import {
+  assertSafeUrl,
+  pinnedDispatcherAllowLoopback,
+  type FetchInitWithDispatcher,
+} from "../net/urlSafety.js";
 
 /**
  * Minimal OTLP/HTTP JSON encoding — deliberately not the @opentelemetry/*
@@ -138,11 +143,18 @@ export function postOtlp(
   headers?: Record<string, string>
 ): void {
   try {
-    fetch(`${endpoint.replace(/\/+$/, "")}${path}`, {
+    // Same DNS-pinning + private-address policy as MCP server URLs and OAuth
+    // endpoints (loopback ok, other private ranges refused): KRITYA_OTEL_ENDPOINT
+    // is user config, not attacker input, but there's no reason this one
+    // outbound path should be less protected than the others.
+    const url = assertSafeUrl("OTLP endpoint", `${endpoint.replace(/\/+$/, "")}${path}`);
+    const init: FetchInitWithDispatcher = {
       method: "POST",
       headers: { "content-type": "application/json", ...(headers ?? {}) },
       body: JSON.stringify(body),
-    }).catch((err) => warnUser(`postOtlp(${path})`, err));
+      dispatcher: pinnedDispatcherAllowLoopback,
+    };
+    fetch(url.href, init).catch((err) => warnUser(`postOtlp(${path})`, err));
   } catch (err) {
     warnUser(`postOtlp(${path})`, err);
   }
@@ -162,11 +174,14 @@ export async function postOtlpAndWait(
   headers?: Record<string, string>
 ): Promise<void> {
   try {
-    await fetch(`${endpoint.replace(/\/+$/, "")}${path}`, {
+    const url = assertSafeUrl("OTLP endpoint", `${endpoint.replace(/\/+$/, "")}${path}`);
+    const init: FetchInitWithDispatcher = {
       method: "POST",
       headers: { "content-type": "application/json", ...(headers ?? {}) },
       body: JSON.stringify(body),
-    });
+      dispatcher: pinnedDispatcherAllowLoopback,
+    };
+    await fetch(url.href, init);
   } catch (err) {
     warnUser(`postOtlpAndWait(${path})`, err);
   }
