@@ -418,9 +418,16 @@ async function main() {
   // hung collector can't stall shutdown) — cleanup()'s own sessionMeter.flush()
   // is fire-and-forget and would otherwise usually be discarded by the
   // process.exit() that follows it.
+  // SIGINT is included alongside SIGTERM/SIGHUP for the same reason: Ink's
+  // own Ctrl+C handling only fires when it can read a raw keypress from
+  // stdin (which itself falls through to "exit" → cleanup), but a SIGINT
+  // delivered directly to the process — `kill -INT`, a terminal that still
+  // sends a real signal instead of raw-mode bytes — bypasses that path
+  // entirely unless it's handled here too.
   for (const [sig, code] of [
     ["SIGTERM", 143],
     ["SIGHUP", 129],
+    ["SIGINT", 130],
   ] as const) {
     process.on(sig, () => {
       void (async () => {

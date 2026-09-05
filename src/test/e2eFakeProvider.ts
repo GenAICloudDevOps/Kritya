@@ -19,7 +19,10 @@ export interface FakeProvider {
  * ProviderClient.chatOnce() to parse -- role/content/tool_calls deltas
  * followed by a final chunk carrying usage, then "[DONE]".
  */
-export function startFakeProvider(script: ScriptedTurn[]): Promise<FakeProvider> {
+export function startFakeProvider(
+  script: ScriptedTurn[],
+  opts: { hangAfterScript?: boolean } = {}
+): Promise<FakeProvider> {
   let next = 0;
   let requests = 0;
   const server = http.createServer((req, res) => {
@@ -32,6 +35,10 @@ export function startFakeProvider(script: ScriptedTurn[]): Promise<FakeProvider>
       requests++;
       const turn = script[next++];
       if (!turn) {
+        // Some callers (e.g. a SIGINT-during-the-next-turn test) need the
+        // request in flight when the script runs out, rather than a fast
+        // failure — never responding leaves the client genuinely hanging.
+        if (opts.hangAfterScript) return;
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({ error: { message: `no more scripted turns (request #${next})` } })

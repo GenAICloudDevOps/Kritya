@@ -14,6 +14,30 @@ import type { KillSwitch } from "./killSwitch.js";
 const PREVIEW_CHARS = 4000;
 
 /**
+ * Upper bound on a raw tool-call argument payload, checked before JSON.parse.
+ * Individual tools cap their own inputs where it matters (e.g. write_file
+ * content), but this is a backstop against a malformed or adversarial model
+ * response ballooning memory before any tool-specific validation runs.
+ */
+const MAX_ARGS_JSON_CHARS = 2_000_000;
+
+/**
+ * Backstop cap on what a tool can return to the model, applied after every
+ * tool call regardless of whether that tool already truncates its own
+ * output (most do, via truncateResult/truncateTail — see src/tools/common.ts
+ * — but this catches the ones that don't, or a tool with a bug).
+ */
+const MAX_TOOL_OUTPUT_CHARS = 200_000;
+
+function truncateToolOutput(output: string): string {
+  if (output.length <= MAX_TOOL_OUTPUT_CHARS) return output;
+  return (
+    output.slice(0, MAX_TOOL_OUTPUT_CHARS) +
+    `\n... [truncated, ${output.length - MAX_TOOL_OUTPUT_CHARS} more characters]`
+  );
+}
+
+/**
  * A tool outlived its deadline and was abandoned. Carries the tool's name so
  * the message handed back to the model names what to avoid retrying blindly.
  */
@@ -151,6 +175,13 @@ export class ToolExecutor {
     const { host } = this;
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) return `Error: unknown tool "${name}"`;
+
+    if (argsJson.length > MAX_ARGS_JSON_CHARS) {
+      return (
+        `Error: tool arguments for "${name}" are too large ` +
+        `(${argsJson.length} characters, max ${MAX_ARGS_JSON_CHARS}). Use a smaller input.`
+      );
+    }
 
     let args: Record<string, unknown>;
     try {
@@ -370,6 +401,7 @@ export class ToolExecutor {
         const post = await host.hooks.runToolHooks("postToolUse", name, args, span);
         if (post.output.trim()) output += `\n[postToolUse hook]: ${post.output.trim()}`;
       }
+      output = truncateToolOutput(output);
       const failed = tool.failed?.(output) ?? false;
       logToolOutcome(failed ? "error" : "ok");
       finishSpan(failed ? "ERROR" : "OK");

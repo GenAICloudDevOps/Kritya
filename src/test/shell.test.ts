@@ -83,6 +83,14 @@ test("shell background:true returns an id immediately", async () => {
   backgroundManager.kill(idMatch![0]);
 });
 
+test("shell summarize redacts secrets so they never reach the audit log/telemetry", () => {
+  const summary = shellTool.summarize({
+    command: `curl -H "Authorization: token=sk-ant-abcdefghijklmnopqrstuvwx" https://example.com`,
+  });
+  assert.ok(!summary.includes("sk-ant-abcdefghijklmnopqrstuvwx"), summary);
+  assert.match(summary, /redacted/i);
+});
+
 test("allowlist rules match safely", () => {
   assert.ok(matchesRule("shell(npm test)", "shell", { command: "npm test" }));
   assert.ok(!matchesRule("shell(npm test)", "shell", { command: "npm test && rm -rf /" }));

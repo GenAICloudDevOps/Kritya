@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -334,6 +334,102 @@ test("load_skill followed by reading a bundled reference file works end to end",
         { name: "read_file", error: false },
       ]
     );
+  } finally {
+    await provider.close();
+  }
+});
+
+async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fs.access(filePath);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  throw new Error(`timed out waiting for ${filePath}`);
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("SIGINT during a hung model call still tears down a background process it started", async () => {
+  if (os.platform() === "win32") return; // POSIX signals/process groups only.
+
+  const workspace = await freshWorkspace();
+  const pidFile = path.join(workspace, "bg.pid");
+  const script: ScriptedTurn[] = [
+    {
+      type: "toolCall",
+      name: "shell",
+      // A plain shell one-liner, not `node -e`/`python -c` — those trip
+      // classifyDanger's "inline script" rule, which headless always denies
+      // regardless of --allow-all (see requestPermission below).
+      argsJson: JSON.stringify({
+        command: `echo $$ > ${pidFile} && sleep 1000`,
+        background: true,
+      }),
+    },
+  ];
+  // No further scripted turn: the follow-up request (after the tool result
+  // comes back) hangs, simulating "stuck mid-turn" — exactly when a SIGINT
+  // needs to still clean up whatever the turn already started.
+  const provider = await startFakeProvider(script, { hangAfterScript: true });
+  try {
+    const home = await freshHome(provider.url);
+    // Sandboxing (bwrap on Linux, sandbox-exec on macOS) runs the command in
+    // its own PID namespace, so `$$` would report a namespace-local pid this
+    // test can't check liveness of from the host. Not what this test is
+    // about — turn it off so `bg.pid` names a real, host-visible pid.
+    const configPath = path.join(home, ".kritya", "config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    config.sandboxExec = "off";
+    await fs.writeFile(configPath, JSON.stringify(config));
+    const child = spawn(
+      process.execPath,
+      [
+        distIndex,
+        workspace,
+        "--output",
+        "json",
+        "--prompt",
+        "start a background job",
+        "--allow-all",
+      ],
+      { env: { ...process.env, HOME: home, USERPROFILE: home } }
+    );
+
+    const exited = new Promise<number | null>((resolve) => {
+      child.on("exit", (code) => resolve(code));
+    });
+    try {
+      await waitForFile(pidFile);
+      const bgPid = Number((await fs.readFile(pidFile, "utf8")).trim());
+      assert.ok(isAlive(bgPid), "background process should be running before SIGINT");
+
+      child.kill("SIGINT");
+
+      const code = await Promise.race([
+        exited,
+        new Promise<number | null>((_, reject) =>
+          setTimeout(() => reject(new Error("kritya did not exit within 10s of SIGINT")), 10_000)
+        ),
+      ]);
+      assert.equal(code, 1, "SIGINT should be handled as a stopped turn, not a raw kill");
+      assert.ok(!isAlive(bgPid), "background process should be terminated once kritya exits");
+    } finally {
+      // Never leave a stuck child (or the process it started) running past a
+      // failed assertion above — this test's whole point is process cleanup.
+      if (!child.killed) child.kill("SIGKILL");
+    }
   } finally {
     await provider.close();
   }

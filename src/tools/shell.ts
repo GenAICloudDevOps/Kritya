@@ -51,7 +51,13 @@ export const shellTool: ToolDef = {
   // background command returns immediately. A second, shorter cap from the
   // agent loop would cut off commands the user explicitly asked to run longer.
   timeoutMs: 0,
-  summarize: (args) => `Run${args.background ? " in background" : ""}: ${args.command}`,
+  // The summary is what lands in the audit log and telemetry spans (see
+  // toolExecutor's `kritya.summary` attribute), so it needs the same
+  // redaction as the background-start echo below — otherwise a credential
+  // embedded in the command (e.g. a curl Authorization header) gets
+  // persisted in plain text on every ordinary foreground call.
+  summarize: (args) =>
+    `Run${args.background ? " in background" : ""}: ${redactSecrets(String(args.command ?? "")).redacted}`,
   // A command that printed nothing needs no preview to say so — but every
   // other command's output is the answer, so keep it (null = show the preview).
   resultSummary: (output) => (output.trim() === "(no output)" ? "no output" : null),

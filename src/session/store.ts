@@ -7,6 +7,59 @@ import { hardenWindowsDir } from "../config/winAcl.js";
 import { debugLog } from "../config/debug.js";
 import type { ChatMessage, TaskItem } from "../types.js";
 
+/**
+ * A session file loaded whole into memory has no upper bound otherwise —
+ * `--continue` on a pathologically large transcript (corruption, a runaway
+ * write loop, or an adversarial file dropped into the session directory)
+ * would try to allocate the entire thing at once. Above this size, only the
+ * most recent bytes are read; older history is dropped rather than the
+ * resume failing outright.
+ */
+const MAX_SESSION_FILE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Upper bound on a single message body persisted to a session file. Guards
+ * against a runaway model response or tool result ballooning the transcript
+ * — the live in-memory turn is unaffected, only what gets written to disk
+ * (and so what a future `loadFile` would have to hold in memory at once).
+ */
+const MAX_MESSAGE_CONTENT_CHARS = 2_000_000;
+
+/** Cap `message.content` in place when it's a plain string over the limit. */
+function capMessageContent(message: ChatMessage): ChatMessage {
+  if (typeof message.content !== "string" || message.content.length <= MAX_MESSAGE_CONTENT_CHARS) {
+    return message;
+  }
+  return {
+    ...message,
+    content:
+      message.content.slice(0, MAX_MESSAGE_CONTENT_CHARS) +
+      `\n... [truncated, ${message.content.length - MAX_MESSAGE_CONTENT_CHARS} more characters]`,
+  } as ChatMessage;
+}
+
+/**
+ * Read `filePath`, capped to the last `maxBytes` bytes when it exceeds that
+ * size. The byte cut can land mid-line, so the leading partial line is
+ * dropped — callers parse one JSON message per line and would otherwise
+ * choke on (or silently misparse) a truncated first line.
+ */
+export function readSessionFileCapped(filePath: string, maxBytes = MAX_SESSION_FILE_BYTES): string {
+  const size = fs.statSync(filePath).size;
+  if (size <= maxBytes) return fs.readFileSync(filePath, "utf8");
+
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    fs.readSync(fd, buffer, 0, maxBytes, size - maxBytes);
+    const text = buffer.toString("utf8");
+    const firstNewline = text.indexOf("\n");
+    return firstNewline === -1 ? "" : text.slice(firstNewline + 1);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function sessionDir(workspace: string): string {
   const hash = crypto.createHash("sha1").update(workspace).digest("hex").slice(0, 12);
   return path.join(CONFIG_DIR, "sessions", hash);
@@ -118,7 +171,10 @@ export class SessionStore {
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     hardenWindowsDir(CONFIG_DIR);
     if (seed.length) {
-      writeSessionFile(this.file, seed.map((m) => JSON.stringify(m) + "\n").join(""));
+      writeSessionFile(
+        this.file,
+        seed.map((m) => JSON.stringify(capMessageContent(m)) + "\n").join("")
+      );
     }
   }
 
@@ -135,7 +191,9 @@ export class SessionStore {
     try {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       hardenWindowsDir(CONFIG_DIR);
-      fs.appendFileSync(this.file, JSON.stringify(message) + "\n", { mode: 0o600 });
+      fs.appendFileSync(this.file, JSON.stringify(capMessageContent(message)) + "\n", {
+        mode: 0o600,
+      });
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
       debugLog(`SessionStore.append(${this.file})`, err);
@@ -158,7 +216,10 @@ export class SessionStore {
     try {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       hardenWindowsDir(CONFIG_DIR);
-      writeSessionFile(this.file, messages.map((m) => JSON.stringify(m) + "\n").join(""));
+      writeSessionFile(
+        this.file,
+        messages.map((m) => JSON.stringify(capMessageContent(m)) + "\n").join("")
+      );
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
       debugLog(`SessionStore.overwrite(${this.file})`, err);
@@ -218,7 +279,7 @@ export class SessionStore {
     const messages: ChatMessage[] = [];
     let raw: string;
     try {
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = readSessionFileCapped(filePath);
     } catch {
       return messages;
     }
@@ -237,7 +298,7 @@ export class SessionStore {
   private static readLines(filePath: string): string[] {
     let raw: string;
     try {
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = readSessionFileCapped(filePath);
     } catch {
       return [];
     }

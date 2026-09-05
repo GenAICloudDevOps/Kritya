@@ -183,6 +183,53 @@ test("isSessionFile rejects a path from a different workspace's session director
   assert.equal(SessionStore.isSessionFile(workspaceA, sessionB.file), false);
 });
 
+test("loadFile caps how much of an oversized session file it reads into memory, keeping the most recent messages", async () => {
+  await freshHome();
+  const { SessionStore, readSessionFileCapped } = await import(
+    `../session/store.js?t=${Date.now()}-cap`
+  );
+  const workspace = "/tmp/some-workspace-cap";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  for (let i = 0; i < 50; i++) {
+    store.append({ role: "user", content: `message ${i}` });
+  }
+  const [session] = SessionStore.listSessions(workspace);
+
+  // Exercise the cap directly with a tiny budget rather than growing a real
+  // file to the production-sized cap — same code path, far faster.
+  const capped = readSessionFileCapped(session.file, 200);
+  assert.ok(capped.length <= 200);
+  assert.ok(!capped.includes("message 0\n"), "the oldest messages should have been dropped");
+  assert.ok(capped.includes("message 49"), "the newest message should still be present");
+
+  // A leading partial line (cut off mid-JSON by the byte boundary) must not
+  // be handed to the JSON.parse loop as if it were a whole message.
+  for (const line of capped.split("\n").filter((l: string) => l.trim())) {
+    assert.doesNotThrow(() => JSON.parse(line), `expected valid JSON, got: ${line}`);
+  }
+});
+
+test("append caps an oversized string message body before persisting it", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-huge-msg`);
+  const workspace = "/tmp/some-workspace-huge-msg";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  const huge = "x".repeat(10_000_000);
+  store.append({ role: "assistant", content: huge });
+
+  const [session] = SessionStore.listSessions(workspace);
+  const messages = SessionStore.loadFile(session.file);
+  assert.equal(messages.length, 1);
+  assert.ok(
+    typeof messages[0].content === "string" && messages[0].content.length < huge.length,
+    "an oversized message body should have been truncated before it was written to disk"
+  );
+});
+
 test("isSessionFile rejects a symlink inside the session dir that points outside it", async () => {
   const home = await freshHome();
   const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-10`);
