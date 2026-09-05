@@ -4,6 +4,23 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.24-beta] — 2026-09-05
+
+### Added
+
+- Added privacy mode via `--privacy`, `KRITYA_PRIVACY=1`, or
+  `privacyMode: true`, disabling transcript, audit, and telemetry persistence.
+- Added warnings when session, audit-log, or telemetry data cannot be saved.
+
+### Changed
+
+- Improved status visibility for the workspace, provider, model, token usage,
+  sandbox, permission mode, persistence warnings, and privacy mode.
+- Expanded permission prompts with the working directory, exact command,
+  affected paths, sandbox state, and destructive-risk context.
+- Added clearer progress states for retries, cancellation, compaction, MCP,
+  LSP, document processing, provider fallback, and model changes.
+
 ## [0.8.23-beta] — 2026-09-05
 
 ### Security
