@@ -13,6 +13,7 @@ import { assertSafeUrl as assertSafeUrlShared } from "../net/urlSafety.js";
 import { checkToolsShape, serverFingerprint } from "../trust/mcpTrust.js";
 import { probeStdioEra, probeHttpEra } from "./eraDetect.js";
 import { ModernMcpConnection, type McpServerConnection } from "./clientModern.js";
+import { redactSecrets } from "../tools/secretScan.js";
 import {
   ModernHttpTransport,
   ReusedProcessTransport,
@@ -1189,9 +1190,12 @@ export async function connectServer(
       status.error = err instanceof Error ? err.message : String(err);
       process.stderr.write(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);
       span.setStatus("ERROR", status.error);
+      // status.error comes from the (untrusted) server process's own error
+      // output, which could echo back an env var or header value it was
+      // configured with.
       trace?.audit?.logTool({
         tool: "mcp_connect",
-        summary: `server "${name}" failed to start: ${status.error}`,
+        summary: redactSecrets(`server "${name}" failed to start: ${status.error}`).redacted,
         outcome: "error",
       });
     }

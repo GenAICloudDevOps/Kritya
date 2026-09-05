@@ -5,6 +5,7 @@ import { CONFIG_DIR, scrubbedShellEnv } from "../config/config.js";
 import { safeCompileRegex } from "../tools/common.js";
 import { NOOP_TRACER, type Span, type Tracer } from "../telemetry/tracer.js";
 import { debugLog } from "../config/debug.js";
+import { redactSecrets } from "../tools/secretScan.js";
 
 /**
  * User-configured shell hooks, from the `hooks` key of settings.json (workspace
@@ -136,7 +137,12 @@ export class HookRunner {
         parent,
         attributes: { "kritya.hook_command": def.command, "kritya.hook_tool": toolName },
       });
-      const { ok, output } = await execHook(def.command, this.workspace, env);
+      // Hook stdout/stderr is arbitrary command output — it can echo back
+      // whatever the command saw (an env var, a file's contents), so it goes
+      // through the same secret redaction as shell output before it's kept
+      // in the span or handed back to the model.
+      const { ok, output: rawOutput } = await execHook(def.command, this.workspace, env);
+      const output = redactSecrets(rawOutput).redacted;
       if (output) outputs.push(output);
       if (!ok && event === "preToolUse" && def.blocking) {
         span.setStatus("ERROR", "blocked").end();
@@ -158,7 +164,12 @@ export class HookRunner {
         attributes: { "kritya.hook_command": def.command },
       });
       // stop hooks are best-effort; failures are ignored beyond the span.
-      const { ok, output } = await execHook(def.command, this.workspace, scrubbedShellEnv());
+      const { ok, output: rawOutput } = await execHook(
+        def.command,
+        this.workspace,
+        scrubbedShellEnv()
+      );
+      const output = redactSecrets(rawOutput).redacted;
       span.setStatus(ok ? "OK" : "ERROR", ok ? undefined : output.slice(0, 500)).end();
     }
   }

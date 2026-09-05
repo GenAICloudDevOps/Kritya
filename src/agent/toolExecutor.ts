@@ -9,6 +9,7 @@ import type { Meter } from "../telemetry/metrics.js";
 import type { HookRunner } from "../hooks/hooks.js";
 import { isPlanningDocWrite, loadProjectState } from "./workflow.js";
 import type { KillSwitch } from "./killSwitch.js";
+import { redactSecrets } from "../tools/secretScan.js";
 
 /** How much tool output to hand the UI (it shows a preview and expands on toggle). */
 const PREVIEW_CHARS = 4000;
@@ -192,7 +193,13 @@ export class ToolExecutor {
 
     let summary: string;
     try {
-      summary = tool.summarize(args);
+      // A tool's own summarize() may embed raw values (a fetch_url query
+      // string, a search query, arbitrary text) that happen to contain a
+      // secret the model saw earlier in the conversation. This is the one
+      // chokepoint every tool's summary passes through before it's written
+      // to the audit log and telemetry, so redact here rather than trusting
+      // every individual tool to have already done it.
+      summary = redactSecrets(tool.summarize(args)).redacted;
     } catch {
       summary = name;
     }

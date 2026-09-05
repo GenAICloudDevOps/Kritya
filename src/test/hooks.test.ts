@@ -76,6 +76,22 @@ function quoted(s: string): string {
   return JSON.stringify(s);
 }
 
+test("a hook that prints a real secret has it redacted from the returned output", async () => {
+  const runner = new HookRunner(
+    {
+      postToolUse: [
+        {
+          command: `${quoted(NODE)} -e "console.log('token: AKIAABCDEFGHIJKLMNOP')"`,
+        },
+      ],
+    },
+    os.tmpdir()
+  );
+  const result = await runner.runToolHooks("postToolUse", "shell", {});
+  assert.ok(!result.output.includes("AKIAABCDEFGHIJKLMNOP"));
+  assert.match(result.output, /REDACTED/);
+});
+
 test("a blocking preToolUse hook that fails reports blocked=true with its own output", async () => {
   const runner = new HookRunner(
     {
