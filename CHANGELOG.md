@@ -4,6 +4,52 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.23-beta] — 2026-09-05
+
+### Security
+
+- Redacted secrets in shell command summaries written to the audit
+  log/telemetry, matching the existing background-start redaction, so a
+  credential embedded in a command (e.g. a `curl` `Authorization` header)
+  no longer persists in plain text. Also capped session file reads,
+  tool-call arguments, tool output, and persisted message bodies, which
+  were previously read into memory with no upper bound.
+- Added a SIGINT handler alongside SIGTERM/SIGHUP so a signal delivered
+  directly to the process (rather than via Ink's raw-mode Ctrl+C
+  interception) can no longer orphan background shells and MCP servers.
+- Failed session, audit-log, and telemetry writes now surface a one-line
+  warning to stderr via `warnUser()` (deduped per context) instead of
+  being silently swallowed by the debug-only logger, so a full disk,
+  permissions error, or broken audit chain is no longer unnoticed.
+- `config.json` and a workspace's `.mcp.json` are now validated against
+  file size, JSON nesting depth, MCP server count, and individual
+  command/arg/env/header size limits before parsing; oversized config is
+  refused and oversized individual MCP server fields are dropped with a
+  warning rather than silently accepted or left to balloon memory.
+- Secret redaction now also covers a tool's own result summary, hook
+  stdout/stderr, and MCP connection failure messages, closing gaps where
+  attacker- or environment-controlled text (e.g. a `fetch_url` query
+  string) could flow into the audit log or telemetry unscanned.
+- Extended DNS-pinned SSRF protection, previously only applied to
+  `fetch_url`, to every outbound request path: MCP's HTTP/SSE transports,
+  the era-detection probe, all OAuth endpoint fetches, and the OTLP
+  exporter (which previously had no SSRF check at all), closing a
+  DNS-rebinding window between a one-time URL check and the actual
+  connection.
+- Bounded resource use when parsing documents and notebooks: `.docx` and
+  `.pptx` (zip containers like `.xlsx`) now share the same
+  declared-uncompressed-size check that closed the `.xlsx`
+  decompression-bomb exposure (CVE-2026-78206); PDF text extraction now
+  caps page count and accumulated text instead of running unbounded; and
+  `read_document`/`read_notebook` now cap raw file size (200MB documents,
+  50MB notebooks) before format-specific parsing begins.
+- Closed two evasions in destructive-command detection: `$IFS`/`${IFS}`
+  used in place of a literal space (e.g. `rm${IFS}-rf${IFS}/`), and
+  PowerShell's `-EncodedCommand` base64 obfuscation, which had no
+  coverage even though the POSIX `base64 -d` equivalent was already
+  caught. Also extended the interpreter `-c`/`-e` check to
+  bash/sh/zsh/dash/ksh's `-c` flag.
+
 ## [0.8.22-beta] — 2026-09-04
 
 ### Security
