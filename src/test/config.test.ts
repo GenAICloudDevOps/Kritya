@@ -80,3 +80,58 @@ test("saveConfig writes atomically: round-trips, forces 0o600, and leaves no str
   const dirFiles = await fs.readdir(path.dirname(CONFIG_FILE));
   assert.ok(!dirFiles.some((f) => f.includes(".tmp-")));
 });
+
+test("loadConfig refuses an oversized config.json instead of parsing it", async () => {
+  await freshHome();
+  const { CONFIG_FILE } = await import(`../config/config.js?t=${Date.now()}`);
+  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
+  // Comfortably past MAX_CONFIG_JSON_BYTES (5MB), but shaped as valid JSON.
+  const huge = `{"apiKey": "${"x".repeat(6 * 1024 * 1024)}"}`;
+  await fs.writeFile(CONFIG_FILE, huge);
+
+  const { loadConfig } = await import(`../config/config.js?t=${Date.now()}`);
+  assert.deepEqual(loadConfig(), {});
+});
+
+test("loadConfig refuses pathologically nested config.json", async () => {
+  await freshHome();
+  const { CONFIG_FILE } = await import(`../config/config.js?t=${Date.now()}`);
+  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
+  const deep = "[".repeat(200) + "]".repeat(200);
+  await fs.writeFile(CONFIG_FILE, deep);
+
+  const { loadConfig } = await import(`../config/config.js?t=${Date.now()}`);
+  assert.deepEqual(loadConfig(), {});
+});
+
+test("loadConfig caps mcpServers count and drops servers with oversized fields", async () => {
+  await freshHome();
+  const { saveConfig, loadConfig } = await import(`../config/config.js?t=${Date.now()}`);
+
+  const mcpServers: Record<string, { command: string }> = {};
+  for (let i = 0; i < 60; i++) mcpServers[`server-${i}`] = { command: "echo hi" };
+  mcpServers["too-long"] = { command: "x".repeat(5000) };
+  saveConfig({ mcpServers });
+
+  const loaded = loadConfig();
+  assert.ok(Object.keys(loaded.mcpServers ?? {}).length <= 50);
+  assert.equal(loaded.mcpServers?.["too-long"], undefined);
+});
+
+test("loadConfig drops mcpServers env/header entries over the size limit", async () => {
+  await freshHome();
+  const { saveConfig, loadConfig } = await import(`../config/config.js?t=${Date.now()}`);
+
+  saveConfig({
+    mcpServers: {
+      demo: {
+        command: "echo hi",
+        env: { OK: "fine", TOO_BIG: "y".repeat(20000) },
+      },
+    },
+  });
+
+  const loaded = loadConfig();
+  assert.equal(loaded.mcpServers?.demo?.env?.OK, "fine");
+  assert.equal(loaded.mcpServers?.demo?.env?.TOO_BIG, undefined);
+});

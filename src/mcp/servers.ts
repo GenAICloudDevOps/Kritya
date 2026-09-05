@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { McpServerConfig } from "../config/config.js";
+import { sanitizeMcpServersRecord } from "../config/config.js";
+import { assertJsonWithinLimits } from "../config/jsonSafety.js";
+import { warnUser } from "../config/debug.js";
 
 /**
  * Where MCP server definitions come from and how they combine:
@@ -87,10 +90,19 @@ function isServerConfig(v: unknown): v is McpServerConfig {
 export function loadProjectMcpServers(
   workspace: string
 ): Record<string, McpServerConfig> | undefined {
+  const file = path.join(workspace, ".mcp.json");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
   let parsed: { mcpServers?: Record<string, unknown> };
   try {
-    parsed = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-  } catch {
+    assertJsonWithinLimits(raw, ".mcp.json");
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    warnUser(`loadProjectMcpServers(${file})`, err);
     return undefined;
   }
   if (!parsed?.mcpServers || typeof parsed.mcpServers !== "object") return undefined;
@@ -98,7 +110,8 @@ export function loadProjectMcpServers(
   for (const [name, cfg] of Object.entries(parsed.mcpServers)) {
     if (isServerConfig(cfg)) servers[name] = cfg;
   }
-  return Object.keys(servers).length ? servers : undefined;
+  if (!Object.keys(servers).length) return undefined;
+  return sanitizeMcpServersRecord(servers, ".mcp.json mcpServers");
 }
 
 /**

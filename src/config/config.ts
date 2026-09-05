@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { hardenWindowsDir } from "./winAcl.js";
-import { debugLog } from "./debug.js";
+import { debugLog, warnUser } from "./debug.js";
 import { writeFileAtomicSync } from "../atomicWrite.js";
+import { assertJsonWithinLimits } from "./jsonSafety.js";
 
 /** A named, OpenAI-compatible model provider. */
 export interface ProviderConfig {
@@ -159,6 +160,133 @@ export interface McpToolFilter {
   deny?: string[];
 }
 
+/**
+ * Bounds on `mcpServers` entries (from config.json or a workspace's
+ * .mcp.json) — without these, an oversized or malicious server list could
+ * balloon memory, or a single field (a giant command string, thousands of
+ * headers) could be used to abuse whatever eventually consumes it (a shell
+ * spawn, an HTTP client). Real MCP server configs are tiny; these limits are
+ * generous multiples of anything legitimate.
+ */
+const MAX_MCP_SERVERS = 50;
+const MAX_MCP_COMMAND_LENGTH = 4096;
+const MAX_MCP_ARGS = 200;
+const MAX_MCP_ARG_LENGTH = 4096;
+const MAX_MCP_URL_LENGTH = 8192;
+const MAX_MCP_CWD_LENGTH = 4096;
+const MAX_MCP_MAP_ENTRIES = 200;
+const MAX_MCP_MAP_VALUE_LENGTH = 16384;
+
+function sanitizeMcpStringMap(
+  rec: Record<string, string> | undefined,
+  label: string
+): Record<string, string> | undefined {
+  if (!rec) return undefined;
+  const entries = Object.entries(rec);
+  const out: Record<string, string> = {};
+  let kept = 0;
+  for (const [k, v] of entries) {
+    if (kept >= MAX_MCP_MAP_ENTRIES) {
+      warnUser(label, new Error(`more than ${MAX_MCP_MAP_ENTRIES} entries; extra entries dropped`));
+      break;
+    }
+    if (typeof v !== "string" || v.length > MAX_MCP_MAP_VALUE_LENGTH) {
+      warnUser(
+        label,
+        new Error(`entry "${k}" exceeds ${MAX_MCP_MAP_VALUE_LENGTH} char limit; dropped`)
+      );
+      continue;
+    }
+    out[k] = v;
+    kept++;
+  }
+  return out;
+}
+
+/** Validates one server entry against the bounds above; returns null to drop the whole server. */
+export function sanitizeMcpServerConfig(
+  name: string,
+  cfg: McpServerConfig
+): McpServerConfig | null {
+  if (typeof cfg.command === "string" && cfg.command.length > MAX_MCP_COMMAND_LENGTH) {
+    warnUser(
+      `mcpServers.${name}.command`,
+      new Error(`exceeds ${MAX_MCP_COMMAND_LENGTH} char limit; server dropped`)
+    );
+    return null;
+  }
+  if (typeof cfg.url === "string" && cfg.url.length > MAX_MCP_URL_LENGTH) {
+    warnUser(
+      `mcpServers.${name}.url`,
+      new Error(`exceeds ${MAX_MCP_URL_LENGTH} char limit; server dropped`)
+    );
+    return null;
+  }
+  if (typeof cfg.cwd === "string" && cfg.cwd.length > MAX_MCP_CWD_LENGTH) {
+    warnUser(
+      `mcpServers.${name}.cwd`,
+      new Error(`exceeds ${MAX_MCP_CWD_LENGTH} char limit; server dropped`)
+    );
+    return null;
+  }
+  let args = cfg.args;
+  if (args) {
+    if (args.length > MAX_MCP_ARGS) {
+      warnUser(
+        `mcpServers.${name}.args`,
+        new Error(`${args.length} args exceeds limit of ${MAX_MCP_ARGS}; extra args dropped`)
+      );
+      args = args.slice(0, MAX_MCP_ARGS);
+    }
+    if (args.some((a) => typeof a !== "string" || a.length > MAX_MCP_ARG_LENGTH)) {
+      warnUser(
+        `mcpServers.${name}.args`,
+        new Error(`an argument exceeds ${MAX_MCP_ARG_LENGTH} char limit; server dropped`)
+      );
+      return null;
+    }
+  }
+  return {
+    ...cfg,
+    args,
+    env: sanitizeMcpStringMap(cfg.env, `mcpServers.${name}.env`),
+    headers: sanitizeMcpStringMap(cfg.headers, `mcpServers.${name}.headers`),
+  };
+}
+
+/** Caps server count and validates each entry; oversized/malformed servers are dropped, not truncated. */
+export function sanitizeMcpServersRecord(
+  servers: Record<string, McpServerConfig> | undefined,
+  label = "mcpServers"
+): Record<string, McpServerConfig> | undefined {
+  if (!servers) return undefined;
+  const names = Object.keys(servers);
+  if (names.length > MAX_MCP_SERVERS) {
+    warnUser(
+      label,
+      new Error(
+        `${names.length} servers exceeds limit of ${MAX_MCP_SERVERS}; extra servers dropped`
+      )
+    );
+  }
+  const out: Record<string, McpServerConfig> = {};
+  let kept = 0;
+  for (const name of names) {
+    if (kept >= MAX_MCP_SERVERS) break;
+    const sanitized = sanitizeMcpServerConfig(name, servers[name]);
+    if (sanitized) {
+      out[name] = sanitized;
+      kept++;
+    }
+  }
+  return out;
+}
+
+function sanitizeCliConfig(config: CliConfig): CliConfig {
+  if (!config.mcpServers) return config;
+  return { ...config, mcpServers: sanitizeMcpServersRecord(config.mcpServers) };
+}
+
 export const CONFIG_DIR = path.join(os.homedir(), ".kritya");
 export const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
@@ -275,13 +403,21 @@ export function listProviders(config: CliConfig): ProviderStatus[] {
 }
 
 export function loadConfig(): CliConfig {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, "utf8");
-    return JSON.parse(raw) as CliConfig;
+    raw = fs.readFileSync(CONFIG_FILE, "utf8");
   } catch (err) {
-    // A missing file is normal on first run; a malformed one is worth being
-    // able to see when someone reports "my config isn't taking effect".
+    // A missing file is normal on first run.
     debugLog(`loadConfig(${CONFIG_FILE})`, err);
+    return {};
+  }
+  try {
+    assertJsonWithinLimits(raw, "config.json");
+    return sanitizeCliConfig(JSON.parse(raw) as CliConfig);
+  } catch (err) {
+    // Malformed or oversized — worth being able to see when someone reports
+    // "my config isn't taking effect".
+    warnUser(`loadConfig(${CONFIG_FILE})`, err);
     return {};
   }
 }
