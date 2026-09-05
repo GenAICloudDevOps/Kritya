@@ -3,11 +3,37 @@
  * matches, kritya forces a permission prompt with a warning even if the
  * command would otherwise be covered by an allowlist rule or an "always allow"
  * choice — so a blanket `shell(*)` allow can't silently run `rm -rf /`.
+ *
+ * This is pattern matching over command text, not a shell parser — it can
+ * only see danger words that actually appear in the string. It normalizes
+ * one specific evasion ($IFS in place of a space) and flags several ways of
+ * running an opaque payload (eval, base64 -d, an interpreter's -c/-e,
+ * PowerShell's -EncodedCommand), but a command that reassembles a dangerous
+ * word at runtime without those (e.g. `a=r;b=m;$a$b -rf /`, or piping
+ * through `tr`/`rev`) has no literal substring left to match and will not be
+ * caught. Sandboxing (src/shell/sandbox.ts) is the actual backstop for that
+ * gap, not a replacement for closing it here.
  */
 
 interface DangerPattern {
   re: RegExp;
   label: string;
+}
+
+/**
+ * `$IFS`/`${IFS}` in place of a literal space is a well-known filter-bypass
+ * trick (`rm${IFS}-rf${IFS}/` runs exactly like `rm -rf /`, but every
+ * pattern below that requires `\s+` between a command and its arguments
+ * never sees a whitespace character to match). Since this is purely a
+ * word-separator substitution — nothing about how the shell actually runs
+ * the command — normalizing it to a literal space before pattern matching
+ * catches the same commands the patterns already catch, without changing
+ * what any of them mean.
+ */
+const IFS_RE = /\$\{IFS[^}]*\}|\$IFS\b/g;
+
+function normalizeForDangerCheck(command: string): string {
+  return command.replace(IFS_RE, " ");
 }
 
 const PATTERNS: DangerPattern[] = [
@@ -91,12 +117,28 @@ const PATTERNS: DangerPattern[] = [
     re: /\b(python3?|node|ruby|perl)\b\s+(-c|-e)\b/i,
     label: "running an inline script (bypasses command-text inspection)",
   },
+  {
+    // Shells' inline-command flag is -c specifically; unlike the
+    // interpreters above, -e means something else for a shell (errexit) and
+    // would false-positive on an ordinary `bash -e build.sh`.
+    re: /\b(bash|sh|zsh|dash|ksh)\b\s+-c\b/i,
+    label: "running an inline shell command (bypasses command-text inspection)",
+  },
+  {
+    // PowerShell accepts any unambiguous prefix of -EncodedCommand (-enc,
+    // -encodedcommand, ...); "en" is enough to disambiguate it from every
+    // other powershell.exe flag (-ExecutionPolicy starts "ex", not "en").
+    // This is the same base64-obfuscation evasion the generic `base64 -d`
+    // pattern above catches for POSIX shells, just spelled differently.
+    re: /\b(powershell(\.exe)?|pwsh)\b.*\s-en[a-z]*\b/i,
+    label: "running a base64-encoded PowerShell command (-EncodedCommand)",
+  },
   { re: /\bexec\s+\d*[<>]/i, label: "redirecting a shell's own file descriptors (exec)" },
 ];
 
 /** Returns a human-readable danger label if the command is destructive, else null. */
 export function classifyDanger(command: string): string | null {
-  const cmd = command.trim();
+  const cmd = normalizeForDangerCheck(command.trim());
   for (const { re, label } of PATTERNS) {
     if (re.test(cmd)) return label;
   }
