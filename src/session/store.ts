@@ -4,7 +4,7 @@ import path from "node:path";
 import { writeFileAtomicSync } from "../atomicWrite.js";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
-import { debugLog } from "../config/debug.js";
+import { debugLog, warnUser } from "../config/debug.js";
 import type { ChatMessage, TaskItem } from "../types.js";
 
 /**
@@ -141,7 +141,7 @@ export class SessionStore {
       }
       writeSessionFile(this.tasksFilePath(), JSON.stringify(tasks));
     } catch (err) {
-      debugLog(`SessionStore.saveTasks(${this.tasksFilePath()})`, err);
+      warnUser(`SessionStore.saveTasks(${this.tasksFilePath()})`, err);
     }
   }
 
@@ -196,7 +196,7 @@ export class SessionStore {
       });
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
-      debugLog(`SessionStore.append(${this.file})`, err);
+      warnUser(`SessionStore.append(${this.file})`, err);
     }
   }
 
@@ -222,7 +222,7 @@ export class SessionStore {
       );
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
-      debugLog(`SessionStore.overwrite(${this.file})`, err);
+      warnUser(`SessionStore.overwrite(${this.file})`, err);
     }
   }
 

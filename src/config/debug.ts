@@ -16,3 +16,34 @@ export function debugLog(context: string, err: unknown): void {
     // stderr itself failing isn't something debug logging can do anything about
   }
 }
+
+/**
+ * For best-effort persistence that a user actually needs to know failed
+ * (session/audit/telemetry writes) — unlike debugLog, this always prints a
+ * short one-line warning to stderr, not just under KRITYA_DEBUG. The full
+ * stack trace still only shows up under KRITYA_DEBUG, via the debugLog call
+ * this makes internally.
+ */
+/**
+ * Contexts already warned about via warnUser() this process. Some of these
+ * (a telemetry sink retried every span, an append() called every turn) would
+ * otherwise print the same warning on every single failure — once per
+ * context is enough to tell the user something is wrong without flooding
+ * the terminal.
+ */
+const warnedContexts = new Set<string>();
+
+export function warnUser(context: string, err: unknown): void {
+  if (warnedContexts.has(context)) {
+    debugLog(context, err);
+    return;
+  }
+  warnedContexts.add(context);
+  const message = err instanceof Error ? err.message : String(err);
+  try {
+    process.stderr.write(`[kritya] warning: ${context} failed: ${message}\n`);
+  } catch {
+    // stderr itself failing isn't something this can do anything about
+  }
+  debugLog(context, err);
+}

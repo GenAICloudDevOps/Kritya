@@ -1,4 +1,4 @@
-import { debugLog } from "../config/debug.js";
+import { warnUser } from "../config/debug.js";
 import type { AttrValue, SpanExport } from "./tracer.js";
 
 /**
@@ -142,9 +142,9 @@ export function postOtlp(
       method: "POST",
       headers: { "content-type": "application/json", ...(headers ?? {}) },
       body: JSON.stringify(body),
-    }).catch((err) => debugLog(`postOtlp(${path})`, err));
+    }).catch((err) => warnUser(`postOtlp(${path})`, err));
   } catch (err) {
-    debugLog(`postOtlp(${path})`, err);
+    warnUser(`postOtlp(${path})`, err);
   }
 }
 
@@ -168,6 +168,6 @@ export async function postOtlpAndWait(
       body: JSON.stringify(body),
     });
   } catch (err) {
-    debugLog(`postOtlpAndWait(${path})`, err);
+    warnUser(`postOtlpAndWait(${path})`, err);
   }
 }
