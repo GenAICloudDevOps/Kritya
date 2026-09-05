@@ -310,6 +310,20 @@ test("a tool call in flight is tracked and cleared when it ends", async () => {
   assert.equal(toolItem.resultSummary, "wrote foo.txt");
 });
 
+test("wires agent.onCompactStart/onCompactEnd to a live 'compacting' activity", async () => {
+  const agent = fakeAgent();
+  const { api, params } = await setup({ agent });
+  await tick();
+
+  assert.equal(api.activity, null);
+  params.agent.onCompactStart?.();
+  await tick();
+  assert.equal(api.activity, "compacting context…");
+  params.agent.onCompactEnd?.();
+  await tick();
+  assert.equal(api.activity, null);
+});
+
 test("onToolProgress updates the matching inFlight entry's status", async () => {
   const agent = fakeAgent();
   let capturedInFlight: { id: string; name: string; summary: string; status?: string }[] = [];

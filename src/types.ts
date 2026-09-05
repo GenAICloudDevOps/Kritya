@@ -167,6 +167,8 @@ export interface AgentHandlers {
   /** Fires while a tool is running that supports progress updates (currently
    *  only MCP Tasks-backed calls) — zero or more times before onToolEnd. */
   onToolProgress?(id: string, text: string): void;
+  /** Called when a router falls back to a direct provider/model. */
+  onFallback?(from: string, to: string): void;
   onToolEnd(
     id: string,
     name: string,

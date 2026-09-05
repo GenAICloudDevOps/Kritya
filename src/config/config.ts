@@ -106,6 +106,15 @@ export interface CliConfig {
    * AI-assisted. Default true; set false to opt out.
    */
   commitAttribution?: boolean;
+  /** When true, do not persist session transcripts, audit logs, or telemetry. */
+  privacyMode?: boolean;
+}
+
+/** KRITYA_PRIVACY wins over config.json; truthy values enable privacy mode. */
+export function privacyModeFor(config: CliConfig): boolean {
+  const value = process.env.KRITYA_PRIVACY;
+  if (value !== undefined) return /^(1|true|yes|on)$/i.test(value.trim());
+  return config.privacyMode === true;
 }
 
 /**

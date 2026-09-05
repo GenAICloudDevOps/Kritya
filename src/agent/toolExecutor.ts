@@ -2,7 +2,11 @@ import type { ParsedToolCall } from "../provider/client.js";
 import type { PermissionManager } from "../permissions/permissions.js";
 import type { AgentHandlers, ToolContext, ToolDef } from "../types.js";
 import { classifyDanger } from "../permissions/danger.js";
-import { acknowledgeUnsandboxedFallback, sandboxFallbackWarning } from "../shell/sandbox.js";
+import {
+  acknowledgeUnsandboxedFallback,
+  sandboxAvailable,
+  sandboxFallbackWarning,
+} from "../shell/sandbox.js";
 import type { AuditLog, PermissionSource, ToolOutcome } from "../audit/audit.js";
 import type { Span, Tracer } from "../telemetry/tracer.js";
 import type { Meter } from "../telemetry/metrics.js";
@@ -334,9 +338,25 @@ export class ToolExecutor {
           diff = undefined;
         }
       }
+      const permissionDetails = [
+        summary,
+        `workspace: ${host.ctx.workspace}`,
+        typeof args.path === "string" ? `affected path: ${args.path}` : undefined,
+        tool.name === "shell"
+          ? `command: ${shellCommand}\nsandbox: ${
+              host.ctx.sandboxMode === "off"
+                ? "off"
+                : sandboxAvailable()
+                  ? `${host.ctx.sandboxMode ?? "auto"} (available)`
+                  : `${host.ctx.sandboxMode ?? "auto"} (unavailable; unsandboxed)`
+            }`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n");
       const decision = await handlers.requestPermission(
         tool.name,
-        summary,
+        permissionDetails,
         diff,
         danger ?? undefined
       );

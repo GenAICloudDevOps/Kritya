@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
-import { debugLog, warnUser } from "../config/debug.js";
+import { debugLog, warnPersistenceFailure } from "../config/debug.js";
 import { VERSION } from "../version.js";
 import { encodeSpan, postOtlp, type OtlpResource } from "./otlp.js";
 
@@ -219,7 +219,7 @@ function fileSink(file: string): Sink {
       fs.appendFileSync(file, JSON.stringify(span) + "\n", { mode: 0o600 });
     } catch (err) {
       // best-effort: telemetry must never crash a turn
-      warnUser(`tracer.fileSink(${file})`, err);
+      warnPersistenceFailure(`tracer.fileSink(${file})`, err);
     }
   };
 }

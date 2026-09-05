@@ -91,6 +91,14 @@ export class Agent {
   audit?: AuditLog;
   /** OpenTelemetry-shaped tracer for the tool loop. No-op unless enabled. */
   tracer: Tracer = NOOP_TRACER;
+  /**
+   * Fired around compact() so the UI can show a live "compacting…" indicator
+   * for the summarization call, which otherwise runs silently until it
+   * either finishes or fails (see onToolEnd's "compact" record for the
+   * after-the-fact summary).
+   */
+  onCompactStart?: () => void;
+  onCompactEnd?: () => void;
   /** OTLP metrics recorder for tool/turn durations. No-op unless enabled. */
   meter: Meter = NOOP_METER;
   /**
@@ -290,6 +298,7 @@ export class Agent {
     this.kill.assertLive();
     const compactSpan = this.tracer.startSpan("agent.compact", { parent: this.currentTurnSpan });
     const tokensBefore = this.lastPromptTokens;
+    this.onCompactStart?.();
     try {
       const note = await this.doCompact(signal, compactSpan);
       compactSpan.setStatus("OK");
@@ -301,6 +310,7 @@ export class Agent {
       compactSpan.setAttribute("kritya.prompt_tokens_before", tokensBefore);
       compactSpan.setAttribute("kritya.prompt_tokens_after", this.lastPromptTokens);
       compactSpan.end();
+      this.onCompactEnd?.();
     }
   }
 
@@ -505,6 +515,7 @@ export class Agent {
             onTextDelta: handlers.onTextDelta,
             onReasoningDelta: handlers.onReasoningDelta,
             onRetry: handlers.onRetry,
+            onFallback: handlers.onFallback,
           },
           signal,
           { tracer: this.tracer, parent: this.currentTurnSpan }

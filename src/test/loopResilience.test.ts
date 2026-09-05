@@ -153,6 +153,39 @@ test("compact still propagates cancellation rather than degrading", async () => 
   await assert.rejects(() => agent.compact(controller.signal), /Aborted/);
 });
 
+test("compact fires onCompactStart before onCompactEnd so the UI can show a live indicator", async () => {
+  const events: string[] = [];
+  const agent = makeAgent(
+    fakeClient(async (messages) =>
+      isSummarizationRequest(messages) ? reply("a summary") : reply("unused")
+    ),
+    longHistory()
+  );
+  agent.onCompactStart = () => events.push("start");
+  agent.onCompactEnd = () => events.push("end");
+
+  await agent.compact();
+
+  assert.deepEqual(events, ["start", "end"]);
+});
+
+test("compact fires onCompactEnd even when summarization fails", async () => {
+  const events: string[] = [];
+  const agent = makeAgent(
+    fakeClient(async () => {
+      throw Object.assign(new Error("rate limited"), { status: 429 });
+    }),
+    longHistory()
+  );
+  agent.onCompactStart = () => events.push("start");
+  agent.onCompactEnd = () => events.push("end");
+
+  // Degrades to a summary-free record rather than throwing (see the test above).
+  await agent.compact();
+
+  assert.deepEqual(events, ["start", "end"]);
+});
+
 test("a turn compacts before sending when the prompt is predicted to overflow", async () => {
   const seen: number[] = [];
   const agent = makeAgent(

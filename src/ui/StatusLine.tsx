@@ -1,5 +1,4 @@
 import { Text } from "ink";
-import path from "node:path";
 import type { ProjectState } from "../agent/workflow.js";
 import type { TaskItem, Usage } from "../types.js";
 
@@ -10,6 +9,7 @@ export interface StatusLineProps {
   planMode: boolean;
   acceptEdits: boolean;
   autoApprovedCount: number;
+  provider: string;
   model: string;
   workflow: ProjectState | null;
   branch: string | null;
@@ -24,6 +24,8 @@ export interface StatusLineProps {
   verbose: boolean;
   workspace: string;
   sandboxActive: boolean;
+  persistenceWarningCount: number;
+  privacyMode: boolean;
 }
 
 /** The single dim status bar pinned to the bottom of the screen. */
@@ -34,6 +36,7 @@ export function StatusLine({
   planMode,
   acceptEdits,
   autoApprovedCount,
+  provider,
   model,
   workflow,
   branch,
@@ -48,6 +51,8 @@ export function StatusLine({
   verbose,
   workspace,
   sandboxActive,
+  persistenceWarningCount,
+  privacyMode,
 }: StatusLineProps) {
   return (
     <Text dimColor>
@@ -58,16 +63,18 @@ export function StatusLine({
       ) : (
         ""
       )}
-      {dryRunMode ? (
-        <Text color="cyan">dry-run · </Text>
-      ) : planMode ? (
-        <Text color="cyan">plan · </Text>
-      ) : acceptEdits ? (
-        <Text color="green">accept edits ({autoApprovedCount} auto-approved) · </Text>
-      ) : (
-        ""
-      )}
-      {model}
+      <Text color={dryRunMode || planMode ? "cyan" : acceptEdits ? "green" : undefined}>
+        mode:{" "}
+        {dryRunMode
+          ? "dry-run"
+          : planMode
+            ? "plan"
+            : acceptEdits
+              ? `accept-edits (${autoApprovedCount} auto)`
+              : "default"}
+        {" · "}
+      </Text>
+      {provider}/{model}
       <Text color={sandboxActive ? "green" : "red"}>
         {" "}
         · {sandboxActive ? "🔒 sandbox:active" : "🔓 sandbox:inactive"}
@@ -95,13 +102,19 @@ export function StatusLine({
       )}
       {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
       {totalUsage.estimated ? "~" : ""}
-      {totalUsage.promptTokens.toLocaleString()} in
+      tokens: {totalUsage.promptTokens.toLocaleString()} in
       {(totalUsage.cachedPromptTokens ?? 0) > 0
         ? ` (${Math.round(((totalUsage.cachedPromptTokens ?? 0) / totalUsage.promptTokens) * 100)}% cached)`
         : ""}{" "}
       / {totalUsage.completionTokens.toLocaleString()} out
       {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""}
-      {verbose ? " · verbose" : ""} · {path.basename(workspace)}
+      {persistenceWarningCount > 0 ? (
+        <Text color="yellow"> · ⚠ persistence warnings: {persistenceWarningCount}</Text>
+      ) : (
+        ""
+      )}
+      {privacyMode ? <Text color="cyan"> · privacy:on</Text> : ""}
+      {verbose ? " · verbose" : ""} · workspace: {workspace}
     </Text>
   );
 }

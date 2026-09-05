@@ -32,6 +32,8 @@ export interface StreamCallbacks {
   onReasoningDelta(delta: string): void;
   /** Called before a retry after a transient provider error. */
   onRetry?(attempt: number, status?: number): void;
+  /** Called when a router falls back to a direct provider/model. */
+  onFallback?(from: string, to: string): void;
 }
 
 /** Retry transient provider failures (429 / 5xx / network) with backoff. */

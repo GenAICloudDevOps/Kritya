@@ -1,4 +1,5 @@
 import { VERSION } from "../version.js";
+import { warnPersistenceFailure } from "../config/debug.js";
 import type { AttrValue } from "./tracer.js";
 import type { OtelMode } from "./tracer.js";
 import {
@@ -172,8 +173,10 @@ class RealMeter implements Meter {
       const body = this.snapshotBody();
       if (body === undefined) return;
       postOtlp(this.endpoint, "/v1/metrics", body, this.headers);
-    } catch {
-      // best-effort: metrics must never crash the process
+    } catch (err) {
+      // best-effort: metrics must never crash the process, but a dropped
+      // export should still be visible to the user.
+      warnPersistenceFailure("metrics.flush", err);
     }
   }
 
@@ -182,8 +185,8 @@ class RealMeter implements Meter {
       const body = this.snapshotBody();
       if (body === undefined) return;
       await postOtlpAndWait(this.endpoint, "/v1/metrics", body, this.headers);
-    } catch {
-      // best-effort: metrics must never crash the process
+    } catch (err) {
+      warnPersistenceFailure("metrics.flushAndWait", err);
     }
   }
 

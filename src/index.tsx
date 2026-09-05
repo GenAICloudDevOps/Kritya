@@ -8,6 +8,7 @@ import {
   legacyGlobalModel,
   loadConfig,
   loadDotEnv,
+  privacyModeFor,
   resolveProvider,
 } from "./config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
@@ -89,6 +90,7 @@ Headless / CI mode (no terminal UI, exits with 0 on success / 1 on failure):
                       since CI often checks out untrusted branches/PRs)
   --timeout <seconds> hard wall-clock cap for the whole run (default 1800)
   --non-interactive   accepted for compatibility; implied by --prompt
+  --privacy           do not persist transcripts, audit logs, or telemetry
 
 Inspect the local audit log:
   kritya audit --list | --verify [file] | --show [file]
@@ -118,6 +120,7 @@ function parseArgs(argv: string[]) {
     allowAll: false,
     trust: false,
     timeoutSeconds: 1800,
+    privacy: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -138,6 +141,7 @@ function parseArgs(argv: string[]) {
     } else if (a === "--allow-all") args.allowAll = true;
     else if (a === "--trust") args.trust = true;
     else if (a === "--timeout") args.timeoutSeconds = Number(argv[++i]) || args.timeoutSeconds;
+    else if (a === "--privacy") args.privacy = true;
     else if (a === "--non-interactive") {
       // implied by --prompt; accepted so scripts can pass it explicitly
     } else if (!a.startsWith("-")) args.dir = a;
@@ -194,6 +198,7 @@ if (args.prompt) {
     allowAll: args.allowAll,
     trust: args.trust,
     timeoutSeconds: args.timeoutSeconds,
+    privacy: args.privacy,
   }).then((code) => process.exit(code));
 } else {
   runInteractive();
@@ -300,6 +305,7 @@ async function showAiDisclosureNotice(): Promise<void> {
 
 async function main() {
   const config = loadConfig();
+  const privacyMode = args.privacy || privacyModeFor(config);
   if (!isAiDisclosureShown(workspace)) {
     await showAiDisclosureNotice();
     markAiDisclosureShown(workspace);
@@ -366,20 +372,25 @@ async function main() {
     provider.name === "switchyard"
       ? await createSwitchyardClient(apiKey, sampling)
       : new ProviderClient(apiKey, provider.baseUrl, sampling);
-  const session = new SessionStore(workspace);
+  const session = new SessionStore(workspace, privacyMode);
   // Shared by the main agent and every subagent it spawns, so a write
   // subagent's commits and a read-only subagent's tool calls land in the same
   // audit trail and trace tree as the turn that spawned them — an agent that
   // edits the repo should never do so off the record.
-  const sessionAudit = AuditLog.forSession(session.id, config.audit);
-  const sessionTracer = createTracer(session.id, config.otel);
-  const sessionMeter = createMeter(session.id, config.otel);
+  const sessionAudit = privacyMode ? undefined : AuditLog.forSession(session.id, config.audit);
+  const sessionTracer = privacyMode
+    ? createTracer(session.id, "off")
+    : createTracer(session.id, config.otel);
+  const sessionMeter = privacyMode
+    ? createMeter(session.id, "off")
+    : createMeter(session.id, config.otel);
 
-  const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
-  const initialTasks = args.continue ? SessionStore.loadLatestTasks(workspace) : [];
+  const initialHistory =
+    !privacyMode && args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
+  const initialTasks = !privacyMode && args.continue ? SessionStore.loadLatestTasks(workspace) : [];
   session.start(initialHistory);
 
-  const resumeSessions = args.resume ? SessionStore.listSessions(workspace) : [];
+  const resumeSessions = !privacyMode && args.resume ? SessionStore.listSessions(workspace) : [];
 
   // Filled in once the app is mounted, below; the crash handler needs a way to
   // tear the UI down and is installed before there is a UI to tear down.
@@ -833,6 +844,7 @@ async function main() {
       onRequestElicitationReady={(fn) => {
         elicitationRef.current = fn;
       }}
+      privacyMode={privacyMode}
     />
   );
 }

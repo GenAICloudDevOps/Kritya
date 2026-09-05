@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
-import { debugLog, warnUser } from "../config/debug.js";
+import { debugLog, warnPersistenceFailure } from "../config/debug.js";
 
 /**
  * An append-only audit trail of permission decisions and tool executions,
@@ -181,7 +181,7 @@ export class AuditLog {
       this.prevHash = hash;
     } catch (err) {
       // best-effort
-      warnUser(`AuditLog.write(${this.file})`, err);
+      warnPersistenceFailure(`AuditLog.write(${this.file})`, err);
     }
   }
 

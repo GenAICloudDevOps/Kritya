@@ -5,6 +5,7 @@ import {
   legacyGlobalModel,
   loadConfig,
   loadDotEnv,
+  privacyModeFor,
   resolveProvider,
 } from "./config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
@@ -60,6 +61,7 @@ export async function createEngineSession(
   if (trustWorkspace) loadDotEnv([path.join(workspace, ".env")]);
 
   const config = loadConfig();
+  const privacyMode = privacyModeFor(config);
   const provider = resolveProvider(config, opts.provider);
   if (!provider.apiKey) {
     throw new Error(
@@ -83,9 +85,11 @@ export async function createEngineSession(
       ? await createSwitchyardClient(provider.apiKey, sampling)
       : new ProviderClient(provider.apiKey, provider.baseUrl, sampling);
 
-  const session = new SessionStore(workspace);
+  const session = new SessionStore(workspace, privacyMode);
   session.start([]);
-  const sessionMeter = createMeter(session.id, config.otel);
+  const sessionMeter = privacyMode
+    ? createMeter(session.id, "off")
+    : createMeter(session.id, config.otel);
 
   // The crash path is fire-and-forget best-effort by Node's own constraints
   // (a crash handler can't reliably await async work), so this uses the
@@ -123,8 +127,10 @@ export async function createEngineSession(
   if (trustWorkspace) {
     agent.hooks = new HookRunner(loadHooks(workspace, trustWorkspace), workspace);
   }
-  agent.audit = AuditLog.forSession(session.id, config.audit);
-  agent.tracer = createTracer(session.id, config.otel);
+  agent.audit = privacyMode ? undefined : AuditLog.forSession(session.id, config.audit);
+  agent.tracer = privacyMode
+    ? createTracer(session.id, "off")
+    : createTracer(session.id, config.otel);
   agent.meter = sessionMeter;
   if (agent.hooks) agent.hooks.tracer = agent.tracer;
 

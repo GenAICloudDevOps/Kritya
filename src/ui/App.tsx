@@ -55,6 +55,7 @@ export interface AppProps {
   onRequestElicitationReady?(
     requestElicitation: Required<AgentHandlers>["requestElicitation"]
   ): void;
+  privacyMode: boolean;
 }
 
 const MENTION_RE = /(^|\s)@([^\s@]*)$/;
@@ -82,6 +83,7 @@ export function App({
   onSwitchClient,
   onRequestPermissionReady,
   onRequestElicitationReady,
+  privacyMode,
 }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -237,6 +239,7 @@ export function App({
     onResumeSelect,
     requestPermission,
     requestElicitation,
+    persistenceWarningCount,
   } = useAgent({
     agent,
     workspace,
@@ -315,6 +318,7 @@ export function App({
       return;
     }
     if (key.escape && phase === "working") {
+      setActivity("cancelling…");
       abortRef.current?.abort();
     }
     // Ctrl+O toggles showing full tool output.
@@ -735,6 +739,7 @@ export function App({
           planMode={planMode}
           acceptEdits={acceptEdits}
           autoApprovedCount={autoApprovedCount}
+          provider={provider}
           model={
             servedModel && servedModel !== model
               ? `${model}-${modelDisplaySlug(servedModel)}`
@@ -755,6 +760,8 @@ export function App({
           sandboxActive={
             (config.sandboxExec ?? defaultSandboxMode()) !== "off" && sandboxAvailable()
           }
+          persistenceWarningCount={persistenceWarningCount}
+          privacyMode={privacyMode}
         />
       </Box>
     </Box>

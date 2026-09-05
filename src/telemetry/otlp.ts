@@ -1,4 +1,4 @@
-import { warnUser } from "../config/debug.js";
+import { warnPersistenceFailure } from "../config/debug.js";
 import type { AttrValue, SpanExport } from "./tracer.js";
 import {
   assertSafeUrl,
@@ -154,9 +154,9 @@ export function postOtlp(
       body: JSON.stringify(body),
       dispatcher: pinnedDispatcherAllowLoopback,
     };
-    fetch(url.href, init).catch((err) => warnUser(`postOtlp(${path})`, err));
+    fetch(url.href, init).catch((err) => warnPersistenceFailure(`postOtlp(${path})`, err));
   } catch (err) {
-    warnUser(`postOtlp(${path})`, err);
+    warnPersistenceFailure(`postOtlp(${path})`, err);
   }
 }
 
@@ -183,6 +183,6 @@ export async function postOtlpAndWait(
     };
     await fetch(url.href, init);
   } catch (err) {
-    warnUser(`postOtlpAndWait(${path})`, err);
+    warnPersistenceFailure(`postOtlpAndWait(${path})`, err);
   }
 }

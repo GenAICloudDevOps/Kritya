@@ -7,6 +7,7 @@ import {
   listProviders,
   loadConfig,
   loadDotEnv,
+  privacyModeFor,
   resolveProvider,
 } from "./config/config.js";
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
@@ -50,6 +51,7 @@ export interface HeadlessArgs {
   allowAll: boolean;
   trust: boolean;
   timeoutSeconds: number;
+  privacy?: boolean;
 }
 
 interface ToolCallRecord {
@@ -141,6 +143,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   if (trustWorkspace) loadDotEnv([path.join(workspace, ".env")]);
 
   const config = loadConfig();
+  const privacyMode = args.privacy === true || privacyModeFor(config);
   const provider = resolveProvider(config, args.provider || undefined);
   if (!provider.apiKey) {
     return finish(args, startedAt, {
@@ -171,13 +174,18 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
       ? await createSwitchyardClient(provider.apiKey, sampling)
       : new ProviderClient(provider.apiKey, provider.baseUrl, sampling);
 
-  const session = new SessionStore(workspace);
-  const initialHistory = args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
+  const session = new SessionStore(workspace, privacyMode);
+  const initialHistory =
+    !privacyMode && args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
   session.start(initialHistory);
 
-  const sessionAudit = AuditLog.forSession(session.id, config.audit);
-  const sessionTracer = createTracer(session.id, config.otel);
-  const sessionMeter = createMeter(session.id, config.otel);
+  const sessionAudit = privacyMode ? undefined : AuditLog.forSession(session.id, config.audit);
+  const sessionTracer = privacyMode
+    ? createTracer(session.id, "off")
+    : createTracer(session.id, config.otel);
+  const sessionMeter = privacyMode
+    ? createMeter(session.id, "off")
+    : createMeter(session.id, config.otel);
 
   // A crash here orphans MCP children and background processes onto a CI
   // runner, where nothing will ever reap them. No terminal to restore. The

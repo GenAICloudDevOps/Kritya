@@ -35,8 +35,17 @@ import type {
 import { killActiveNotice, useKillSwitch } from "./useKillSwitch.js";
 import { useUsageBudget } from "./useUsageBudget.js";
 import { useSessionResume } from "./useSessionResume.js";
+import { activePersistenceWarnings, onPersistenceWarning } from "../config/debug.js";
 
 export type Item = ItemBody & { id: number };
+
+function initialToolStatus(name: string): string | undefined {
+  if (name.startsWith("mcp_")) return "contacting MCP server…";
+  if (name.startsWith("lsp_")) return "querying language server…";
+  if (name.includes("document")) return "processing document…";
+  if (name.includes("notebook")) return "processing notebook…";
+  return undefined;
+}
 
 export interface PendingPermission {
   toolName: string;
@@ -111,6 +120,26 @@ export function useAgent({
   const [stream, setStream] = useState("");
   const [thinking, setThinking] = useState(false);
   const [activity, setActivity] = useState<string | null>(null);
+  const [persistenceWarningCount, setPersistenceWarningCount] = useState(
+    () => activePersistenceWarnings().length
+  );
+  useEffect(
+    () => onPersistenceWarning((warnings) => setPersistenceWarningCount(warnings.length)),
+    []
+  );
+  /**
+   * Compaction calls the model directly and can take a while, so without this
+   * the spinner would sit frozen on whatever it showed before compaction
+   * started until onToolEnd's after-the-fact "compact" record appears.
+   */
+  useEffect(() => {
+    agent.onCompactStart = () => setActivity("compacting context…");
+    agent.onCompactEnd = () => setActivity(null);
+    return () => {
+      agent.onCompactStart = undefined;
+      agent.onCompactEnd = undefined;
+    };
+  }, [agent]);
   /**
    * Which workflow phase the *current turn* is running. Turn-scoped and cleared
    * when the turn ends, unlike `workflow` below — `activity` can't carry this,
@@ -475,6 +504,7 @@ export function useAgent({
       return;
     }
     setPhase("working");
+    setActivity(`Calling ${provider}/${model}…`);
     const ac = new AbortController();
     abortRef.current = ac;
     setInFlight([]);
@@ -495,7 +525,10 @@ export function useAgent({
           },
           onToolStart: (id, name, summary) => {
             setStream("");
-            setInFlight((prev) => [...prev, { id, name, summary }]);
+            setInFlight((prev) => [
+              ...prev,
+              { id, name, summary, status: initialToolStatus(name) },
+            ]);
           },
           onToolEnd: (id, name, summary, preview, isError, resultSummary) => {
             setInFlight((prev) => prev.filter((t) => t.id !== id));
@@ -521,6 +554,10 @@ export function useAgent({
             setActivity(
               `Provider error${status ? ` (${status})` : ""} — retrying (attempt ${attempt})…`
             );
+          },
+          onFallback: (from, to) => {
+            setStream("");
+            setActivity(`${from} unavailable — trying fallback model ${to}…`);
           },
           onUsage: (usage) => {
             if (usage.servedModel) setServedModel(usage.servedModel);
@@ -625,6 +662,7 @@ export function useAgent({
     totalCost,
     tasks,
     setTasks,
+    persistenceWarningCount,
     ctxPct,
     setCtxPct,
     tokenBudget,

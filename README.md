@@ -50,7 +50,8 @@ review → fix` for building something new end-to-end
   state
 - **Office docs & notebooks** — read/write Word, Excel, PowerPoint, PDF,
   Jupyter
-- **Headless/CI mode** — scriptable, no-TTY runs for automation
+  - **Headless/CI mode** — scriptable, no-TTY runs for automation
+  - **Privacy mode** — `--privacy`, `KRITYA_PRIVACY=1`, or `"privacyMode": true` disables transcript, audit, and telemetry persistence
 
 ## Setup
 

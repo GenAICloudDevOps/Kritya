@@ -51,6 +51,7 @@ export class SwitchyardProviderClient extends ProviderClient {
       let lastErr: unknown = err;
       for (const fb of this.fallbacks) {
         try {
+          callbacks.onFallback?.("switchyard", fb.model);
           return await fb.client.chat(fb.model, messages, tools, callbacks, signal, trace);
         } catch (fbErr) {
           lastErr = fbErr;

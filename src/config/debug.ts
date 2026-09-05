@@ -47,3 +47,47 @@ export function warnUser(context: string, err: unknown): void {
   }
   debugLog(context, err);
 }
+
+export interface PersistenceWarning {
+  context: string;
+  message: string;
+}
+
+/** Contexts currently warning via warnPersistenceFailure, in the order first seen. */
+const persistenceWarnings: PersistenceWarning[] = [];
+const persistenceListeners = new Set<(warnings: PersistenceWarning[]) => void>();
+
+function notifyPersistenceListeners(): void {
+  const snapshot = [...persistenceWarnings];
+  for (const listener of persistenceListeners) listener(snapshot);
+}
+
+/** Current persistence-failure warnings (session/audit/telemetry writes that failed this process). */
+export function activePersistenceWarnings(): PersistenceWarning[] {
+  return [...persistenceWarnings];
+}
+
+/** Subscribe to persistence-warning changes. Returns an unsubscribe function. */
+export function onPersistenceWarning(
+  listener: (warnings: PersistenceWarning[]) => void
+): () => void {
+  persistenceListeners.add(listener);
+  return () => persistenceListeners.delete(listener);
+}
+
+/**
+ * Like warnUser, but for the specific best-effort writes whose failure means
+ * silent data loss (session transcripts, audit log, telemetry) — a stderr
+ * line alone is easy to miss since Ink's full-screen redraws can immediately
+ * paint over it. Recorded once per context, same dedup as warnUser, so the
+ * UI badge doesn't grow without bound from a write that fails every turn.
+ */
+export function warnPersistenceFailure(context: string, err: unknown): void {
+  const isNewContext = !warnedContexts.has(context);
+  warnUser(context, err);
+  if (isNewContext) {
+    const message = err instanceof Error ? err.message : String(err);
+    persistenceWarnings.push({ context, message });
+    notifyPersistenceListeners();
+  }
+}
