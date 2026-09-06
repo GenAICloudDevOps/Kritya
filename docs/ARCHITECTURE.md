@@ -44,9 +44,13 @@ index.tsx / headless.ts / engine.ts   bootstrap: config, trust, provider, tools,
 ## Modules
 
 - **`src/index.tsx`** — CLI entry. Parses args, resolves the provider and API
-  key, loads `.env`, resolves workspace trust (prompting via `TrustPrompt` if
-  needed), discovers plugins, assembles the tool list (built-in + MCP), wires
-  the subagent spawner and hooks, and renders the UI.
+  key (prompting via `ApiKeySetupPrompt` to save one to `~/.kritya/.env` if
+  none resolves, interactive mode only), loads `.env`, resolves workspace
+  trust (prompting via `TrustPrompt` if needed), discovers plugins, assembles
+  the tool list (built-in + MCP), wires the subagent spawner and hooks, and
+  renders the UI. Also tracks per-workspace first launch via
+  `src/trust/bannerSeen.ts` so the full ASCII banner shows once and later
+  launches get a compact one-line header.
 - **`src/headless.ts`** — the `--prompt` / CI path: same bootstrap with no Ink
   UI and no TTY requirement. Since nothing can answer a prompt, mutating calls
   are denied unless an allow rule or `--allow-all` covers them, destructive
@@ -188,7 +192,9 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
   `otlp.ts`'s encoders for the optional `KRITYA_OTEL_ENDPOINT` export path to
   a real OpenTelemetry Collector.
 - **`src/ui/`** — Ink components: `App` (the shell), `PermissionPrompt`,
-  `TrustPrompt`, `McpTrustPrompt`, `ElicitationPrompt`, `ModelPicker`,
+  `TrustPrompt`, `McpTrustPrompt`, `ElicitationPrompt`, `ApiKeySetupPrompt`
+  (interactive-only fallback that saves a pasted key to `~/.kritya/.env` when
+  none resolves), `ModelPicker`,
   `SelectList`, `Markdown`, `Banner`, `Spinner`, `StatusLine`,
   `TranscriptItem`, plus `highlight.ts` for code fences, `mermaid.ts` for
   rendering flowcharts as ASCII trees, and the `useAgent`/`useKillSwitch`/

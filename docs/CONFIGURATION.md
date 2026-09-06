@@ -174,7 +174,7 @@ attempts, so a server that fails to start leaves more than one stderr line.
 When a provider doesn't report real token counts (some omit usage on streamed
 responses), kritya estimates them from text length instead of leaving `/cost`
 blind for the session — but that estimate is marked `estimated: true` in the
-`Usage` object and shown as `~` in the statusline and `(some figures
+`Usage` object and shown as `~` in `/status` and `(some figures
 estimated…)` in `/cost`, so an approximation never passes as an exact number.
 
 Best-effort writes (session/audit/telemetry persistence, config and hook
@@ -221,6 +221,9 @@ notes in SECURITY.md:
   **workspace**, not per config setting — kritya tracks which workspaces have
   seen it in `~/.kritya/ai-disclosure.json`, keyed by resolved workspace path
   (same pattern as `trusted.json`'s per-workspace trust decisions).
+- The full ASCII startup banner follows the same per-workspace pattern, in
+  `~/.kritya/banner-seen.json`: shown in full once per workspace, then a
+  compact one-line header on later launches.
 
 ## Configuration file
 
@@ -240,8 +243,9 @@ notes in SECURITY.md:
 }
 ```
 
-`pricing` is optional (USD per 1M tokens per model). When set, `/cost` and the
-statusline show estimated dollars alongside token counts.
+`pricing` is optional (USD per 1M tokens per model). When set, `/cost` reports
+estimated dollars alongside token counts, and the statusline shows a running
+total once cost is nonzero.
 
 `tokenBudget` caps combined prompt + completion tokens for the whole session
 (default 1,000,000); kritya warns at 80% and stops further turns at 100% until

@@ -65,6 +65,9 @@ Requires Node.js >=22.
    - Linux/macOS: `export NVIDIA_API_KEY=nvapi-...`
    - Windows: `setx NVIDIA_API_KEY nvapi-...` (then open a new terminal)
 
+   Skip this and kritya will prompt for the key on first launch (interactive
+   mode only) and save it to `~/.kritya/.env` for you.
+
    Optional: add `TAVILY_API_KEY` the same way to enable the agent's
    web-search tool (`/web-search`) — get one at [tavily.com](https://tavily.com).
 
@@ -159,6 +162,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | `/cost`                   | token usage and estimated $ (see Pricing below)                                                                                     |
 | `/audit`                  | show this session's permission decisions and verify the audit log's chain ([more](docs/CONFIGURATION.md#audit-log--telemetry))      |
 | `/budget`                 | show session token budget; `/budget reset` or `/budget <number>`                                                                    |
+| `/status`                 | show context/budget/token/task detail left off the always-visible status line                                                       |
 | `/kill`                   | emergency stop: `/kill [reason]` halts everything; `/kill off` releases                                                             |
 | `/help`                   | command list                                                                                                                        |
 | `/exit`                   | quit                                                                                                                                |
@@ -282,8 +286,8 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   message is queued and absorbed before its next step (no need to interrupt).
 - **Auto-compaction → self-improving project memory** — when the conversation
   nears the model's context window (80% of `contextWindow`, default 120k
-  tokens), older turns are summarized automatically; the statusline shows
-  current usage as `ctx N%`. Compaction (auto or manual `/compact`) also
+  tokens), older turns are summarized automatically; `/status` shows current
+  usage as `context used: N%`. Compaction (auto or manual `/compact`) also
   distills durable, objective facts out of what's being summarized away —
   build/test commands, package manager, conventions actually observed — and
   merges any new ones into a `## Learned by kritya` section in `KRITYA.md`,
@@ -294,7 +298,8 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 - **Token budget** — a session-wide cap on combined prompt + completion
   tokens across every turn and model (default 1,000,000; set `tokenBudget` in
   config, or `/budget <number>` mid-session). The statusline shows `budget N%`
-  once usage starts, turning yellow past 80% with a one-time warning, then
+  once usage crosses 80% (yellow, with a one-time warning) or the budget is
+  hit (red); `/status` shows it from the start. It then
   stops further turns entirely at 100% until you run `/budget reset` (clears
   the count) or `/budget <number>` (raises the cap). `/cost` also reports it.
 - **Background processes** — the agent can start dev servers/watchers with
@@ -311,7 +316,7 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   every request.
 - **Sub-task checklist → resumable plans** — for multi-step requests the agent
   plans first and shows a live ☐/◐/☑ checklist as it works, with a compact
-  `tasks N/M` summary in the statusline. The checklist is saved alongside the
+  `tasks N/M` summary available via `/status`. The checklist is saved alongside the
   session, so `kritya -c` (and picking a session via `-r`) restores not just
   the conversation but exactly which steps were done, in progress, or still
   pending.
@@ -346,7 +351,7 @@ full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 - **Prompt-caching awareness** — the system prompt is ordered stable-first
   (identity and rules → project memory → volatile git status/listing last) so
   providers can reuse their cached prompt prefix across turns instead of
-  re-reading everything. `/cost` and the statusline show how many prompt
+  re-reading everything. `/cost` and `/status` show how many prompt
   tokens were served from the provider's cache; add an optional
   `"cachedInput"` rate to your `pricing` config to see the dollar savings.
 - **LSP integration** — the agent gets go-to-definition, find-references,
