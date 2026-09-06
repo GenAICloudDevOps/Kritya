@@ -88,3 +88,14 @@ export function modelDisplaySlug(modelId: string): string {
     .replace(/^-+|-+$/g, "");
   return `${prefix}${slug}`;
 }
+
+/**
+ * "provider/model" for display, without the doubled prefix that comes from
+ * naively joining them: several providers' model IDs already carry their own
+ * namespace (NVIDIA's catalog is "nvidia/nemotron-...", so the "nvidia"
+ * provider plus that model id would otherwise print "nvidia/nvidia/...").
+ * Only skip the provider prefix when the model id already starts with it.
+ */
+export function displayModelId(providerName: string, modelId: string): string {
+  return modelId.startsWith(`${providerName}/`) ? modelId : `${providerName}/${modelId}`;
+}

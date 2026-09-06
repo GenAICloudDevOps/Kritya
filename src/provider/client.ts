@@ -133,6 +133,30 @@ export function isRetryable(err: unknown): boolean {
   return false;
 }
 
+/**
+ * A short, actionable translation for the non-retryable failures a
+ * first-time user is most likely to hit — a rejected key or an unknown
+ * model id — instead of the raw `{"status":403,"title":"Forbidden",...}`
+ * body the provider sent. Returns undefined for anything else, so callers
+ * fall back to the raw message unchanged.
+ */
+export function friendlyProviderErrorHint(err: unknown, providerName: string): string | undefined {
+  const status = (err as { status?: number })?.status;
+  if (status === 401 || status === 403) {
+    return (
+      `Your API key for provider "${providerName}" was rejected. Check it's correct, ` +
+      `still active, and hasn't expired, then try again.`
+    );
+  }
+  if (status === 404 && !isEmptyBodyNotFound(err)) {
+    return (
+      `Provider "${providerName}" doesn't recognize this model. Check the model ID with ` +
+      `/model, or that your account has access to it.`
+    );
+  }
+  return undefined;
+}
+
 /** Read one header case-insensitively from whatever shape the SDK attached. */
 function headerValue(err: unknown, name: string): string | undefined {
   const headers = (err as { headers?: unknown })?.headers;

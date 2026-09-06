@@ -21,7 +21,7 @@ export type ItemBody =
       resultSummary?: string;
     }
   | { kind: "info"; text: string }
-  | { kind: "banner"; subtitle: string };
+  | { kind: "banner"; subtitle: string; compact?: boolean };
 
 export type Phase =
   "input" | "working" | "permission" | "model" | "resume" | "confirmMode" | "elicitation";

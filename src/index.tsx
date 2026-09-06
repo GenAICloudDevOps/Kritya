@@ -5,6 +5,7 @@ import { render } from "ink";
 import { Agent } from "./agent/loop.js";
 import {
   CONFIG_DIR,
+  appendGlobalEnvVar,
   legacyGlobalModel,
   loadConfig,
   loadDotEnv,
@@ -36,6 +37,7 @@ import { UndoStack } from "./undo/undo.js";
 import { App, type UiBridge } from "./ui/App.js";
 import { TrustPrompt } from "./ui/TrustPrompt.js";
 import { AiDisclosurePrompt } from "./ui/AiDisclosurePrompt.js";
+import { ApiKeySetupPrompt } from "./ui/ApiKeySetupPrompt.js";
 import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
 import type { ElicitationField, ElicitationResult, TaskItem, ToolDef } from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
@@ -52,6 +54,7 @@ import { pluginsDir, scanPlugins, userPluginsDir } from "./plugins/discover.js";
 import { loadPluginMcpServers } from "./plugins/mcp.js";
 import { describeGatedContent, gatedContentHash, isTrusted, saveTrust } from "./trust/trust.js";
 import { isAiDisclosureShown, markAiDisclosureShown } from "./trust/aiDisclosure.js";
+import { isBannerSeen, markBannerSeen } from "./trust/bannerSeen.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
 import { installCrashHandlers } from "./crash.js";
@@ -303,9 +306,36 @@ async function showAiDisclosureNotice(): Promise<void> {
   });
 }
 
+/**
+ * Interactive fallback when no API key resolved for the active provider.
+ * Lets the user paste one straight in, saving it to ~/.kritya/.env, rather
+ * than forcing them out to read env-var instructions and relaunch. Only
+ * called from the interactive TTY path (see main() below) — headless mode
+ * (src/headless.ts) never imports this and keeps failing with a plain error.
+ */
+async function promptApiKeySetup(
+  providerName: string,
+  envVarName?: string
+): Promise<string | null> {
+  if (!envVarName) return null;
+  return new Promise((resolve) => {
+    const instance = render(
+      <ApiKeySetupPrompt
+        providerName={providerName}
+        envVarName={envVarName}
+        onDecision={(result) => {
+          instance.unmount();
+          resolve(result.action === "save" ? result.key : null);
+        }}
+      />
+    );
+  });
+}
+
 async function main() {
   const config = loadConfig();
   const privacyMode = args.privacy || privacyModeFor(config);
+  const firstLaunch = !isBannerSeen(workspace);
   if (!isAiDisclosureShown(workspace)) {
     await showAiDisclosureNotice();
     markAiDisclosureShown(workspace);
@@ -320,7 +350,15 @@ async function main() {
   }
 
   const provider = resolveProvider(config, args.provider || undefined);
-  const apiKey = provider.apiKey;
+  let apiKey = provider.apiKey;
+  if (!apiKey) {
+    const entered = await promptApiKeySetup(provider.name, provider.apiKeyEnv);
+    if (entered) {
+      appendGlobalEnvVar(provider.apiKeyEnv!, entered);
+      process.env[provider.apiKeyEnv!] = entered;
+      apiKey = entered;
+    }
+  }
   if (!apiKey) {
     const hint =
       provider.name === "nvidia"
@@ -845,6 +883,8 @@ async function main() {
         elicitationRef.current = fn;
       }}
       privacyMode={privacyMode}
+      firstLaunch={firstLaunch}
     />
   );
+  markBannerSeen(workspace);
 }

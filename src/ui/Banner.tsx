@@ -61,7 +61,15 @@ function rowColor(row: number): string {
 
 const BETA_LABEL = "beta";
 
-export function Banner({ subtitle }: { subtitle?: string }) {
+export function Banner({ subtitle, compact }: { subtitle?: string; compact?: boolean }) {
+  if (compact) {
+    return (
+      <Box marginBottom={1}>
+        <Text dimColor>{subtitle}</Text>
+      </Box>
+    );
+  }
+
   const columns = terminalColumns(process.stdout);
   const wide = bannerLines("KRITYA", "░░");
   const narrow = bannerLines("KRITYA", "░");

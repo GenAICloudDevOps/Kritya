@@ -1,6 +1,6 @@
 import { Text } from "ink";
 import type { ProjectState } from "../agent/workflow.js";
-import type { TaskItem, Usage } from "../types.js";
+import { displayModelId } from "../config/models.js";
 
 export interface StatusLineProps {
   killed: boolean;
@@ -13,22 +13,21 @@ export interface StatusLineProps {
   model: string;
   workflow: ProjectState | null;
   branch: string | null;
-  tasks: TaskItem[];
-  ctxPct: number;
   budgetPct: number;
   budgetStopped: boolean;
-  phase: string;
-  elapsed: number;
-  totalUsage: Usage;
   totalCost: number;
-  verbose: boolean;
-  workspace: string;
   sandboxActive: boolean;
   persistenceWarningCount: number;
   privacyMode: boolean;
 }
 
-/** The single dim status bar pinned to the bottom of the screen. */
+/**
+ * The single dim status bar pinned to the bottom of the screen. Keeps only
+ * the fields worth glancing at on every render; everything else (context %,
+ * task checklist, elapsed time, token counts, workspace path, verbose flag)
+ * moved to the on-demand `/status` command — see CommandContext.statusReport
+ * in src/commands/registry.ts.
+ */
 export function StatusLine({
   killed,
   killReason,
@@ -40,16 +39,9 @@ export function StatusLine({
   model,
   workflow,
   branch,
-  tasks,
-  ctxPct,
   budgetPct,
   budgetStopped,
-  phase,
-  elapsed,
-  totalUsage,
   totalCost,
-  verbose,
-  workspace,
   sandboxActive,
   persistenceWarningCount,
   privacyMode,
@@ -74,7 +66,7 @@ export function StatusLine({
               : "default"}
         {" · "}
       </Text>
-      {provider}/{model}
+      {displayModelId(provider, model)}
       <Text color={sandboxActive ? "green" : "red"}>
         {" "}
         · {sandboxActive ? "🔒 sandbox:active" : "🔓 sandbox:inactive"}
@@ -88,25 +80,11 @@ export function StatusLine({
         ""
       )}
       {branch ? ` · ⎇ ${branch}` : ""}
-      {tasks.length > 0
-        ? ` · tasks ${tasks.filter((t) => t.status === "done").length}/${tasks.length}`
-        : ""}
-      {ctxPct > 0 ? ` · ctx ${ctxPct}%` : ""}
-      {budgetPct > 0 ? (
-        <Text color={budgetStopped ? "red" : budgetPct >= 80 ? "yellow" : undefined}>
-          {" "}
-          · budget {budgetPct}%
-        </Text>
+      {budgetStopped || budgetPct >= 80 ? (
+        <Text color={budgetStopped ? "red" : "yellow"}> · budget {budgetPct}%</Text>
       ) : (
         ""
       )}
-      {phase === "working" && elapsed > 0 ? ` · ${elapsed}s` : ""} ·{" "}
-      {totalUsage.estimated ? "~" : ""}
-      tokens: {totalUsage.promptTokens.toLocaleString()} in
-      {(totalUsage.cachedPromptTokens ?? 0) > 0
-        ? ` (${Math.round(((totalUsage.cachedPromptTokens ?? 0) / totalUsage.promptTokens) * 100)}% cached)`
-        : ""}{" "}
-      / {totalUsage.completionTokens.toLocaleString()} out
       {totalCost > 0 ? ` · $${totalCost.toFixed(4)}` : ""}
       {persistenceWarningCount > 0 ? (
         <Text color="yellow"> · ⚠ persistence warnings: {persistenceWarningCount}</Text>
@@ -114,7 +92,7 @@ export function StatusLine({
         ""
       )}
       {privacyMode ? <Text color="cyan"> · privacy:on</Text> : ""}
-      {verbose ? " · verbose" : ""} · workspace: {workspace}
+      {" · /status for details"}
     </Text>
   );
 }

@@ -9,8 +9,12 @@ import {
   saveProviderModel,
   type CliConfig,
 } from "../config/config.js";
-import { DEFAULT_MODEL, contextWindowFor } from "../config/models.js";
-import { ProviderClient, RetryExhaustedError } from "../provider/client.js";
+import { DEFAULT_MODEL, contextWindowFor, displayModelId } from "../config/models.js";
+import {
+  ProviderClient,
+  RetryExhaustedError,
+  friendlyProviderErrorHint,
+} from "../provider/client.js";
 import { createSwitchyardClient } from "../provider/switchyardClient.js";
 import { SWITCHYARD_ROUTE_ID, resolveEffectiveModel } from "../provider/switchyardSidecar.js";
 import { KillSwitchError } from "../agent/killSwitch.js";
@@ -74,6 +78,8 @@ export interface UseAgentParams {
   refreshFileList(): void;
   /** Updates the client subagents (spawn_agent) construct with, so a provider switch applies to them too. */
   onSwitchClient(client: ProviderClient): void;
+  /** Whether the full ASCII banner has never been shown for this workspace before; see bannerSeen.ts. */
+  firstLaunch: boolean;
 }
 
 /**
@@ -93,6 +99,7 @@ export function useAgent({
   resumeSessions,
   refreshFileList,
   onSwitchClient,
+  firstLaunch,
 }: UseAgentParams) {
   const nextId = useRef(0);
   const [items, setItems] = useState<Item[]>(() => {
@@ -101,6 +108,7 @@ export function useAgent({
         id: nextId.current++,
         kind: "banner",
         subtitle: `${path.basename(workspace)} · ${modelRef.current} · type a request, or /help for commands`,
+        compact: !firstLaunch,
       },
     ];
     if (resumedCount > 0) {
@@ -504,7 +512,7 @@ export function useAgent({
       return;
     }
     setPhase("working");
-    setActivity(`Calling ${provider}/${model}…`);
+    setActivity(`Calling ${displayModelId(provider, model)}…`);
     const ac = new AbortController();
     abortRef.current = ac;
     setInFlight([]);
@@ -594,7 +602,8 @@ export function useAgent({
               `configured to fall back to — see the "Providers" section of the README.`;
           text = `Error: ${message}${hint}`;
         } else {
-          text = `Error: ${message}`;
+          const friendlyHint = friendlyProviderErrorHint(err, provider);
+          text = friendlyHint ? `${friendlyHint}\n\n(${message})` : `Error: ${message}`;
         }
       }
       addItem({ kind: "info", text });

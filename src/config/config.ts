@@ -334,6 +334,8 @@ export interface ResolvedProvider {
   name: string;
   baseUrl: string;
   apiKey?: string;
+  /** The env var this provider's key is read from, if any — used by the first-run setup prompt to know where to save a pasted key. */
+  apiKeyEnv?: string;
   temperature?: number | null;
   topP?: number | null;
   maxTokens?: number | null;
@@ -365,6 +367,7 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
     name,
     baseUrl,
     apiKey,
+    apiKeyEnv: merged.apiKeyEnv,
     temperature: merged.temperature,
     topP: merged.topP,
     maxTokens: merged.maxTokens,
@@ -529,4 +532,19 @@ export function loadDotEnv(paths: string[]): void {
       if (process.env[key] === undefined) process.env[key] = value;
     }
   }
+}
+
+/**
+ * Append one KEY=VALUE line to ~/.kritya/.env, creating the directory (and
+ * hardening its permissions) the same way saveConfig does for config.json.
+ * Used by the first-run API key setup prompt so a pasted key survives across
+ * restarts without the user having to edit a dotfile by hand.
+ */
+export function appendGlobalEnvVar(name: string, value: string): void {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  hardenWindowsDir(CONFIG_DIR);
+  const envFile = path.join(CONFIG_DIR, ".env");
+  const sanitized = value.replace(/[\r\n]/g, "");
+  fs.appendFileSync(envFile, `${name}=${sanitized}\n`, { mode: 0o600 });
+  fs.chmodSync(envFile, 0o600);
 }

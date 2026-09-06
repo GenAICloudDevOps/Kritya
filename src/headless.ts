@@ -13,7 +13,11 @@ import {
 import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
-import { ProviderClient, RetryExhaustedError } from "./provider/client.js";
+import {
+  ProviderClient,
+  RetryExhaustedError,
+  friendlyProviderErrorHint,
+} from "./provider/client.js";
 import { createSwitchyardClient } from "./provider/switchyardClient.js";
 import {
   SWITCHYARD_ROUTE_ID,
@@ -350,7 +354,9 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
     } else if (err instanceof KillSwitchError) {
       errorMessage = `Stopped (${err.killReason ?? "kill switch engaged"})`;
     } else {
-      errorMessage = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err);
+      const friendlyHint = friendlyProviderErrorHint(err, provider.name);
+      errorMessage = friendlyHint ? `${friendlyHint} (${message})` : message;
     }
   } finally {
     clearTimeout(timer);

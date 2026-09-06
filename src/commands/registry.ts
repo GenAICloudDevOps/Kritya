@@ -38,77 +38,145 @@ import {
 export interface CommandDef {
   name: string;
   description: string;
+  /** Menu grouping shown when typing `/` — see App.tsx's suggestion render. Commands with no category (custom/MCP-contributed) fall under their own group there. */
+  category?: string;
 }
 
+const WORKFLOW = "Workflow";
+const SESSION = "Session";
+const SAFETY = "Safety & limits";
+const INFO = "Info";
+
 export const BUILTIN_COMMANDS: CommandDef[] = [
-  { name: "/help", description: "show available commands" },
-  { name: "/model", description: "pick a model, or /model <id> for any provider model ID" },
-  {
-    name: "/provider",
-    description:
-      "list providers, or /provider <name> to switch mid-session (keeps history); add --default to persist",
-  },
   {
     name: "/flow-brainstorm",
     description:
       "start a new-project workflow: /flow-brainstorm <idea> (brainstorm→spec→plan→build→review→fix)",
+    category: WORKFLOW,
   },
   {
     name: "/flow-spec",
     description: "project workflow: write the spec from the approved brainstorm",
+    category: WORKFLOW,
   },
-  { name: "/plan", description: "toggle plan mode: /plan, /plan on, /plan off" },
-  { name: "/flow-plan", description: "project workflow: plan from the spec (read-only)" },
-  { name: "/flow-build", description: "project workflow: implement the plan, with tests" },
-  { name: "/flow-review", description: "project workflow: spec-compliance and security review" },
-  { name: "/flow-fix", description: "project workflow: fix the review's findings, re-verified" },
+  {
+    name: "/flow-plan",
+    description: "project workflow: plan from the spec (read-only)",
+    category: WORKFLOW,
+  },
+  {
+    name: "/flow-build",
+    description: "project workflow: implement the plan, with tests",
+    category: WORKFLOW,
+  },
+  {
+    name: "/flow-review",
+    description: "project workflow: spec-compliance and security review",
+    category: WORKFLOW,
+  },
+  {
+    name: "/flow-fix",
+    description: "project workflow: fix the review's findings, re-verified",
+    category: WORKFLOW,
+  },
   {
     name: "/project",
     description: "workflow status · /project goto <phase> · rename <name> · clear",
-  },
-  { name: "/diff", description: "show the cumulative git diff of this session's changes" },
-  { name: "/redo", description: "reapply the change most recently undone" },
-  { name: "/init", description: "scan the repo and generate a KRITYA.md project-memory file" },
-  { name: "/web-search", description: "search the web: /web-search <query>" },
-  {
-    name: "/mcp",
-    description: "MCP servers: status, /mcp add|remove <name>, /mcp login|logout <name>",
+    category: WORKFLOW,
   },
   {
-    name: "/skills",
-    description: "list discovered skills (project + user-global) and why any were skipped",
+    name: "/model",
+    description: "pick a model, or /model <id> for any provider model ID",
+    category: SESSION,
   },
   {
-    name: "/plugins",
-    description: "list discovered Agent Plugins, what each contributes, and why any were skipped",
+    name: "/provider",
+    description:
+      "list providers, or /provider <name> to switch mid-session (keeps history); add --default to persist",
+    category: SESSION,
   },
-  { name: "/undo", description: "revert the file changes from the agent's last turn" },
+  {
+    name: "/diff",
+    description: "show the cumulative git diff of this session's changes",
+    category: SESSION,
+  },
+  {
+    name: "/init",
+    description: "scan the repo and generate a KRITYA.md project-memory file",
+    category: SESSION,
+  },
+  { name: "/web-search", description: "search the web: /web-search <query>", category: SESSION },
+  {
+    name: "/commit",
+    description: "have the agent stage and commit the current changes",
+    category: SESSION,
+  },
+  {
+    name: "/compact",
+    description: "summarize older conversation to free context space",
+    category: SESSION,
+  },
+  { name: "/clear", description: "start a fresh conversation", category: SESSION },
+  {
+    name: "/undo",
+    description: "revert the file changes from the agent's last turn",
+    category: SESSION,
+  },
+  { name: "/redo", description: "reapply the change most recently undone", category: SESSION },
   {
     name: "/checkpoint",
     description: "save a named point: /checkpoint <name> (no name lists saved ones)",
+    category: SESSION,
   },
   {
     name: "/rewind",
     description: "rewind the conversation and files to a checkpoint: /rewind <name>",
-  },
-  { name: "/commit", description: "have the agent stage and commit the current changes" },
-  { name: "/compact", description: "summarize older conversation to free context space" },
-  { name: "/clear", description: "start a fresh conversation" },
-  { name: "/cost", description: "show token usage and estimated cost" },
-  {
-    name: "/audit",
-    description: "show this session's permission decisions and verify the audit log's chain",
+    category: SESSION,
   },
   {
-    name: "/budget",
-    description: "show session token budget, /budget reset, or /budget <number> to set it",
+    name: "/plan",
+    description: "toggle plan mode (read-only): /plan, /plan on, /plan off",
+    category: SAFETY,
   },
   {
     name: "/kill",
     description: "emergency stop: /kill [reason] halts everything · /kill off releases (Ctrl+K)",
+    category: SAFETY,
   },
-  { name: "/exit", description: "leave" },
-  { name: "/quit", description: "leave" },
+  {
+    name: "/audit",
+    description: "show this session's permission decisions and verify the audit log's chain",
+    category: SAFETY,
+  },
+  {
+    name: "/budget",
+    description: "show session token budget, /budget reset, or /budget <number> to set it",
+    category: SAFETY,
+  },
+  { name: "/cost", description: "show token usage and estimated cost", category: SAFETY },
+  {
+    name: "/status",
+    description: "show context/budget/token/task detail left off the status line",
+    category: SAFETY,
+  },
+  { name: "/help", description: "show available commands", category: INFO },
+  {
+    name: "/skills",
+    description: "list discovered skills (project + user-global) and why any were skipped",
+    category: INFO,
+  },
+  {
+    name: "/plugins",
+    description: "list discovered Agent Plugins, what each contributes, and why any were skipped",
+    category: INFO,
+  },
+  {
+    name: "/mcp",
+    description: "MCP servers: status, /mcp add|remove <name>, /mcp login|logout <name>",
+    category: INFO,
+  },
+  { name: "/exit", description: "leave", category: INFO },
+  { name: "/quit", description: "leave", category: INFO },
 ];
 
 export const HELP_TEXT = `Commands:
@@ -167,6 +235,8 @@ export interface CommandContext {
   runWebSearch(query: string): Promise<void>;
   expandMentions(text: string): Promise<string>;
   costReport(): string;
+  /** The context/budget/token/task detail left off the always-visible status line — see /status. */
+  statusReport(): string;
   gitDiffStat(workspace: string): string | null;
   exit(): void;
 }
@@ -477,6 +547,9 @@ const handlers: Record<string, CommandHandler> = {
   },
   "/cost": (ctx) => {
     ctx.addItem({ kind: "info", text: ctx.costReport() });
+  },
+  "/status": (ctx) => {
+    ctx.addItem({ kind: "info", text: ctx.statusReport() });
   },
   "/audit": (ctx) => {
     const audit = ctx.agent.audit;
@@ -790,6 +863,7 @@ const ALLOWED_WHILE_KILLED = new Set([
   "/quit",
   "/audit",
   "/cost",
+  "/status",
   "/diff",
   "/budget",
   "/mcp",

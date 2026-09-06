@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
@@ -47,6 +47,8 @@ export interface AppProps {
   resumeSessions?: SessionMeta[];
   customCommands?: CustomCommand[];
   mcpToolCount?: number;
+  /** Whether the full ASCII banner has never been shown for this workspace before; see bannerSeen.ts. */
+  firstLaunch: boolean;
   /** Hands the caller a stable reference to the same permission prompt tool
    *  calls use, so MCP sampling (which can arrive outside any turn) can ask
    *  for approval too, without a second prompt UI. */
@@ -84,6 +86,7 @@ export function App({
   onRequestPermissionReady,
   onRequestElicitationReady,
   privacyMode,
+  firstLaunch,
 }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -252,6 +255,7 @@ export function App({
     resumeSessions,
     refreshFileList,
     onSwitchClient,
+    firstLaunch,
   });
 
   useEffect(() => {
@@ -273,11 +277,52 @@ export function App({
     return () => clearInterval(t);
   }, [phase]);
 
+  // Detail moved out of the always-visible status line (see StatusLine.tsx) —
+  // surfaced instead via the /status command, on demand.
+  const statusReport = useCallback((): string => {
+    const sandboxActive =
+      (config.sandboxExec ?? defaultSandboxMode()) !== "off" && sandboxAvailable();
+    const cachedPct =
+      (totalUsage.cachedPromptTokens ?? 0) > 0
+        ? ` (${Math.round(((totalUsage.cachedPromptTokens ?? 0) / totalUsage.promptTokens) * 100)}% cached)`
+        : "";
+    const lines = [
+      `workspace: ${workspace}`,
+      `sandbox: ${sandboxActive ? "active" : "inactive"}`,
+      `context used: ${ctxPct}%`,
+      `token budget: ${budgetPct}% of ${tokenBudget.toLocaleString()} (${budgetUsed.toLocaleString()} used)${budgetStopped ? " — stopped" : ""}`,
+      `tokens: ${totalUsage.estimated ? "~" : ""}${totalUsage.promptTokens.toLocaleString()} in${cachedPct} / ${totalUsage.completionTokens.toLocaleString()} out`,
+      tasks.length > 0
+        ? `tasks: ${tasks.filter((t) => t.status === "done").length}/${tasks.length} done`
+        : null,
+      phase === "working" && elapsed > 0 ? `elapsed: ${elapsed}s` : null,
+      verbose ? "verbose: on" : null,
+    ].filter((l): l is string => l !== null);
+    return lines.join("\n");
+  }, [
+    config,
+    workspace,
+    ctxPct,
+    budgetPct,
+    tokenBudget,
+    budgetUsed,
+    budgetStopped,
+    totalUsage,
+    tasks,
+    phase,
+    elapsed,
+    verbose,
+  ]);
+
   const allCommands = [
     ...BUILTIN_COMMANDS,
-    ...customCommands.map((c) => ({ name: c.name, description: c.description })),
+    ...customCommands.map((c) => ({
+      name: c.name,
+      description: c.description,
+      category: "Custom",
+    })),
     // Servers can contribute slash commands too (MCP prompts).
-    ...mcpPrompts().map((p) => ({ name: p.command, description: p.description })),
+    ...mcpPrompts().map((p) => ({ name: p.command, description: p.description, category: "MCP" })),
   ];
 
   // Command suggestions while typing a slash command (before any arguments).
@@ -423,6 +468,7 @@ export function App({
       runWebSearch,
       expandMentions,
       costReport,
+      statusReport,
       gitDiffStat,
       exit,
     };
@@ -707,13 +753,27 @@ export function App({
           </Box>
           {suggestions.length > 0 && (
             <Box flexDirection="column" paddingLeft={2}>
-              {suggestions.map((c, i) => (
-                <Text key={c.name} color={i === selectedCmd ? "cyan" : undefined}>
-                  {i === selectedCmd ? "❯ " : "  "}
-                  <Text bold={i === selectedCmd}>{c.name}</Text>
-                  <Text dimColor> — {c.description}</Text>
-                </Text>
-              ))}
+              {(() => {
+                // Group headers only earn their keep once more than one
+                // category is actually on screen — once typing has filtered
+                // down to a single family, a lone header is just noise.
+                const showHeaders = new Set(suggestions.map((c) => c.category)).size > 1;
+                let lastCategory: string | undefined;
+                return suggestions.map((c, i) => {
+                  const showHeader = showHeaders && c.category !== lastCategory;
+                  lastCategory = c.category;
+                  return (
+                    <Fragment key={c.name}>
+                      {showHeader && <Text dimColor>{c.category ?? "Other"}</Text>}
+                      <Text color={i === selectedCmd ? "cyan" : undefined}>
+                        {i === selectedCmd ? "❯ " : "  "}
+                        <Text bold={i === selectedCmd}>{c.name}</Text>
+                        <Text dimColor> — {c.description}</Text>
+                      </Text>
+                    </Fragment>
+                  );
+                });
+              })()}
               <Text dimColor>↑↓ select · Tab/Enter select · Enter again to run</Text>
             </Box>
           )}
@@ -747,16 +807,9 @@ export function App({
           }
           workflow={workflow}
           branch={branch}
-          tasks={tasks}
-          ctxPct={ctxPct}
           budgetPct={budgetPct}
           budgetStopped={budgetStopped}
-          phase={phase}
-          elapsed={elapsed}
-          totalUsage={totalUsage}
           totalCost={totalCost}
-          verbose={verbose}
-          workspace={workspace}
           sandboxActive={
             (config.sandboxExec ?? defaultSandboxMode()) !== "off" && sandboxAvailable()
           }

@@ -55,6 +55,7 @@ async function setup(overrides: Partial<UseAgentParams> = {}) {
     resumedCount: 0,
     refreshFileList: () => {},
     onSwitchClient: () => {},
+    firstLaunch: true,
     ...overrides,
   };
 
@@ -456,6 +457,7 @@ test("setModelEverywhere updates the model ref, the agent's context window, and 
       resumedCount: 0,
       refreshFileList: () => {},
       onSwitchClient: () => {},
+      firstLaunch: true,
     });
     onReady(value);
     return null;
@@ -500,6 +502,7 @@ test("setModelEverywhere persists under the active provider, leaving other provi
       resumedCount: 0,
       refreshFileList: () => {},
       onSwitchClient: () => {},
+      firstLaunch: true,
     });
     onReady(value);
     return null;

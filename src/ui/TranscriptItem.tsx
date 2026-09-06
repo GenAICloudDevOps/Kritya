@@ -46,7 +46,7 @@ export function TranscriptItem({ item, verbose, stdout }: TranscriptItemProps) {
         </Box>
       )}
       {item.kind === "info" && <Text dimColor>{item.text}</Text>}
-      {item.kind === "banner" && <Banner subtitle={item.subtitle} />}
+      {item.kind === "banner" && <Banner subtitle={item.subtitle} compact={item.compact} />}
     </Box>
   );
 }
