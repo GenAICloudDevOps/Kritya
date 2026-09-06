@@ -42,6 +42,7 @@ test("isValidStartOpts accepts undefined and well-shaped opts, rejects malformed
 test("isValidModeFlags accepts well-shaped boolean flags, rejects malformed ones", () => {
   assert.equal(isValidModeFlags({ planMode: true }), true);
   assert.equal(isValidModeFlags({ dryRunMode: false, acceptEdits: true }), true);
+  assert.equal(isValidModeFlags({ bypassMode: true }), true);
   assert.equal(isValidModeFlags({}), true);
   assert.equal(isValidModeFlags(undefined), false);
   assert.equal(isValidModeFlags(null), false);

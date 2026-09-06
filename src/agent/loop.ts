@@ -59,6 +59,15 @@ export class Agent {
   /** When true, file-edit tools auto-approve without prompting (see ACCEPT_EDITS_TOOL_NAMES). */
   acceptEdits = false;
   /**
+   * When true, EVERY tool call auto-approves without prompting — including
+   * `shell` and classifyDanger-flagged destructive commands, unlike
+   * `acceptEdits`. Only reachable from the UI when the sandbox is active
+   * (see sandboxAvailable in shell/sandbox.ts), since that's the safety net
+   * this mode leans on instead of a human in the loop. Deny rules and the
+   * kill switch still apply regardless of this flag.
+   */
+  bypassMode = false;
+  /**
    * Whether a human can see and respond to a permission prompt right now.
    * True by default (the CLI and its subagents render one); headless runs
    * set this false because there is no one to answer it, so a forced

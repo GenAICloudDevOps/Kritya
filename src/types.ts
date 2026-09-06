@@ -25,7 +25,14 @@ export type ItemBody =
   | { kind: "summary"; files: string[]; nextStep: string };
 
 export type Phase =
-  "input" | "working" | "permission" | "model" | "resume" | "confirmMode" | "elicitation";
+  | "input"
+  | "working"
+  | "permission"
+  | "model"
+  | "resume"
+  | "confirmMode"
+  | "confirmBypassMode"
+  | "elicitation";
 
 export interface UiBridge {
   onTasksUpdate(tasks: TaskItem[]): void;

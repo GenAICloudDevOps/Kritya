@@ -15,6 +15,7 @@ function baseProps(overrides: Partial<StatusLineProps> = {}): StatusLineProps {
     dryRunMode: false,
     planMode: false,
     acceptEdits: false,
+    bypassMode: false,
     autoApprovedCount: 0,
     provider: "nvidia",
     model: "llama-3.1-70b",
@@ -74,6 +75,17 @@ test("labels accept-edits mode with the auto-approved count", () => {
   );
   try {
     assert.match(plain(lastFrame()), /mode: accept-edits \(3 auto\)/);
+  } finally {
+    unmount();
+  }
+});
+
+test("labels auto/bypass mode with the auto-approved count", () => {
+  const { lastFrame, unmount } = render(
+    <StatusLine {...baseProps({ bypassMode: true, autoApprovedCount: 5 })} />
+  );
+  try {
+    assert.match(plain(lastFrame()), /mode: auto \(5 auto\)/);
   } finally {
     unmount();
   }

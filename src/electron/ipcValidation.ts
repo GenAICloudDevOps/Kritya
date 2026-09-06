@@ -30,12 +30,13 @@ export function isValidStartOpts(value: unknown): value is { provider?: string; 
   return true;
 }
 
-const MODE_FLAG_KEYS = ["planMode", "dryRunMode", "acceptEdits"] as const;
+const MODE_FLAG_KEYS = ["planMode", "dryRunMode", "acceptEdits", "bypassMode"] as const;
 
 export interface ModeFlags {
   planMode?: boolean;
   dryRunMode?: boolean;
   acceptEdits?: boolean;
+  bypassMode?: boolean;
 }
 
 export function isValidModeFlags(value: unknown): value is ModeFlags {

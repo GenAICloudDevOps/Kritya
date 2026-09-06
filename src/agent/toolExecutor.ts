@@ -96,6 +96,7 @@ export interface ToolExecutorHost {
   planMode: boolean;
   dryRunMode: boolean;
   acceptEdits: boolean;
+  bypassMode: boolean;
   interactive: boolean;
   audit?: AuditLog;
   tracer: Tracer;
@@ -325,8 +326,17 @@ export class ToolExecutor {
       tool.requiresPermission &&
       ACCEPT_EDITS_TOOL_NAMES.has(tool.name);
 
+    // Unlike autoApproveEdit, this covers every tool — including `shell` and
+    // classifyDanger-flagged destructive commands — since bypassMode leans on
+    // the sandbox (not a human) to contain the blast radius. planMode/dryRunMode
+    // already returned above, so this can't apply while either is on.
+    const autoApproveBypass = host.bypassMode;
+
     let source: PermissionSource;
-    if (autoApproveEdit) {
+    if (autoApproveBypass) {
+      host.onAutoApprove?.();
+      source = "bypass-mode";
+    } else if (autoApproveEdit) {
       host.onAutoApprove?.();
       source = "accept-edits";
     } else if (danger !== null || host.permissions.needsPrompt(tool, args)) {

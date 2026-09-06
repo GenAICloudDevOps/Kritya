@@ -275,6 +275,33 @@ test("the kill switch outranks accept-edits mode, which would otherwise auto-app
   assert.equal(write.calls, 0, "accept-edits did not auto-approve past the kill switch");
 });
 
+test("the kill switch outranks auto/bypass mode, which would otherwise auto-approve everything", async () => {
+  const kill = new KillSwitch();
+  const trip = fakeTool("read_file", {
+    execute: async () => {
+      kill.engage();
+      return "ok";
+    },
+  });
+  const shell = fakeTool("shell", { requiresPermission: true });
+
+  const { client } = scriptedClient([
+    toolRound([
+      { id: "call_1", name: "read_file", argsJson: "{}" },
+      { id: "call_2", name: "shell", argsJson: '{"command":"rm -rf /"}' },
+    ]),
+  ]);
+
+  const agent = makeAgent(client, [trip, shell]);
+  agent.kill = kill;
+  agent.bypassMode = true;
+  await assert.rejects(
+    () => agent.runTurn("read then run a destructive command", makeHandlers().handlers),
+    (err: unknown) => err instanceof KillSwitchError
+  );
+  assert.equal(shell.calls, 0, "auto/bypass mode did not auto-approve past the kill switch");
+});
+
 test("a blocked call is recorded in the audit log as a kill-switch denial", async () => {
   const kill = new KillSwitch();
   const trip = fakeTool("read_file", {

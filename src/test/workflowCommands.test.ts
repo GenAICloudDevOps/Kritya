@@ -38,6 +38,7 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
   const agent = {
     planMode: false,
     acceptEdits: false,
+    bypassMode: false,
     async compact() {
       counts.compactions++;
       // Snapshot what the user would be looking at right now.
@@ -60,6 +61,10 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
     acceptEdits: false,
     setAcceptEdits(v: boolean) {
       ctx.acceptEdits = v;
+    },
+    bypassMode: false,
+    setBypassMode(v: boolean) {
+      ctx.bypassMode = v;
     },
     setPlanMode(v: boolean) {
       ctx.planMode = v;

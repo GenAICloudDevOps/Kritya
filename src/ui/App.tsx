@@ -228,9 +228,12 @@ export function App({
     releaseKill,
     acceptEdits,
     setAcceptEdits,
+    bypassMode,
+    setBypassMode,
     autoApprovedCount,
     cycleMode,
     onAcceptEditsConfirm,
+    onBypassModeConfirm,
     abortRef,
     setModelEverywhere,
     setProviderEverywhere,
@@ -385,6 +388,13 @@ export function App({
       else if (c === "n" || key.escape) onAcceptEditsConfirm(false);
       return;
     }
+    // First-time auto/bypass-mode confirmation: Yes proceeds, anything else cancels.
+    if (phase === "confirmBypassMode") {
+      const c = _input.toLowerCase();
+      if (c === "y" || key.return) onBypassModeConfirm(true);
+      else if (c === "n" || key.escape) onBypassModeConfirm(false);
+      return;
+    }
     // History recall with ↑/↓ when no autocomplete popup is open.
     if (phase === "input" && !suggestions.length && !fileSuggestions.length) {
       const hist = inputHistory.current;
@@ -441,6 +451,8 @@ export function App({
       planMode,
       acceptEdits,
       setAcceptEdits,
+      bypassMode,
+      setBypassMode,
       tokenBudget,
       budgetPct,
       budgetUsed,
@@ -706,6 +718,27 @@ export function App({
         </Box>
       )}
 
+      {phase === "confirmBypassMode" && (
+        <Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={1}>
+          <Text bold color="red">
+            Switch to auto mode? (sandbox-gated)
+          </Text>
+          <Text>
+            EVERY tool call will auto-approve, including destructive shell commands (rm -rf,
+            force-push, etc.) — nothing will ask first.
+          </Text>
+          <Text dimColor>
+            The sandbox — not a human — is what contains any damage this mode causes.
+          </Text>
+          <Text dimColor>Shift+Tab again goes back to normal.</Text>
+          <Box marginTop={1}>
+            <Text>
+              <Text color="red">Yes (y)</Text> · No (n/Esc)
+            </Text>
+          </Box>
+        </Box>
+      )}
+
       {phase === "model" && (
         <ModelPicker
           current={model}
@@ -809,6 +842,7 @@ export function App({
           dryRunMode={dryRunMode}
           planMode={planMode}
           acceptEdits={acceptEdits}
+          bypassMode={bypassMode}
           autoApprovedCount={autoApprovedCount}
           provider={provider}
           model={

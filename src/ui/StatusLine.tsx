@@ -8,6 +8,7 @@ export interface StatusLineProps {
   dryRunMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
+  bypassMode: boolean;
   autoApprovedCount: number;
   provider: string;
   model: string;
@@ -34,6 +35,7 @@ export function StatusLine({
   dryRunMode,
   planMode,
   acceptEdits,
+  bypassMode,
   autoApprovedCount,
   provider,
   model,
@@ -55,15 +57,21 @@ export function StatusLine({
       ) : (
         ""
       )}
-      <Text color={dryRunMode || planMode ? "cyan" : acceptEdits ? "green" : undefined}>
+      <Text
+        color={
+          bypassMode ? "red" : dryRunMode || planMode ? "cyan" : acceptEdits ? "green" : undefined
+        }
+      >
         mode:{" "}
-        {dryRunMode
-          ? "dry-run"
-          : planMode
-            ? "plan"
-            : acceptEdits
-              ? `accept-edits (${autoApprovedCount} auto)`
-              : "default"}
+        {bypassMode
+          ? `auto (${autoApprovedCount} auto)`
+          : dryRunMode
+            ? "dry-run"
+            : planMode
+              ? "plan"
+              : acceptEdits
+                ? `accept-edits (${autoApprovedCount} auto)`
+                : "default"}
         {" · "}
       </Text>
       {displayModelId(provider, model)}

@@ -18,6 +18,7 @@ import {
 import { createSwitchyardClient } from "../provider/switchyardClient.js";
 import { SWITCHYARD_ROUTE_ID, resolveEffectiveModel } from "../provider/switchyardSidecar.js";
 import { KillSwitchError } from "../agent/killSwitch.js";
+import { defaultSandboxMode, sandboxAvailable } from "../shell/sandbox.js";
 import {
   loadProjectState,
   nextPhase,
@@ -194,8 +195,14 @@ export function useAgent({
    *  workflow's own `planMode`. */
   const [dryRunMode, setDryRunMode] = useState(false);
   const [acceptEdits, setAcceptEdits] = useState(false);
+  const [bypassMode, setBypassMode] = useState(false);
   const [autoApprovedCount, setAutoApprovedCount] = useState(0);
   const hasConfirmedAcceptEdits = useRef(false);
+  const hasConfirmedBypassMode = useRef(false);
+  /** Whether auto/bypass mode is even reachable — requires a real sandbox
+   *  backend on this platform (Windows never has one; see sandboxAvailable). */
+  const sandboxActive =
+    (config.sandboxExec ?? defaultSandboxMode()) !== "off" && sandboxAvailable();
   const abortRef = useRef<AbortController | null>(null);
   /** Tool calls currently running, keyed by call id — more than one when a
    *  turn's read-only calls are dispatched in parallel. Rendered as live rows. */
@@ -326,12 +333,46 @@ export function useAgent({
     });
   };
 
-  /** Cycles normal → accept-edits → dry-run → normal. First entry into accept-edits this session pauses on a confirmation instead of switching immediately. */
+  const enterBypassMode = () => {
+    hasConfirmedBypassMode.current = true;
+    agent.bypassMode = true;
+    setBypassMode(true);
+    setAutoApprovedCount(0);
+    addItem({
+      kind: "info",
+      text:
+        "Auto mode ON — EVERY tool call auto-approves, including destructive shell commands " +
+        "(rm -rf, force-push, etc.). Relies on the sandbox, not a human, to contain damage. " +
+        "Shift+Tab again for normal.",
+    });
+  };
+
+  /**
+   * Cycles normal → accept-edits → dry-run → auto (only when the sandbox is
+   * active) → normal. First entry into accept-edits or auto mode this session
+   * pauses on a confirmation instead of switching immediately. When the
+   * sandbox isn't active, auto mode is skipped and dry-run goes straight back
+   * to normal, same as before this mode existed.
+   */
   const cycleMode = () => {
+    if (bypassMode) {
+      agent.bypassMode = false;
+      setBypassMode(false);
+      addItem({ kind: "info", text: "Auto mode OFF — back to normal, prompts resume." });
+      return;
+    }
     if (dryRunMode) {
       agent.dryRunMode = false;
       setDryRunMode(false);
-      addItem({ kind: "info", text: "Dry-run mode OFF — the agent can make changes again." });
+      if (!sandboxActive) {
+        addItem({ kind: "info", text: "Dry-run mode OFF — the agent can make changes again." });
+        return;
+      }
+      if (!hasConfirmedBypassMode.current) {
+        setPhase("confirmBypassMode");
+        return;
+      }
+      enterBypassMode();
       return;
     }
     if (acceptEdits) {
@@ -355,6 +396,12 @@ export function useAgent({
   const onAcceptEditsConfirm = (confirmed: boolean) => {
     setPhase("input");
     if (confirmed) enterAcceptEdits();
+  };
+
+  const onBypassModeConfirm = (confirmed: boolean) => {
+    setPhase("input");
+    if (confirmed) enterBypassMode();
+    else addItem({ kind: "info", text: "Auto mode declined — back to normal." });
   };
 
   const setModelEverywhere = (id: string) => {
@@ -720,9 +767,13 @@ export function useAgent({
     releaseKill,
     acceptEdits,
     setAcceptEdits,
+    bypassMode,
+    setBypassMode,
+    sandboxActive,
     autoApprovedCount,
     cycleMode,
     onAcceptEditsConfirm,
+    onBypassModeConfirm,
     abortRef,
     setModelEverywhere,
     setProviderEverywhere,

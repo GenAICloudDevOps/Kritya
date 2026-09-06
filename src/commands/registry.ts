@@ -204,6 +204,8 @@ export interface CommandContext {
   planMode: boolean;
   acceptEdits: boolean;
   setAcceptEdits(v: boolean): void;
+  bypassMode: boolean;
+  setBypassMode(v: boolean): void;
   tokenBudget: number;
   budgetPct: number;
   budgetUsed: number;
@@ -322,6 +324,10 @@ async function runPhase(ctx: CommandContext, phase: WorkflowPhase): Promise<void
   if (wantPlanMode && ctx.acceptEdits) {
     ctx.agent.acceptEdits = false;
     ctx.setAcceptEdits(false);
+  }
+  if (wantPlanMode && ctx.bypassMode) {
+    ctx.agent.bypassMode = false;
+    ctx.setBypassMode(false);
   }
 
   saveProjectState(ctx.workspace, project.name, phase);

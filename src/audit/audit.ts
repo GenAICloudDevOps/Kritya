@@ -29,6 +29,7 @@ export type PermissionSource =
   | "allow-rule" // pre-approved by a settings allow rule
   | "always-allow" // approved via an earlier "always" choice this session
   | "accept-edits" // auto-approved by accept-edits mode
+  | "bypass-mode" // auto-approved by auto/bypass mode (sandbox-gated)
   | "interactive" // the user answered a live prompt
   | "plan-mode" // blocked because plan mode is on (read-only)
   | "dry-run-mode" // blocked because the manual dry-run toggle is on (read-only)

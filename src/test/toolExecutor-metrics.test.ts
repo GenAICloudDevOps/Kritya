@@ -52,6 +52,7 @@ function makeHost(meter: Meter): ToolExecutorHost {
     planMode: false,
     dryRunMode: false,
     acceptEdits: false,
+    bypassMode: false,
     interactive: true,
     tracer: NOOP_TRACER,
     meter,

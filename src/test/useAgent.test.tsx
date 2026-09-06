@@ -11,6 +11,7 @@ import type { Agent } from "../agent/loop.js";
 import { CONFIG_DIR, type CliConfig } from "../config/config.js";
 import type { PermissionDecision, UiBridge } from "../types.js";
 import { useAgent, type UseAgentParams } from "../ui/useAgent.js";
+import { sandboxAvailable } from "../shell/sandbox.js";
 
 async function tick(): Promise<void> {
   await new Promise((r) => setImmediate(r));
@@ -26,6 +27,7 @@ function fakeAgent(overrides: Partial<Record<string, unknown>> = {}): Agent {
     planMode: false,
     dryRunMode: false,
     acceptEdits: false,
+    bypassMode: false,
     onAutoApprove: undefined,
     audit: undefined,
     turnSpan: undefined,
@@ -107,7 +109,10 @@ test("resuming a session adds a note with the checklist restore stats", async ()
 
 test("cycleMode goes normal -> confirm -> accept-edits -> dry-run -> normal", async () => {
   const agent = fakeAgent();
-  const { api } = await setup({ agent });
+  // sandboxExec: "off" makes auto/bypass mode unreachable regardless of the
+  // platform running this test, so the cycle deterministically wraps at
+  // dry-run — see the sandbox-gated auto-mode tests below for that path.
+  const { api } = await setup({ agent, config: { sandboxExec: "off" } as CliConfig });
 
   // First Shift+Tab always pauses on confirmation before ever entering accept-edits.
   api.cycleMode();
@@ -134,6 +139,58 @@ test("cycleMode goes normal -> confirm -> accept-edits -> dry-run -> normal", as
   assert.match(lastItemText(api.items), /Dry-run mode OFF/);
 });
 
+test("without a sandbox, cycling past dry-run skips auto mode and returns to normal", async () => {
+  const agent = fakeAgent();
+  const { api } = await setup({ agent, config: { sandboxExec: "off" } as CliConfig });
+
+  api.cycleMode(); // -> confirm
+  await tick();
+  api.onAcceptEditsConfirm(true); // -> accept-edits
+  await tick();
+  api.cycleMode(); // -> dry-run
+  await tick();
+  api.cycleMode(); // -> normal (auto mode is unreachable without a sandbox)
+  await tick();
+
+  assert.equal(api.phase, "input");
+  assert.equal(agent.dryRunMode, false);
+  assert.equal(agent.bypassMode, false);
+});
+
+test("with a sandbox available, cycling past dry-run offers auto mode behind a confirmation", async () => {
+  const agent = fakeAgent();
+  const { api } = await setup({ agent });
+
+  api.cycleMode(); // -> confirm
+  await tick();
+  api.onAcceptEditsConfirm(true); // -> accept-edits
+  await tick();
+  api.cycleMode(); // -> dry-run
+  await tick();
+  api.cycleMode(); // -> confirmBypassMode, or straight back to normal if this
+  await tick(); //    machine genuinely has no sandbox binary installed
+
+  if (!sandboxAvailable()) {
+    assert.equal(api.phase, "input");
+    assert.equal(agent.bypassMode, false);
+    return;
+  }
+
+  assert.equal(api.phase, "confirmBypassMode");
+  assert.equal(agent.bypassMode, false);
+
+  api.onBypassModeConfirm(true);
+  await tick();
+  assert.equal(api.phase, "input");
+  assert.equal(agent.bypassMode, true);
+  assert.match(lastItemText(api.items), /Auto mode ON/);
+
+  api.cycleMode(); // -> back to normal
+  await tick();
+  assert.equal(agent.bypassMode, false);
+  assert.match(lastItemText(api.items), /Auto mode OFF/);
+});
+
 test("declining the first accept-edits confirmation leaves everything off", async () => {
   const agent = fakeAgent();
   const { api } = await setup({ agent });
@@ -147,7 +204,9 @@ test("declining the first accept-edits confirmation leaves everything off", asyn
 
 test("once accept-edits has been confirmed once, cycling back to it skips the prompt", async () => {
   const agent = fakeAgent();
-  const { api } = await setup({ agent });
+  // sandboxExec: "off" keeps this test scoped to the accept-edits/dry-run
+  // cycle regardless of platform — see the auto-mode tests for that path.
+  const { api } = await setup({ agent, config: { sandboxExec: "off" } as CliConfig });
   api.cycleMode(); // -> confirm
   await tick();
   api.onAcceptEditsConfirm(true); // -> accept-edits
