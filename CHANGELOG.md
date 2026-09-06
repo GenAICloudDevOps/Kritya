@@ -4,6 +4,29 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.25-beta] — 2026-09-06
+
+### Added
+
+- Added an interactive first-run prompt to save an API key to `~/.kritya/.env`
+  when none is found for the active provider, instead of only printing setup
+  instructions.
+- Added `/status`, showing context/budget/token/task detail that's been moved
+  off the always-visible status line.
+
+### Changed
+
+- The full ASCII banner now shows only on a workspace's first launch;
+  subsequent launches use a compact one-line header.
+- The `/` command menu now groups commands by category (Workflow, Session,
+  Safety & limits, Info, plus Custom/MCP) instead of one flat list.
+- Simplified the always-visible status line, moving detailed context/budget/
+  token/task info to the new `/status` command; the status line's `budget N%`
+  now only appears once usage crosses 80% or the budget is hit, rather than
+  from the first token spent.
+- Cleaned up provider/model display names to avoid a doubled prefix for
+  providers whose model IDs already include their own namespace (e.g. NVIDIA).
+
 ## [0.8.24-beta] — 2026-09-05
 
 ### Added
