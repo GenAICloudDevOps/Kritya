@@ -4,6 +4,17 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.26-beta] — 2026-09-06
+
+### Added
+
+- Added a sandbox-gated `auto` mode (Shift+Tab, after dry-run) that
+  auto-approves every tool call, including destructive shell commands that
+  would otherwise always prompt. Only reachable when the sandbox is active
+  (Linux/macOS with `bwrap`/`sandbox-exec` installed — never on Windows),
+  and requires an explicit one-time confirmation. Deny rules and the kill
+  switch still apply unconditionally.
+
 ## [0.8.25-beta] — 2026-09-06
 
 ### Added
