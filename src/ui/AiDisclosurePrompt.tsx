@@ -26,12 +26,11 @@ export function AiDisclosurePrompt({ onDismiss }: { onDismiss(): void }) {
       <Text>kritya is an AI agent</Text>
       <Box marginTop={1}>
         <Text>
-          You are interacting with an AI system: kritya reads/writes files and runs shell commands
-          here, acting on an AI model's output — not a human.
+          It reads files, edits your project, and runs commands — driven by an AI model, not a
+          human. You approve changes before they happen.
         </Text>
       </Box>
-      <Text>Mutating actions ask for approval first.</Text>
-      <Text>Details: /help, SECURITY.md (EU AI Act Art. 50).</Text>
+      <Text dimColor>Details: /help, SECURITY.md (EU AI Act Art. 50).</Text>
       <Box marginTop={1}>
         <Text>
           Shown once. <Text color="yellow">{blinkOn ? "AI Disclosure" : " "}</Text>

@@ -92,7 +92,7 @@ export function StatusLine({
         ""
       )}
       {privacyMode ? <Text color="cyan"> · privacy:on</Text> : ""}
-      {" · /status for details"}
+      {" · /diff review · /undo revert · Ctrl+K stop · /status for details"}
     </Text>
   );
 }

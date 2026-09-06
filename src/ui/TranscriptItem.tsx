@@ -47,6 +47,24 @@ export function TranscriptItem({ item, verbose, stdout }: TranscriptItemProps) {
       )}
       {item.kind === "info" && <Text dimColor>{item.text}</Text>}
       {item.kind === "banner" && <Banner subtitle={item.subtitle} compact={item.compact} />}
+      {item.kind === "summary" && (
+        <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
+          <Text bold color="green">
+            ✓ Completed
+          </Text>
+          {item.files.length > 0 ? (
+            <Box flexDirection="column">
+              <Text dimColor>Changed:</Text>
+              {item.files.map((f) => (
+                <Text key={f}> {f}</Text>
+              ))}
+            </Box>
+          ) : (
+            <Text dimColor>No files changed.</Text>
+          )}
+          <Text dimColor>Next: {item.nextStep}</Text>
+        </Box>
+      )}
     </Box>
   );
 }

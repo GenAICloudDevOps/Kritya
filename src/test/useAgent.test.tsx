@@ -301,7 +301,7 @@ test("a tool call in flight is tracked and cleared when it ends", async () => {
   await api.runAgent("write something");
   await tick();
   assert.equal(api.inFlight.length, 0);
-  const toolItem = api.items[api.items.length - 1] as {
+  const toolItem = api.items.find((i) => (i as { kind: string }).kind === "tool") as {
     kind: string;
     name?: string;
     resultSummary?: string;

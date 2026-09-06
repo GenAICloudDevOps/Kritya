@@ -43,6 +43,22 @@ import { activePersistenceWarnings, onPersistenceWarning } from "../config/debug
 
 export type Item = ItemBody & { id: number };
 
+/** Tool names whose successful calls mutate a file the user would want to review. */
+const FILE_MUTATING_TOOLS = new Set([
+  "edit_file",
+  "write_file",
+  "edit_notebook",
+  "edit_spreadsheet",
+  "edit_pdf",
+  "write_document",
+]);
+
+/** Pulls the path out of a tool summary like "Edit src/foo.ts" or "Write src/foo.ts (12 bytes)". */
+function pathFromToolSummary(summary: string): string | undefined {
+  const match = summary.match(/^\S+\s+(\S+)/);
+  return match?.[1];
+}
+
 function initialToolStatus(name: string): string | undefined {
   if (name.startsWith("mcp_")) return "contacting MCP server…";
   if (name.startsWith("lsp_")) return "querying language server…";
@@ -516,6 +532,8 @@ export function useAgent({
     const ac = new AbortController();
     abortRef.current = ac;
     setInFlight([]);
+    const changedFiles = new Set<string>();
+    let turnSucceeded = false;
 
     try {
       await agent.runTurn(
@@ -540,6 +558,10 @@ export function useAgent({
           },
           onToolEnd: (id, name, summary, preview, isError, resultSummary) => {
             setInFlight((prev) => prev.filter((t) => t.id !== id));
+            if (!isError && FILE_MUTATING_TOOLS.has(name)) {
+              const p = pathFromToolSummary(summary);
+              if (p) changedFiles.add(p);
+            }
             if (name !== "update_tasks")
               addItem({
                 kind: "tool",
@@ -575,6 +597,7 @@ export function useAgent({
         ac.signal,
         images
       );
+      turnSucceeded = true;
     } catch (err) {
       const isAbort =
         (err instanceof Error && err.name === "AbortError") ||
@@ -608,6 +631,13 @@ export function useAgent({
       }
       addItem({ kind: "info", text });
     } finally {
+      if (turnSucceeded && changedFiles.size > 0) {
+        addItem({
+          kind: "summary",
+          files: [...changedFiles],
+          nextStep: "review with /diff · revert with /undo",
+        });
+      }
       abortRef.current = null;
       setInFlight([]);
       setStream("");

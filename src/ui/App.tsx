@@ -572,6 +572,17 @@ export function App({
         {(item) => <TranscriptItem key={item.id} item={item} verbose={verbose} stdout={stdout} />}
       </Static>
 
+      {firstLaunch && items.length <= 1 && phase === "input" && (
+        <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
+          <Text dimColor>Try asking:</Text>
+          <Text dimColor> · Explain this codebase</Text>
+          <Text dimColor> · Find and fix failing tests</Text>
+          <Text dimColor> · Review my uncommitted changes</Text>
+          <Text dimColor> · Add a new feature</Text>
+          <Text dimColor> · /help for commands</Text>
+        </Box>
+      )}
+
       {stream ? (
         <Box marginBottom={1}>
           <Markdown
