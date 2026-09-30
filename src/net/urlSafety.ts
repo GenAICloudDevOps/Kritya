@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
-import { Agent, type Dispatcher } from "undici";
+import { Agent, Dispatcher1Wrapper, type Dispatcher } from "undici";
 
 /**
  * Shared "is this host on a private/internal network" check, used by both
@@ -223,37 +223,39 @@ export interface FetchInitWithDispatcher extends RequestInit {
  * instance holds no per-host state beyond ordinary connection pooling, so
  * it's safe to share across every call site that uses the same policy.
  */
-function createPinnedDispatcher(isBlockedAddress: (address: string) => boolean): Agent {
-  return new Agent({
-    connect: {
-      lookup(hostname, options, callback) {
-        dnsLookup(hostname, { all: true })
-          .then((addresses: LookupAddress[]) => {
-            if (addresses.length === 0) {
-              callback(new Error(`Could not resolve ${hostname}`), []);
-              return;
-            }
-            const bad = addresses.find((a) => isBlockedAddress(a.address));
-            if (bad) {
-              callback(
-                new Error(
-                  `Refusing to connect to ${hostname}: resolves to private/internal address ${bad.address}`
-                ),
-                []
-              );
-              return;
-            }
-            if (options.all) {
-              callback(null, addresses);
-            } else {
-              const chosen = addresses[0];
-              callback(null, chosen.address, chosen.family);
-            }
-          })
-          .catch((err: Error) => callback(err, []));
+function createPinnedDispatcher(isBlockedAddress: (address: string) => boolean): Dispatcher {
+  return new Dispatcher1Wrapper(
+    new Agent({
+      connect: {
+        lookup(hostname, options, callback) {
+          dnsLookup(hostname, { all: true })
+            .then((addresses: LookupAddress[]) => {
+              if (addresses.length === 0) {
+                callback(new Error(`Could not resolve ${hostname}`), []);
+                return;
+              }
+              const bad = addresses.find((a) => isBlockedAddress(a.address));
+              if (bad) {
+                callback(
+                  new Error(
+                    `Refusing to connect to ${hostname}: resolves to private/internal address ${bad.address}`
+                  ),
+                  []
+                );
+                return;
+              }
+              if (options.all) {
+                callback(null, addresses);
+              } else {
+                const chosen = addresses[0];
+                callback(null, chosen.address, chosen.family);
+              }
+            })
+            .catch((err: Error) => callback(err, []));
+        },
       },
-    },
-  });
+    })
+  );
 }
 
 /** For callers that never allow loopback either (fetch_url). */

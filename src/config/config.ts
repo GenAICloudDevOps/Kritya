@@ -362,6 +362,7 @@ export function resolveProvider(config: CliConfig, override?: string): ResolvedP
   if (merged.apiKeyEnv) apiKey = process.env[merged.apiKeyEnv];
   if (!apiKey) apiKey = merged.apiKey;
   if (!apiKey && name === "nvidia") apiKey = process.env.NVIDIA_API_KEY || config.apiKey;
+  if (apiKey) apiKey = apiKey.trim();
 
   return {
     name,
