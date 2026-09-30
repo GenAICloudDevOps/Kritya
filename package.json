@@ -82,13 +82,13 @@
     "husky": "^9.1.7",
     "ink-testing-library": "^4.0.0",
     "lint-staged": "^17.4.1",
-    "prettier": "^3.3.0",
+    "prettier": "^3.9.0",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.69.0"
   },
   "overrides": {
-    "brace-expansion": "^5.0.8",
+    "brace-expansion": "^5.0.12",
     "fast-uri": "^3.1.7",
     "exceljs": {
       "uuid": "^11.1.1",
