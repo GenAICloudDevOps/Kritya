@@ -74,8 +74,9 @@ jobs:
       # future high finding too. See scripts/audit-allowlist.json.
       - run: npm run check:audit
       - run: npm audit signatures
+      
       - run: npm run check:install-scripts
-
+- run: npm run check:typescript-setup
       # Socket catches supply-chain risk npm audit doesn't: malware,
       # obfuscated/typosquatted packages, install-script behavior, etc.,
       # evaluated against this org's Socket security policy. Reviewed,
