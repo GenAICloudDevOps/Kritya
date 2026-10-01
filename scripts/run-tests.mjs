@@ -22,7 +22,9 @@ for (const arg of process.argv.slice(2)) {
   }
 }
 if (shardTotal < 1 || shardIndex < 0 || shardIndex >= shardTotal) {
-  console.error(`Invalid --shard flag (want --shard=N/M with 1 <= N <= M, got "${process.argv.slice(2).join(" ")}")`);
+  console.error(
+    `Invalid --shard flag (want --shard=N/M with 1 <= N <= M, got "${process.argv.slice(2).join(" ")}")`
+  );
   process.exit(2);
 }
 
