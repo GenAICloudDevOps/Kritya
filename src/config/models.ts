@@ -56,6 +56,18 @@ export const CURATED_MODELS: ModelInfo[] = [
     note: "strong agentic tool use",
     contextWindow: 256_000,
   },
+  {
+    id: "z-ai/glm-5.3",
+    label: "GLM 5.3",
+    note: "strong agentic tool use",
+    contextWindow: 1_048_576,
+  },
+  {
+    id: "z-ai/glm-5.3-flash",
+    label: "GLM 5.3 Flash",
+    note: "fast + cheap",
+    contextWindow: 1_048_576,
+  },
 ];
 
 export const DEFAULT_MODEL = CURATED_MODELS[0].id;
