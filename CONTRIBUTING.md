@@ -36,6 +36,18 @@ You'll need a provider API key (see the README) — get one at
 - **Avoid new dependencies** unless there's a clear, load-bearing reason. Part
   of kritya's value is a small install footprint.
 
+### Why are there two TypeScript packages?
+
+`@typescript/native` is the real TypeScript 7 compiler that builds this
+project, while the package named `typescript` is secretly TypeScript 6
+(`npm:@typescript/typescript6`) — kept because `typescript-eslint` still
+needs the older compiler API, and Microsoft recommends this side-by-side
+arrangement until TypeScript 7 has a stable programmatic API. It looks like
+a mistake, but "cleaning it up" breaks the build or lint, so don't touch
+these two entries — and don't let Dependabot auto-merge updates to them.
+`npm run check:typescript-setup` (also run in CI) fails loudly if the
+aliases ever get mixed up.
+
 ## Project layout
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
@@ -50,7 +62,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
   CI runs:
 
   ```bash
-  npm ci && npm run check:audit && npm run format:check && npm run lint && npm run check:install-scripts && npm run test:coverage && npm run build
+  npm ci && npm run check:audit && npm run format:check && npm run lint && npm run check:install-scripts && npm run check:typescript-setup && npm run test:coverage && npm run build
   ```
 
 ## Reporting bugs and requesting features

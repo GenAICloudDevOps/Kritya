@@ -37,6 +37,7 @@
     "format:check": "prettier --check .",
     "check:audit": "node scripts/check-audit.mjs",
     "check:install-scripts": "node scripts/check-install-scripts.mjs",
+    "check:typescript-setup": "node scripts/check-typescript-setup.mjs",
     "link": "npm run build && npm link",
     "prepublishOnly": "npm run build",
     "prepare": "husky",
@@ -119,10 +120,7 @@
     "publish": null,
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "package.json",
-      "!src/**/*",
-      "!scripts/**/*"
+      "electron/**/*"
     ],
     "win": {
       "target": "nsis"
