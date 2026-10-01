@@ -100,22 +100,28 @@ jobs:
           SOCKET_CLI_API_TOKEN: ${{ secrets.SOCKET_CLI_API_TOKEN }}
 
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.cell.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # Both Node versions the package claims to support (`engines:
-        # >=22`): 22.x is the floor, 24.x is the Active LTS most users
-        # will actually be on once 22 drops to maintenance. Testing only
-        # the floor meant the newer half of that range was never exercised.
-        os: [ubuntu-latest]
-        node-version: [22.x, 24.x]
-        include:
-          - os: windows-latest
-            node-version: 22.x
-          - os: macos-latest
-            node-version: 22.x
+        # The suite (~3.5 min whole) is split into 4 shards running in
+        # parallel; each shard runs ~1/4 of the test files. run-tests.mjs
+        # assigns files to shards by sorted index, so shards are stable
+        # run to run. Bump the list if the suite grows a lot.
+        shard: [1, 2, 3, 4]
+        cell:
+          # Both Node versions the package claims to support (`engines:
+          # >=22`): 22.x is the floor, 24.x is the Active LTS most users
+          # will actually be on once 22 drops to maintenance. Testing only
+          # the floor meant the newer half of that range was never exercised.
+          # The ubuntu + 22.x cell additionally records raw coverage, merged
+          # and threshold-checked in the `coverage` job below; every cell
+          # still runs the full suite across its 4 shards.
+          - { os: ubuntu-latest, node: 22.x, coverage: true }
+          - { os: ubuntu-latest, node: 24.x, coverage: false }
+          - { os: windows-latest, node: 22.x, coverage: false }
+          - { os: macos-latest, node: 22.x, coverage: false }
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -127,22 +133,70 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ matrix.cell.node }}
           cache: npm
 
       - run: npm ci
       - run: npm run build
+      # Lint/format run once per cell (shard 1) rather than per shard: still
+      # per-OS, since Windows checkouts can differ in line endings.
       - run: npm run lint
+        if: matrix.shard == 1
       # Kept per-OS rather than moved above: Windows checkouts can differ in
       # line endings, so this isn't purely a repeat of the Linux run.
       - run: npm run format:check
-      # Coverage thresholds only need checking once; running c8 on every
-      # OS/Node combination would just repeat the same numbers twice.
-      # Pinned to one specific cell (ubuntu + 22.x) rather than "any ubuntu",
-      # since ubuntu now runs on two Node versions.
-      # These two conditions are complements — keep them in sync, or a matrix
-      # change can silently leave coverage unenforced everywhere.
-      - run: npm test
-        if: matrix.os != 'ubuntu-latest' || matrix.node-version != '22.x'
-      - run: npm run test:coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22.x'
+        if: matrix.shard == 1
+
+      # Coverage cells record raw coverage for their shard instead of just
+      # running it; the `coverage` job merges all four shards and enforces
+      # the .c8rc.json thresholds. (The build above already ran, so the
+      # runner is invoked directly instead of via `npm test`.)
+      - run: npx c8 --reporter=none node scripts/run-tests.mjs --shard=${{ matrix.shard }}/4
+        if: matrix.cell.coverage
+      - name: Upload shard coverage
+        if: matrix.cell.coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage/tmp/
+          if-no-files-found: error
+      - run: node scripts/run-tests.mjs --shard=${{ matrix.shard }}/4
+        if: ${{ !matrix.cell.coverage }}
+
+  # Merges the raw per-shard coverage from the ubuntu + 22.x test cells and
+  # enforces the .c8rc.json thresholds. Waits for every test shard, so a red
+  # suite never produces a green coverage gate.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+      # Needed for `"all": true` in .c8rc.json: uncovered files are
+      # enumerated from dist/, so the report is computed against the same
+      # tree the shards ran against.
+      - run: npm run build
+
+      - name: Download shard coverage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: coverage-shard-*
+          path: coverage/tmp/
+          merge-multiple: true
+
+      # Merges coverage/tmp/*.json and exits non-zero if the .c8rc.json
+      # thresholds aren't met.
+      - run: npx c8 report --reporter=text --reporter=html
