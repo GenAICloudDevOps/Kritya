@@ -68,6 +68,12 @@ export const CURATED_MODELS: ModelInfo[] = [
     note: "fast + cheap",
     contextWindow: 1_048_576,
   },
+  {
+    id: "deepseek-ai/deepseek-v4.1-flash",
+    label: "DeepSeek V4.1 Flash",
+    note: "fast + cheap",
+    contextWindow: 1_048_576,
+  },
 ];
 
 export const DEFAULT_MODEL = CURATED_MODELS[0].id;
