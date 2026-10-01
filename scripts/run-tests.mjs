@@ -8,13 +8,39 @@ import path from "node:path";
 
 const testDir = path.join(process.cwd(), "dist", "test");
 
+// Optional sharding for CI: --shard=N/M runs only the files whose sorted
+// index satisfies (index % M) === (N - 1), letting the suite split across M
+// parallel jobs. Files are sorted so shards are stable run to run. With no
+// flag the whole suite runs, exactly as before.
+let shardIndex = 0;
+let shardTotal = 1;
+for (const arg of process.argv.slice(2)) {
+  const m = /^--shard=(\d+)\/(\d+)$/.exec(arg);
+  if (m) {
+    shardIndex = Number(m[1]) - 1;
+    shardTotal = Number(m[2]);
+  }
+}
+if (shardTotal < 1 || shardIndex < 0 || shardIndex >= shardTotal) {
+  console.error(
+    `Invalid --shard flag (want --shard=N/M with 1 <= N <= M, got "${process.argv.slice(2).join(" ")}")`
+  );
+  process.exit(2);
+}
+
 const files = readdirSync(testDir)
   .filter((name) => name.endsWith(".test.js"))
-  .map((name) => path.join(testDir, name));
+  .sort()
+  .map((name) => path.join(testDir, name))
+  .filter((_, i) => i % shardTotal === shardIndex);
 
 if (files.length === 0) {
   console.error(`No test files found in ${testDir}`);
   process.exit(1);
+}
+
+if (shardTotal > 1) {
+  console.log(`Running shard ${shardIndex + 1}/${shardTotal}: ${files.length} test files`);
 }
 
 // A cap on how long any single thing node:test is timing can run: without
