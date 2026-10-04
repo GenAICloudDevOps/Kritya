@@ -1,63 +1,72 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { tailForViewport } from "../ui/viewport.js";
+import { createElement } from "react";
+import { renderToString, Text } from "ink";
+import { StreamViewport } from "../ui/StreamViewport.js";
+import { streamRows, terminalColumns, terminalRows } from "../ui/viewport.js";
 
-test("short text is left alone", () => {
-  const text = "one\ntwo\nthree";
-  assert.equal(tailForViewport(text, 80, 40), text);
+test("terminal size falls back to 80x24 when the tty reports nothing", () => {
+  assert.equal(terminalColumns(undefined), 80);
+  assert.equal(terminalColumns({ columns: 0 }), 80);
+  assert.equal(terminalColumns({ columns: 120 }), 120);
+  assert.equal(terminalRows(undefined), 24);
+  assert.equal(terminalRows({ rows: 0 }), 24);
+  assert.equal(terminalRows({ rows: 50 }), 50);
 });
 
-test("a long answer is cut to the tail that fits the viewport", () => {
-  const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
-  const out = tailForViewport(lines.join("\n"), 80, 24).split("\n");
-
-  assert.ok(out.length <= 24 - 8, `kept ${out.length} lines for 16 rows`);
-  assert.equal(out[out.length - 1], "line 199", "the newest text is what's shown");
+test("the streaming region leaves the live UI its rows", () => {
+  assert.equal(streamRows(24), 16);
+  assert.equal(streamRows(50), 42);
 });
 
-test("wrapped lines are counted as the rows they really occupy", () => {
-  const wide = Array.from({ length: 50 }, () => "x".repeat(240));
-  const out = tailForViewport(wide.join("\n"), 80, 24).split("\n");
-  // Each line is three rows at 80 columns, so only a handful fit in 16.
-  assert.ok(out.length <= 6, `kept ${out.length} triple-height lines`);
+test("a very short terminal still gets a usable viewport", () => {
+  assert.equal(streamRows(10), 4);
+  assert.equal(streamRows(0), 4);
 });
 
-test("a cut inside a code fence reopens it", () => {
-  // The opening fence is far enough up that the cut lands below it.
-  const lines = ["```ts", ...Array.from({ length: 100 }, (_, i) => `const a${i} = ${i};`)];
-  const out = tailForViewport(lines.join("\n"), 80, 24);
-  assert.ok(out.startsWith("```"), "the tail opens a fence it was cut inside of");
-  assert.ok(out.includes("const a99 = 99;"), "and still ends with the newest line");
+const render = (lines: string[], rows: number): string[] => {
+  const rendered = renderToString(
+    createElement(StreamViewport, {
+      rows,
+      children: createElement(Text, null, lines.join("\n")),
+    }),
+    { columns: 80 }
+  ).split("\n");
+  // The viewport's marginBottom leaves one blank row under it.
+  while (rendered.length > 0 && rendered[rendered.length - 1] === "") rendered.pop();
+  return rendered;
+};
+
+test("a long answer is capped to the viewport, showing its tail", () => {
+  // Ink erases its live region by rewinding a line count, so a frame taller
+  // than the viewport strands a partial copy in the scrollback and the answer
+  // prints twice. Capping it is what keeps the erase exact — and the newest
+  // text is what has to stay on screen while it streams.
+  const total = 200;
+  const lines = Array.from({ length: total }, (_, i) => `line ${i}`);
+  const viewport = streamRows(24);
+  const rendered = render(lines, 24);
+
+  assert.equal(rendered.length, viewport, `rendered ${rendered.length} rows`);
+  assert.equal(rendered[0], `line ${total - viewport}`, "the view scrolled to the tail");
+  assert.equal(rendered[viewport - 1], `line ${total - 1}`, "the newest line is on screen");
 });
 
-test("a cut below a closed fence does not reopen one", () => {
-  const lines = [
-    "```ts",
-    "const a = 1;",
-    "```",
-    ...Array.from({ length: 100 }, (_, i) => `prose ${i}`),
-  ];
-  const out = tailForViewport(lines.join("\n"), 80, 24);
-  assert.equal(out.startsWith("```"), false);
+test("an answer that only just overflows still ends on its newest line", () => {
+  const viewport = streamRows(24);
+  const lines = Array.from({ length: viewport + 3 }, (_, i) => `line ${i}`);
+  const rendered = render(lines, 24);
+
+  assert.equal(rendered.length, viewport);
+  assert.equal(rendered[rendered.length - 1], `line ${viewport + 2}`);
 });
 
-test("a very short terminal still shows something", () => {
-  const lines = Array.from({ length: 50 }, (_, i) => `line ${i}`);
-  const out = tailForViewport(lines.join("\n"), 80, 4).split("\n");
-  assert.ok(out.length >= 4);
-});
+test("a short answer is left whole, from the top", () => {
+  // It must not be pushed to the bottom of the viewport — the box is only as
+  // tall as its content while the answer still fits.
+  const rendered = render(["one", "two", "three"], 24);
 
-test("row counting matches how the text actually wraps, not width/columns", () => {
-  // Twelve 9-column words: character math says 108/40 = 3 rows, but word
-  // wrapping needs 4. Counting low is what left a stray line on screen.
-  const line = Array.from({ length: 12 }, () => "wordwords").join(" ");
-  const kept = tailForViewport([line, line, line, line, line].join("\n"), 40, 24).split("\n");
-  const rows = kept.reduce((n, l) => n + Math.ceil(l.length / 40), 0);
-  assert.ok(rows <= 24, `estimated ${rows} rows for a 24-row terminal`);
-});
-
-test("table rows are budgeted for their wrapped height", () => {
-  const table = Array.from({ length: 20 }, (_, i) => `| cell ${i} | second column | third |`);
-  const kept = tailForViewport(table.join("\n"), 80, 24).split("\n");
-  assert.ok(kept.length <= 5, `kept ${kept.length} table rows, each up to 3 tall`);
+  assert.equal(rendered[0], "one");
+  assert.equal(rendered[1], "two");
+  assert.equal(rendered[2], "three");
 });

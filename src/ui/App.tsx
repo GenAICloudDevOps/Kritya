@@ -1,5 +1,14 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput, useStdout, useWindowSize } from "ink";
+import {
+  Box,
+  Static,
+  Text,
+  useApp,
+  useBoxMetrics,
+  useInput,
+  useWindowSize,
+  type DOMElement,
+} from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
 import { glob } from "tinyglobby";
@@ -22,8 +31,9 @@ import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
 import { StatusLine } from "./StatusLine.js";
+import { StreamViewport } from "./StreamViewport.js";
 import { TranscriptItem } from "./TranscriptItem.js";
-import { tailForViewport, terminalColumns, terminalRows } from "./viewport.js";
+import { terminalColumns, terminalRows } from "./viewport.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
 import { mcpPrompts, mcpResources } from "../mcp/client.js";
@@ -65,10 +75,6 @@ const MENTION_ALL_RE = /(?:^|\s)@([^\s@]+)/g;
 const MAX_MENTION_CHARS = 8000;
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
-// Erase screen + scrollback, then home the cursor (same sequence Ink itself
-// uses for its own "content taller than the terminal" clear path).
-const CLEAR_TERMINAL = "\x1b[2J\x1b[3J\x1b[H";
-
 export function App({
   agent,
   workspace,
@@ -89,12 +95,25 @@ export function App({
   firstLaunch,
 }: AppProps) {
   const { exit } = useApp();
-  const { stdout } = useStdout();
   // Ink 8 types `stdout` as a plain Node stream, so the terminal's dimensions
-  // come from useWindowSize() rather than stdout.columns / stdout.rows.
+  // come from useWindowSize() rather than stdout.columns / stdout.rows — and
+  // it drives the re-layout on resize by itself. Kritya used to wipe the screen
+  // and remount <Static> on every column change, because Ink erased its live
+  // region against a stale line count after the terminal reflowed already-
+  // printed lines. Ink 8 fixed that class of bug itself: it redraws the frame
+  // when the terminal loses rows, keeps the content above the frame when rows
+  // shrink, and preserves scrollback — which the old `\x1b[3J` clear threw
+  // away. So the workaround is gone and nothing here watches for resizes.
   const windowSize = useWindowSize();
   const columns = terminalColumns(windowSize);
   const rows = terminalRows(windowSize);
+  // The transcript column's real width, measured rather than assumed. The
+  // wrapped renderers lay out to this, so if the chrome around them ever gains
+  // padding the prose still breaks at the right column. Falls back to the
+  // terminal width for the first frame, before layout has run.
+  const rootRef = useRef<DOMElement | null>(null);
+  const { clientWidth } = useBoxMetrics(rootRef);
+  const contentWidth = clientWidth || columns;
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0);
   const [steerInput, setSteerInput] = useState("");
@@ -104,7 +123,6 @@ export function App({
   const [fileList, setFileList] = useState<string[]>([]);
   const [verbose, setVerbose] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [staticKey, setStaticKey] = useState(0);
   const inputHistory = useRef<string[]>([]);
   const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
 
@@ -143,34 +161,6 @@ export function App({
   /** The change a Ctrl chord echoed into the box, rather than a real keystroke. */
   const isCtrlEcho = (prev: string, next: string): boolean =>
     ctrlChord.current !== null && next === prev + ctrlChord.current;
-
-  // Terminals that reflow their buffer on resize (e.g. VS Code's xterm.js)
-  // rewrap already-printed full-width lines (banner art, box borders) to the
-  // new column count on their own, before Ink's next redraw arrives. Ink then
-  // erases based on a stale line count from before that reflow, so it clears
-  // the wrong number of rows and leaves stale copies of boxes/banners behind
-  // — compounding on every resize. There's no way to reflow in place safely,
-  // so once the column count actually settles on a new value (ignoring
-  // height-only resizes, e.g. VS Code adding a split terminal), wipe the
-  // screen ourselves and remount <Static> so Ink reprints everything fresh
-  // onto a blank canvas. The manual clear is safe here specifically because
-  // the forced remount immediately triggers Ink's own static-flush path,
-  // which resyncs its internal line-count bookkeeping — it's only unsafe to
-  // write raw ANSI without following it with something that resets that
-  // bookkeeping.
-  const lastColumns = useRef(columns);
-  useEffect(() => {
-    // useWindowSize() already subscribes to resize, so this only has to react
-    // once the column count settles on a new value; a height-only resize leaves
-    // `columns` untouched and never reaches here.
-    if (columns === lastColumns.current) return;
-    lastColumns.current = columns;
-    const timer = setTimeout(() => {
-      stdout.write(CLEAR_TERMINAL);
-      setStaticKey((k) => k + 1);
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [columns, stdout]);
 
   const refreshFileList = useCallback(() => {
     glob("**/*", {
@@ -578,9 +568,11 @@ export function App({
   };
 
   return (
-    <Box flexDirection="column">
-      <Static key={staticKey} items={items}>
-        {(item) => <TranscriptItem key={item.id} item={item} verbose={verbose} columns={columns} />}
+    <Box ref={rootRef} flexDirection="column">
+      <Static items={items}>
+        {(item) => (
+          <TranscriptItem key={item.id} item={item} verbose={verbose} contentWidth={contentWidth} />
+        )}
       </Static>
 
       {firstLaunch && items.length <= 1 && phase === "input" && (
@@ -595,9 +587,9 @@ export function App({
       )}
 
       {stream ? (
-        <Box marginBottom={1}>
-          <Markdown text={tailForViewport(stream, columns, rows)} streaming />
-        </Box>
+        <StreamViewport rows={rows}>
+          <Markdown text={stream} streaming width={contentWidth} />
+        </StreamViewport>
       ) : null}
 
       {tasks.length > 0 && (

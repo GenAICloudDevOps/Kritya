@@ -92,9 +92,21 @@ function Marked({
  * bullets, quotes, rules, tables, and inline emphasis. Deliberately
  * lightweight — not a full implementation.
  */
-export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function Markdown({
+  text,
+  streaming = false,
+  width: measuredWidth,
+}: {
+  text: string;
+  streaming?: boolean;
+  /**
+   * Column width to lay out to. Callers that know their container's real width
+   * pass it; without it the terminal's width is used, less a small inset.
+   */
+  width?: number;
+}) {
   const windowSize = useWindowSize();
-  const width = Math.max(20, terminalColumns(windowSize) - 2);
+  const width = Math.max(20, measuredWidth ?? terminalColumns(windowSize) - 2);
   const blocks = React.useMemo(
     () => renderBlocks(text, width, streaming),
     [text, width, streaming]

@@ -7,11 +7,16 @@ import { toolOutputPreview } from "./toolOutputPreview.js";
 export interface TranscriptItemProps {
   item: Item;
   verbose: boolean;
-  columns: number;
+  /** Real width of the transcript column, in cells — measured, not the
+   *  terminal's width, so indented output is clipped to what actually fits. */
+  contentWidth: number;
 }
 
+/** Indent tool output is printed under (see the `    ` prefix below). */
+const TOOL_INDENT = 4;
+
 /** Renders one line of the transcript — a user message, assistant reply, tool call, info line, or banner. */
-export function TranscriptItem({ item, verbose, columns }: TranscriptItemProps) {
+export function TranscriptItem({ item, verbose, contentWidth }: TranscriptItemProps) {
   return (
     <Box marginBottom={item.kind === "tool" ? 0 : 1} flexDirection="column">
       {item.kind === "user" && (
@@ -22,7 +27,7 @@ export function TranscriptItem({ item, verbose, columns }: TranscriptItemProps) 
           {item.text}
         </Text>
       )}
-      {item.kind === "assistant" && <Markdown text={item.text} />}
+      {item.kind === "assistant" && <Markdown text={item.text} width={contentWidth} />}
       {item.kind === "tool" && (
         <Box flexDirection="column">
           <Text dimColor>
@@ -31,7 +36,12 @@ export function TranscriptItem({ item, verbose, columns }: TranscriptItemProps) 
           </Text>
           {item.output && item.output.trim() && (item.resultSummary === undefined || verbose) && (
             <Text dimColor>
-              {toolOutputPreview(item.output, verbose, Math.max(20, columns - 6), item.error)
+              {toolOutputPreview(
+                item.output,
+                verbose,
+                Math.max(20, contentWidth - TOOL_INDENT),
+                item.error
+              )
                 .split("\n")
                 .map((l) => `    ${l}`)
                 .join("\n")}
