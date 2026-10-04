@@ -41,6 +41,8 @@ export class UndoStack {
   private entries: UndoEntry[] = [];
   private redoStack: FileState[][] = [];
   private turn = 0;
+  /** The file most recently snapshotted — i.e. last touched by the agent. */
+  private lastTouched: { absPath: string; relPath: string } | null = null;
 
   // File-watcher checkpointing. Scoped to files kritya has itself snapshotted
   // this session — never a whole-repo recursive watch — so this can't pick up
@@ -62,6 +64,7 @@ export class UndoStack {
 
   /** Capture the current state of a file before it is modified. */
   snapshot(absPath: string, relPath: string): void {
+    this.lastTouched = { absPath, relPath };
     this.entries.push({ relPath, absPath, content: readOrNull(absPath), turn: this.turn });
     this.evictOldestTurnsOverCap();
     // A fresh change invalidates any redo history.
@@ -69,6 +72,15 @@ export class UndoStack {
     this.lastOwnWriteAt.set(absPath, Date.now());
     this.watchForExternalEdits(absPath, relPath);
     this.scheduleOwnWriteSync(absPath);
+  }
+
+  /**
+   * The file the agent touched most recently this session, if any. Used by
+   * the Ctrl+E "open in $EDITOR" flow so there is always a sensible default
+   * target without the user naming a path.
+   */
+  lastTouchedFile(): { absPath: string; relPath: string } | null {
+    return this.lastTouched;
   }
 
   /**
