@@ -18,7 +18,7 @@ type SuspendTerminal = ReturnType<typeof useApp>["suspendTerminal"];
  */
 export async function openInEditor(
   suspendTerminal: SuspendTerminal,
-  absPath: string,
+  absPath: string
 ): Promise<void> {
   await suspendTerminal(async () => {
     const editor = process.env.VISUAL || process.env.EDITOR || "vi";
