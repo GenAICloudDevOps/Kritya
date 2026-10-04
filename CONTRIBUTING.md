@@ -72,7 +72,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
   tree — they are what catch a broken `files` field or a missing entry point
   before a user does. Both need a working `npm`, so they can't run over a WSL
   UNC mount; run them from inside WSL (or let CI run them) if that's how you
-  have the repo open.
+  have the repo open. They also run automatically via `prepublishOnly` on any
+  `npm publish`, so a hand-cut release is gated the same way CI's is.
+
+- **Something wrong locally?** `npm run build && node dist/index.js doctor`
+  diagnoses the installation: Node version against `engines`, config file
+  validity, the active provider and whether its key resolves _and_ the endpoint
+  accepts it, workspace trust, MCP servers, sandbox availability, and
+  persistence settings. Add `--json` to get the same thing machine-readable,
+  or `--offline` to skip the network probes.
 
 ## Reporting bugs and requesting features
 

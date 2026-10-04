@@ -67,6 +67,7 @@ import {
 } from "./agent/worktree.js";
 import type { AgentHandlers, SubagentResult, SubagentSpec } from "./types.js";
 import { VERSION } from "./version.js";
+import { updateNoticeForUser } from "./update/check.js";
 
 const USAGE = `kritya — a lean, provider-agnostic terminal coding agent
 
@@ -100,6 +101,11 @@ Inspect the local audit log:
 
 List and validate skills:
   kritya skills [dir] [--json] [--validate]
+
+Check the installation:
+  kritya doctor [dir] [--json] [--offline]
+  Diagnoses the Node version, config, provider and its API key, workspace
+  trust, MCP servers, sandbox, and whether a newer release exists.
 
 Setup:
   1. Get an API key at https://build.nvidia.com (free credits available)
@@ -169,6 +175,16 @@ if (process.argv[2] === "skills") {
   process.exit(runSkillsCli(process.argv.slice(3)));
 }
 
+// `kritya doctor` is the third standalone subcommand. It is async (it probes
+// the provider and the registry), so unlike the two above it has to be awaited
+// here — without that, top-level execution would fall through to parseArgs and
+// start a session after the diagnosis had already run. Imported dynamically so
+// `--version`, `--help` and a normal launch don't pay to load its module graph.
+if (process.argv[2] === "doctor") {
+  const { runDoctorCli } = await import("./commands/doctor.js");
+  process.exit(await runDoctorCli(process.argv.slice(3)));
+}
+
 const args = parseArgs(process.argv.slice(2));
 
 if (args.help) {
@@ -176,8 +192,21 @@ if (args.help) {
   process.exit(0);
 }
 if (args.version) {
+  // The version itself goes to stdout and is printed before anything else, so
+  // `kritya --version` stays exactly one parseable line. The staleness notice
+  // is a courtesy, not part of that contract, so it is TTY-only (a script or a
+  // pipe never pays for it and never sees it), cached for a day, bounded, and
+  // written to stderr.
   console.log(VERSION);
-  process.exit(0);
+  if (process.stdout.isTTY) {
+    void updateNoticeForUser()
+      .then((notice) => {
+        if (notice) console.error(notice);
+      })
+      .finally(() => process.exit(0));
+  } else {
+    process.exit(0);
+  }
 }
 
 const workspace = path.resolve(args.dir);

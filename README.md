@@ -132,6 +132,25 @@ kritya [directory] [options]
   -v, --version         version
 ```
 
+Subcommands — these run instead of starting a session:
+
+```
+kritya doctor [dir] [--json] [--offline]
+                      check that this installation is set up correctly: the
+                      Node version against the package's engines, the config
+                      file, the active provider and whether its API key
+                      resolves *and* the endpoint accepts it, workspace trust
+                      and git state, MCP servers (including unset ${VAR}s),
+                      sandbox availability, persistence settings, skills and
+                      hooks, and whether a newer release exists
+kritya audit ...      inspect the local audit log (see docs/CONFIGURATION.md)
+kritya skills ...     list and validate discovered skills
+```
+
+`kritya doctor` exits non-zero only when something is actually broken; the
+warnings it prints are "this works, but not the way you may expect" — an
+unavailable sandbox, an untrusted workspace, a lagging `latest` tag.
+
 In-session commands (type `/` to see them with autocomplete; letters filter the list):
 
 | Command                   | What it does                                                                                                                        |
@@ -433,10 +452,20 @@ model config lives in `~/.kritya/config.json`.
 kritya collects **no telemetry** and phones home to nothing of its own by
 default. Network requests go only to the model provider you configure (and to
 Tavily if you use web search). Sessions and config stay on your machine under
-`~/.kritya/`. The one opt-in exception is `KRITYA_OTEL_ENDPOINT` (see
-[Audit log & telemetry](docs/CONFIGURATION.md#audit-log--telemetry)): if you explicitly set it, tracing/metrics spans are sent
-to the OpenTelemetry Collector you point it at — nothing is exported anywhere
-unless you configure that endpoint yourself.
+`~/.kritya/`.
+
+Two things leave the machine beyond the model provider, and both are opt-out:
+
+- **The update check.** `kritya --version` and `kritya doctor` ask the public
+  npm registry for the latest published version, so they can tell you when
+  you're behind. The answer is cached in `~/.kritya/update-check.json` for 24
+  hours, so it is one request per day at most, and it only runs when stdout is
+  a TTY — a script or a pipe never triggers it and never sees the notice.
+  `KRITYA_NO_UPDATE_CHECK=1` turns it off entirely.
+- **Tracing**, if you opt in via `KRITYA_OTEL_ENDPOINT` (see
+  [Audit log & telemetry](docs/CONFIGURATION.md#audit-log--telemetry)): spans
+  are sent to the OpenTelemetry Collector you point it at — nothing is
+  exported anywhere unless you configure that endpoint yourself.
 
 ## Development
 

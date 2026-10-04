@@ -42,7 +42,7 @@
     "check:smoke": "node scripts/smoke-install.mjs",
     "check:typescript-setup": "node scripts/check-typescript-setup.mjs",
     "link": "npm run build && npm link",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && npm run check:package && npm run check:smoke",
     "prepare": "husky",
     "electron:dev": "npm run build && electron .",
     "electron:build": "npm run build && electron-builder"

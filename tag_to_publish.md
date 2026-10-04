@@ -21,13 +21,17 @@ git add package.json package-lock.json CHANGELOG.md
 git commit -m "chore(release): bump version to <version>, update changelog"
 ```
 
-Before tagging, confirm the version and the tag agree. `publish.yml`
-publishes whatever `package.json` says, under whatever tag you pushed, and
-never compares the two:
+Before tagging, run the same pre-flight the publish job runs first. It checks
+all three files at once — the tag against `package.json`, both lock version
+fields, and that the CHANGELOG section exists and is non-empty:
 
 ```bash
-node -p "require('./package.json').version"   # must equal the tag minus the v
+node scripts/check-release.mjs v<version>
 ```
+
+That script is the whole reason those checks can't silently drift: `publish.yml`
+publishes whatever `package.json` says, under whatever tag you pushed, and
+would otherwise never compare the two.
 
 ## 2. Push the commit to main
 
@@ -59,21 +63,36 @@ git push origin v0.8.27-beta
 
 ## What the tag push triggers (`.github/workflows/publish.yml`)
 
-1. Checks out, builds, and runs the full test suite (`npm run build && npm test`).
-2. Publishes to npm as **`npm publish --provenance --tag beta`** —
+1. `npm run check:release` — before anything expensive. A tag that disagrees
+   with `package.json`, a stale lock, or a missing/empty CHANGELOG section
+   each produce a _green_ workflow with a wrong or blank result, so they are
+   caught in the first seconds rather than after the build and test run.
+2. Checks out, builds, and runs the full test suite (`npm run build && npm test`).
+3. Upgrades npm to `^11.5.1` (OIDC trusted publishing needs it).
+4. Publishes to npm as **`npm publish --provenance --tag beta`** —
    always the `beta` dist-tag, never `latest`, and always with signed
-   provenance attestation.
-3. Publishing uses OIDC trusted publishing (`id-token: write`) — no
-   `NPM_TOKEN` secret anywhere in the workflow. npm exchanges the job's
-   OIDC identity for a short-lived publish credential itself.
-4. Extracts that version's section out of `CHANGELOG.md` and creates a
+   provenance attestation. This step also runs `prepublishOnly`, which chains
+   `check:package` and `check:smoke` — the tarball is packed, inspected, and
+   installed into a temp directory before it goes out. They live in
+   `prepublishOnly` rather than as their own steps here so that a `npm publish`
+   run by hand from a laptop is gated the same way.
+5. Verifies the version is actually readable back from the registry
+   (`https://registry.npmjs.org/kritya/<version>`, polled for up to 60s).
+   `npm publish` exiting 0 only means the upload was accepted — propagation is
+   not instant, and a delay looks identical to a failed release from the
+   outside. This step is what turns that ambiguity into a red or green run.
+6. Extracts that version's section out of `CHANGELOG.md` and creates a
    **GitHub prerelease** (`gh release create ... --prerelease`) using it
    as the release notes.
 
+Publishing uses OIDC trusted publishing (`id-token: write`) — no
+`NPM_TOKEN` secret anywhere in the workflow. npm exchanges the job's
+OIDC identity for a short-lived publish credential itself.
+
 Note that `ci.yml` does **not** run on tags — it triggers on pushes to `main`
-and on pull requests only. So the tag's only gate is the `npm test` in step 1;
-lint, format, `npm audit`, and the coverage threshold all ran earlier on the
-`main` push and are not re-checked here.
+and on pull requests only. So the tag's only gates are the steps above; lint,
+format, `npm audit`, the `package` job, and the coverage threshold all ran
+earlier on the `main` push and are not re-checked here.
 
 There is also no stable-release path. `--tag beta` and `--prerelease` are
 hardcoded in the workflow, so every tag published this way is a beta.

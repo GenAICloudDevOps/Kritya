@@ -104,9 +104,19 @@ jobs:
   # test still green — the repo tree is not what `npm install -g kritya`
   # produces. This packs the tarball, asserts on the manifest, then installs it
   # into a clean directory and runs the CLI from there.
+  #
+  # All three OSes on purpose: the global-install path is not the same code
+  # path on each. Windows gets .cmd/.ps1 shims and macOS a different bin
+  # symlink layout, so an entry point that is broken there still passes on
+  # Linux — which is exactly the leg that used to run alone. Each leg is cheap
+  # (~1 min), and the release depends on this being right.
   package:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:

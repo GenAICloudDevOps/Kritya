@@ -185,7 +185,16 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
 - **`src/commands/`** — `registry.ts` holds the built-in slash commands and
   dispatch order (built-in → custom → MCP prompt → unknown); `custom.ts` loads
   `*.md` command files from the user-global root, then plugins, then the
-  workspace, so the more specific source wins; `mcpCommand.ts` backs `/mcp`.
+  workspace, so the more specific source wins; `mcpCommand.ts` backs `/mcp`;
+  `doctor.ts` backs `kritya doctor` — it collects its checks into plain
+  `{level, label}` records and renders them separately, so the diagnostics are
+  testable without a TTY or a network.
+- **`src/update/check.ts`** — the "is a newer release out?" lookup behind
+  `kritya --version` and `kritya doctor`. Version precedence is hand-rolled
+  (`compareVersions`, semver §11 for prereleases) and the answer is cached for
+  24h under `~/.kritya/update-check.json`; every failure resolves to
+  "unavailable" rather than throwing, since a courtesy notice must never be
+  able to break the command it decorates.
 - **`src/undo/undo.ts`** — per-turn snapshot stack backing `/undo` and `/redo`.
 - **`src/session/store.ts`** — append-only JSONL transcripts; powers `-c`/`-r`.
 - **`src/agent/skills.ts`** / **`skillsCli.ts`** — discovers `SKILL.md` files

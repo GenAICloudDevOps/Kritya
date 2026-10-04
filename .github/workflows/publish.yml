@@ -53,12 +53,11 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      # The last gate before the artifact goes public. `npm publish` would
-      # happily ship a tarball missing its entry point or a file it imports;
-      # these two pack, install, and run the real result, so that fails here
-      # instead of in a user's terminal.
-      - run: npm run check:package
-      - run: npm run check:smoke
+      # check:package and check:smoke are NOT run explicitly here. They live in
+      # `prepublishOnly`, which `npm publish` invokes itself on the next step —
+      # so they still gate this release, and they also gate a `npm publish`
+      # someone runs by hand from a laptop, which an explicit step here could
+      # never do. Listing them in both places would just run them twice.
 
       # OIDC trusted publishing needs npm >= 11.5.1; the version bundled with
       # Node 22 is older, so it's upgraded just for this job. Bounded to the
@@ -71,8 +70,34 @@ jobs:
       # (registered as a trusted publisher on the kritya package) for a
       # short-lived publish credential itself. --provenance attaches the
       # signed build-to-source attestation using that same identity.
+      #
+      # This step also runs prepublishOnly → check:package + check:smoke, which
+      # is why their output appears nested under it.
       - name: Publish to npm (beta)
         run: npm publish --provenance --tag beta
+
+      # `npm publish` exiting 0 means the registry accepted the upload, not
+      # that the version is readable back yet — propagation is not
+      # instantaneous. From the outside a delay looks exactly like a failed
+      # release (the GitHub release exists, `npm view` still shows the previous
+      # version), which is a confusing state to be left debugging. Ask the
+      # registry directly so this run ends with a definite answer, and goes red
+      # if the answer is no.
+      - name: Verify the version is live on the registry
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="$(node -p 'require("./package.json").name')"
+          for attempt in $(seq 1 12); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$NAME/$VERSION")"
+            if [ "$status" = "200" ]; then
+              echo "$NAME@$VERSION is live on the registry."
+              exit 0
+            fi
+            echo "attempt $attempt/12: $NAME@$VERSION not visible yet (HTTP $status); retrying in 5s"
+            sleep 5
+          done
+          echo "::error::$NAME@$VERSION was accepted by npm publish but is still not on the registry after 60s"
+          exit 1
 
       - name: Extract this version's changelog section
         run: |

@@ -205,6 +205,13 @@ Configurable in `~/.kritya/config.json`, or with `KRITYA_RETENTION_DAYS`
 - `otel`: persisted default for tracing (`"off"` / `"file"` / `"console"` /
   `"both"`), same relationship to `KRITYA_OTEL`.
 
+**Update check.** `kritya --version` and `kritya doctor` ask the public npm
+registry for the latest published version, so they can tell you when you're
+behind. The answer is cached in `~/.kritya/update-check.json` for 24 hours (one
+request per day at most) and the check is skipped entirely when stdout is not a
+TTY, so scripts and pipes never trigger it. Set `KRITYA_NO_UPDATE_CHECK=1` to
+disable it outright — useful in air-gapped or locked-down environments.
+
 **AI disclosure.** Backs the [AI disclosure](../SECURITY.md#ai-disclosure-eu-ai-act-article-50)
 notes in SECURITY.md:
 
