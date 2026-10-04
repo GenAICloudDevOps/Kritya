@@ -3,7 +3,7 @@ import path from "node:path";
 
 const IGNORE_FILE = ".krityaignore";
 
-/** Converts one gitignore-style line into fast-glob ignore pattern(s). */
+/** Converts one gitignore-style line into glob ignore pattern(s). */
 function toGlobPatterns(line: string): string[] {
   let pattern = line.trim();
   if (!pattern || pattern.startsWith("#") || pattern.startsWith("!")) return [];
@@ -15,7 +15,7 @@ function toGlobPatterns(line: string): string[] {
   return isDir ? [`${base}/**`] : [base, `${base}/**`];
 }
 
-/** Reads `<workspace>/.krityaignore` (gitignore-style, one pattern per line) as fast-glob ignore patterns. */
+/** Reads `<workspace>/.krityaignore` (gitignore-style, one pattern per line) as glob ignore patterns. */
 export function loadIgnorePatterns(workspace: string): string[] {
   let raw: string;
   try {

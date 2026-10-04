@@ -58,7 +58,6 @@
   "dependencies": {
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
-    "fast-glob": "^3.3.3",
     "ink": "^7.1.1",
     "ink-text-input": "^6.0.0",
     "jszip": "^3.10.1",
@@ -69,6 +68,7 @@
     "pptxgenjs": "^4.0.1",
     "react": "^19.2.8",
     "string-width": "^8.2.2",
+    "tinyglobby": "^0.2.17",
     "undici": "^8.11.2"
   },
   "devDependencies": {

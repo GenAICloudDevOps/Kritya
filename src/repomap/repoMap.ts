@@ -10,7 +10,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import { isPathSafe, resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import { CODE_EXTENSIONS, extractSymbols, type CodeSymbol } from "./symbols.js";
@@ -113,13 +113,13 @@ export async function buildRepoMap(
   const root = resolveSafe(workspace, subdir || ".");
   const scopeLabel = path.relative(workspace, root) || "(workspace root)";
 
-  const found = await fg("**/*", {
+  const found = await glob("**/*", {
     cwd: root,
     dot: false,
     onlyFiles: true,
     followSymbolicLinks: false,
+    expandDirectories: false,
     ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(workspace)],
-    suppressErrors: true,
   });
 
   // Keep only source files, then rank by path so the maxFiles cap (which bounds

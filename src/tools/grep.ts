@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import type { ToolDef } from "../types.js";
 import {
   isPathSafe,
@@ -43,14 +43,14 @@ export const grepTool: ToolDef = {
   async execute(args, ctx) {
     const regex = safeCompileRegex(String(args.pattern));
     const searchRoot = resolveSafe(ctx.workspace, String(args.path ?? "."));
-    // Models on Windows sometimes emit backslash paths; fast-glob needs forward slashes.
-    const files = await fg(String(args.include ?? "**/*").replaceAll("\\", "/"), {
+    // Models on Windows sometimes emit backslash paths; glob patterns need forward slashes.
+    const files = await glob(String(args.include ?? "**/*").replaceAll("\\", "/"), {
       cwd: searchRoot,
       dot: false,
       onlyFiles: true,
       followSymbolicLinks: false,
+      expandDirectories: false,
       ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(ctx.workspace)],
-      suppressErrors: true,
     });
 
     const matches: string[] = [];

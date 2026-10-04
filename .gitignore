@@ -5,6 +5,7 @@ release/
 .env
 *.jpg
 .claude/
+.workbuddy-ai/
 .kritya/project.json
 ROADMAP.md
 /otelcol

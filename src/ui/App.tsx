@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import stringWidth from "string-width";
 import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
@@ -174,12 +174,12 @@ export function App({
   }, [stdout]);
 
   const refreshFileList = useCallback(() => {
-    fg("**/*", {
+    glob("**/*", {
       cwd: workspace,
       dot: false,
       onlyFiles: true,
+      expandDirectories: false,
       ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", ...loadIgnorePatterns(workspace)],
-      suppressErrors: true,
     })
       .then((files) => setFileList(files.sort().slice(0, 2000)))
       .catch(() => {});

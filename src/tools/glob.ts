@@ -1,5 +1,5 @@
 import path from "node:path";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import type { ToolDef } from "../types.js";
 import { isPathSafe, truncateResult, countLines } from "./common.js";
 import { loadIgnorePatterns } from "./ignore.js";
@@ -20,14 +20,14 @@ export const globTool: ToolDef = {
   summarize: (args) => `Glob ${args.pattern}`,
   resultSummary: (output) => countLines(output, "match", "matches"),
   async execute(args, ctx) {
-    // Models on Windows sometimes emit backslash paths; fast-glob needs forward slashes.
-    const files = await fg(String(args.pattern).replaceAll("\\", "/"), {
+    // Models on Windows sometimes emit backslash paths; glob patterns need forward slashes.
+    const files = await glob(String(args.pattern).replaceAll("\\", "/"), {
       cwd: ctx.workspace,
       dot: false,
       onlyFiles: true,
       followSymbolicLinks: false,
+      expandDirectories: false,
       ignore: ["**/node_modules/**", "**/.git/**", ...loadIgnorePatterns(ctx.workspace)],
-      suppressErrors: true,
     });
     const safeFiles = files.filter((f) => isPathSafe(ctx.workspace, path.join(ctx.workspace, f)));
     const capped = safeFiles.sort().slice(0, 200);
