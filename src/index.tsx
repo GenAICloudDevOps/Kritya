@@ -905,6 +905,9 @@ async function main() {
     />,
     {
       onRender: ({ renderTime }) => renderHistogram.record(renderTime),
+      // Repaint only the lines that changed instead of the whole frame:
+      // less flicker and less CPU while streaming. Ink 8 native.
+      incrementalRendering: true,
     }
   );
   markBannerSeen(workspace);

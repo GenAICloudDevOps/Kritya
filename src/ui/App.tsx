@@ -18,6 +18,7 @@ import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
 import { modelDisplaySlug } from "../config/models.js";
 import { setStderrSink } from "../stderr.js";
+import { openInEditor } from "./openInEditor.js";
 import type { ProviderClient } from "../provider/client.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { defaultSandboxMode, sandboxAvailable } from "../shell/sandbox.js";
@@ -96,7 +97,7 @@ export function App({
   privacyMode,
   firstLaunch,
 }: AppProps) {
-  const { exit, waitUntilRenderFlush } = useApp();
+  const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
   /**
    * Leave, but not until the screen has caught up.
    *
@@ -347,6 +348,27 @@ export function App({
     setFileIndex(0);
   };
 
+  // Ctrl+E opens the file the agent touched most recently in the user's
+  // $EDITOR, suspending the UI while the editor owns the terminal. Ink
+  // restores everything and repaints from scratch on resume; a hand-edit is
+  // reported by the undo stack's watcher via onExternalEdit like any other
+  // outside edit. Guarded against double presses — suspending twice throws.
+  const editorBusy = useRef(false);
+  const openInEditorFlow = useCallback(async () => {
+    if (editorBusy.current) return;
+    const target = undoStack.lastTouchedFile();
+    if (!target) {
+      addItem({ kind: "info", text: "Ctrl+E: the agent hasn't touched any file yet this session." });
+      return;
+    }
+    editorBusy.current = true;
+    try {
+      await openInEditor(suspendTerminal, target.absPath);
+    } finally {
+      editorBusy.current = false;
+    }
+  }, [suspendTerminal, undoStack, addItem]);
+
   useInput((_input, key) => {
     // Ctrl+K is the kill switch, and it comes before every other binding and
     // phase check on purpose: a panic button that only works from the idle
@@ -364,6 +386,17 @@ export function App({
     // Ctrl+O toggles showing full tool output.
     if (key.ctrl && _input === "o") {
       setVerbose((v) => !v);
+      return;
+    }
+    // Ctrl+E opens the most recently agent-touched file in $EDITOR. Only
+    // from the idle prompt — never mid-turn, so the editor can't race the
+    // agent over the same file.
+    if (key.ctrl && _input === "e") {
+      if (phase !== "input") {
+        setActivity("Ctrl+E works from the idle prompt — stop the current turn first.");
+        return;
+      }
+      void openInEditorFlow();
       return;
     }
     // Shift+Tab cycles normal → accept-edits → plan → normal. Only from the
