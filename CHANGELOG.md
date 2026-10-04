@@ -4,6 +4,70 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.27-beta] — 2026-10-04
+
+### Added
+
+- Added GLM 5.3, GLM 5.3 Flash, and DeepSeek V4.1 Flash to the curated
+  model list; all three carry a 1M-token context window.
+- Added an in-tree `TextInput` component, replacing the
+  `ink-text-input` dependency so the input line handles multi-line and
+  wrapped content correctly.
+- Added a UI-aware stderr sink: warnings raised by the agent loop, MCP
+  client, plugin loader, and config layer now render through the UI
+  instead of writing to `process.stderr` directly, so they land above
+  the frame instead of garbling it. CLI subcommands, headless runs, and
+  anything outside the UI's lifetime still go straight to stderr.
+- Added `Ctrl+E` to open the file the agent touched most recently in
+  `$VISUAL`/`$EDITOR` (falling back to `vi`), handing the terminal over
+  to the editor and repainting when it exits. Available from the idle
+  prompt only, so the editor can't race the agent over the same file;
+  edits made there are picked up by the undo stack's existing watcher
+  like any other outside change.
+
+### Changed
+
+- Upgraded Ink 7 → 8. The UI now uses Ink's native `overflow` and
+  clipping support instead of a hand-rolled resize workaround, and the
+  spinner rides Ink's shared animation timer rather than running an
+  interval of its own.
+- Enabled Ink 8's incremental rendering, so a streaming response
+  repaints only the lines that changed instead of the whole frame —
+  less flicker and less CPU while streaming.
+- Streaming output is now clipped and scrolled through a new
+  `StreamViewport` component.
+- **Node.js >= 22.19.0 is now required** (previously `>=22`), because
+  of the undici 8 upgrade below.
+- Upgraded `undici` 7 → 8, adapting the pinned-dispatcher plumbing to
+  the new dispatcher contract.
+- Split the build across two TypeScript packages: `@typescript/native`
+  is the real TypeScript 7 compiler, while the package named
+  `typescript` stays on `@typescript/typescript6` because
+  `typescript-eslint` still needs the older compiler API. A new
+  `npm run check:typescript-setup` guard, run in CI, fails if the two
+  aliases are ever mixed up.
+- Sharded the test suite four ways, with per-shard coverage merged into
+  a single threshold-checked report.
+- Bumped `prettier` 3.3.0 → 3.9.0 and the `brace-expansion`/`fast-uri`
+  overrides. Routine dependency maintenance.
+
+### Removed
+
+- Dropped `fast-glob` in favour of `tinyglobby`, and `ink-text-input`
+  in favour of the in-tree `TextInput`.
+
+### Fixed
+
+- API keys are now trimmed before use, so a key saved or pasted with a
+  trailing newline — common when copying one into a `.env` file — no
+  longer fails authentication.
+
+### Security
+
+- The SSRF-pinned DNS dispatcher behind `fetch_url` and the MCP OAuth
+  flow is now wrapped for undici 8's dispatcher contract, keeping
+  private/internal-address blocking intact across the upgrade.
+
 ## [0.8.26-beta] — 2026-09-06
 
 ### Added

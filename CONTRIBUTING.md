@@ -19,8 +19,8 @@ npm test
 npm run dev        # run from source against a scratch project
 ```
 
-Requires Node >=22. CI runs 22.x and 24.x on Ubuntu, plus 22.x on Windows
-and macOS.
+Requires Node >=22.19.0 (undici 8 needs it). CI runs 22.x and 24.x on
+Ubuntu, plus 22.x on Windows and macOS.
 
 You'll need a provider API key (see the README) — get one at
 [build.nvidia.com](https://build.nvidia.com).
@@ -55,8 +55,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
 ## Commit and PR guidelines
 
 - Use clear, conventional-style commit messages (`feat:`, `fix:`, `docs:`, …).
-- Describe user-facing changes in the PR and add a `CHANGELOG.md` entry under
-  "Unreleased".
+- Describe user-facing changes in the PR. Don't edit `CHANGELOG.md` yourself —
+  entries are written in a single `chore(release): bump version …` commit at
+  release time, so the file only ever lists shipped versions.
 - One logical change per PR where practical.
 - Before opening a PR, run the full check suite locally — this mirrors what
   CI runs:

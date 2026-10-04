@@ -55,7 +55,7 @@ review → fix` for building something new end-to-end
 
 ## Setup
 
-Requires Node.js >=22.
+Requires Node.js >=22.19.0.
 
 1. Get an API key from your chosen provider (click any
    model → "Get API Key").
@@ -170,7 +170,8 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 Custom `/commands` you define (see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#custom-slash-commands)) also appear here.
 
 `Esc` cancels a running request. `↑/↓` recalls input history. `Ctrl+O` toggles
-full tool output. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
+full tool output. `Ctrl+E` opens the file the agent touched most recently in
+`$EDITOR`. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 ### More features
 

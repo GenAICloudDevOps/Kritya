@@ -125,6 +125,15 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
 - **`src/atomicWrite.ts`** — temp-file-then-rename writes, so an interrupted
   write (crash, kill switch, full disk) can never leave a truncated source
   file behind — a reader sees either the whole old file or the whole new one.
+- **`src/stderr.ts`** — `writeStderr`, the single funnel for warnings raised
+  outside the UI (agent loop, MCP client, plugin loader, config layer). Ink
+  owns the terminal while the UI is mounted, so a raw `process.stderr.write`
+  lands in the middle of the frame and the next repaint garbles it; the
+  mounted UI registers a sink and warnings are written through Ink instead.
+  Falls back to raw stderr when no sink is registered — CLI subcommands,
+  headless runs, and anything before mount or after teardown. `crash.ts`
+  deliberately bypasses it: by then the UI is being torn down and its frame
+  state is not trustworthy.
 - **`src/shell/`** — `background.ts` (the `background: true` process manager
   behind `bg_output`/`bg_kill`, killed on exit) and `sandbox.ts`, which builds
   the `bwrap`/`sandbox-exec` invocation and owns the `auto`/`always`/`strict`/
@@ -191,12 +200,20 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
   `Meter` with counters/histograms) for local file/console tracing, plus
   `otlp.ts`'s encoders for the optional `KRITYA_OTEL_ENDPOINT` export path to
   a real OpenTelemetry Collector.
-- **`src/ui/`** — Ink components: `App` (the shell), `PermissionPrompt`,
-  `TrustPrompt`, `McpTrustPrompt`, `ElicitationPrompt`, `ApiKeySetupPrompt`
+- **`src/ui/`** — Ink components: `App` (the shell), `TextInput` (the input
+  line, in-tree since the Ink 8 upgrade), `StreamViewport` (clips and scrolls
+  streaming output), `PermissionPrompt`,
+  `TrustPrompt`, `McpTrustPrompt`, `ElicitationPrompt`, `AiDisclosurePrompt`,
+  `ApiKeySetupPrompt`
   (interactive-only fallback that saves a pasted key to `~/.kritya/.env` when
   none resolves), `ModelPicker`,
   `SelectList`, `Markdown`, `Banner`, `Spinner`, `StatusLine`,
-  `TranscriptItem`, plus `highlight.ts` for code fences, `mermaid.ts` for
+  `TranscriptItem`, plus `viewport.ts` for the wrap/clip arithmetic behind
+  `StreamViewport`, `openInEditor.ts` for the Ctrl+E `$EDITOR` handoff (Ink's
+  `suspendTerminal` gives the editor the terminal and repaints on return),
+  `highlight.ts` for code fences, `inline.ts` for inline
+  spans, `table.ts` for boxed tables, `toolOutputPreview.ts` for truncating
+  tool output, `mermaid.ts` for
   rendering flowcharts as ASCII trees, and the `useAgent`/`useKillSwitch`/
   `useSessionResume`/`useUsageBudget` hooks that bind the UI to the core.
 - **`electron/`** — a separate Electron desktop app wrapping the same

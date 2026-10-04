@@ -5,13 +5,29 @@ what stays a manual step by design.
 
 ## 1. Commit the version bump
 
+Exactly three files change, and only these three:
+
+- `package.json` — the `version` field.
+- `package-lock.json` — the `version` field at the top level _and_ the one
+  under `packages[""]`. Both, or the lock drifts: `npm ci` does not check
+  the root version field, so nothing in CI will catch a miss.
+- `CHANGELOG.md` — a new `## [<version>] — <date>` section at the top, above
+  the previous release. This section becomes the GitHub release notes, so it
+  must be non-empty, and the heading must match the tag exactly (minus the
+  leading `v`) or the release is created with empty notes.
+
 ```bash
 git add package.json package-lock.json CHANGELOG.md
-git commit -m "build: bump to v<version>"
+git commit -m "chore(release): bump version to <version>, update changelog"
 ```
 
-Bump `package.json` + `package-lock.json` version fields and add a
-`## [<version>] — <date>` section to `CHANGELOG.md` before committing.
+Before tagging, confirm the version and the tag agree. `publish.yml`
+publishes whatever `package.json` says, under whatever tag you pushed, and
+never compares the two:
+
+```bash
+node -p "require('./package.json').version"   # must equal the tag minus the v
+```
 
 ## 2. Push the commit to main
 
@@ -34,11 +50,11 @@ Pushing a tag matching `v*` is what fires the `Publish` workflow. This
 is the deliberate "release this" action — everything past this point is
 automatic.
 
-**Example (0.8.13-beta):**
+**Example (0.8.27-beta):**
 
 ```bash
-git tag v0.8.13-beta
-git push origin v0.8.13-beta
+git tag v0.8.27-beta
+git push origin v0.8.27-beta
 ```
 
 ## What the tag push triggers (`.github/workflows/publish.yml`)
@@ -53,6 +69,14 @@ git push origin v0.8.13-beta
 4. Extracts that version's section out of `CHANGELOG.md` and creates a
    **GitHub prerelease** (`gh release create ... --prerelease`) using it
    as the release notes.
+
+Note that `ci.yml` does **not** run on tags — it triggers on pushes to `main`
+and on pull requests only. So the tag's only gate is the `npm test` in step 1;
+lint, format, `npm audit`, and the coverage threshold all ran earlier on the
+`main` push and are not re-checked here.
+
+There is also no stable-release path. `--tag beta` and `--prerelease` are
+hardcoded in the workflow, so every tag published this way is a beta.
 
 ## Watch the run live
 
@@ -79,10 +103,10 @@ still in beta. So `latest` only moves when you decide it should:
 npm dist-tag add kritya@<version> latest
 ```
 
-**Example (0.8.13-beta):**
+**Example (0.8.27-beta):**
 
 ```bash
-npm dist-tag add kritya@0.8.13-beta latest
+npm dist-tag add kritya@0.8.27-beta latest
 ```
 
 Verify both tags landed:
