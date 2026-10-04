@@ -48,8 +48,11 @@ jobs:
       - run: npm test
 
       # OIDC trusted publishing needs npm >= 11.5.1; the version bundled with
-      # Node 22 is older, so it's upgraded just for this job.
-      - run: npm install -g npm@latest
+      # Node 22 is older, so it's upgraded just for this job. Bounded to the
+      # 11.x line rather than @latest: npm 12 already requires Node ^22.22.2,
+      # so an unbounded upgrade would break this job on an older Node 22.x
+      # runner. 11.5.1 is all trusted publishing needs.
+      - run: npm install -g "npm@^11.5.1"
 
       # No token here on purpose: npm exchanges this job's OIDC identity
       # (registered as a trusted publisher on the kritya package) for a

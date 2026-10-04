@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
+import { Box, Static, Text, useApp, useInput, useStdout, useWindowSize } from "ink";
 import TextInput from "ink-text-input";
 import fs from "node:fs";
 import { glob } from "tinyglobby";
@@ -90,6 +90,11 @@ export function App({
 }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  // Ink 8 types `stdout` as a plain Node stream, so the terminal's dimensions
+  // come from useWindowSize() rather than stdout.columns / stdout.rows.
+  const windowSize = useWindowSize();
+  const columns = terminalColumns(windowSize);
+  const rows = terminalRows(windowSize);
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0);
   const [steerInput, setSteerInput] = useState("");
@@ -153,25 +158,19 @@ export function App({
   // which resyncs its internal line-count bookkeeping — it's only unsafe to
   // write raw ANSI without following it with something that resets that
   // bookkeeping.
-  const lastColumns = useRef(stdout?.columns);
+  const lastColumns = useRef(columns);
   useEffect(() => {
-    if (!stdout) return;
-    let timer: NodeJS.Timeout | undefined;
-    const onResize = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (stdout.columns === lastColumns.current) return;
-        lastColumns.current = stdout.columns;
-        stdout.write(CLEAR_TERMINAL);
-        setStaticKey((k) => k + 1);
-      }, 150);
-    };
-    stdout.on("resize", onResize);
-    return () => {
-      clearTimeout(timer);
-      stdout.off("resize", onResize);
-    };
-  }, [stdout]);
+    // useWindowSize() already subscribes to resize, so this only has to react
+    // once the column count settles on a new value; a height-only resize leaves
+    // `columns` untouched and never reaches here.
+    if (columns === lastColumns.current) return;
+    lastColumns.current = columns;
+    const timer = setTimeout(() => {
+      stdout.write(CLEAR_TERMINAL);
+      setStaticKey((k) => k + 1);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [columns, stdout]);
 
   const refreshFileList = useCallback(() => {
     glob("**/*", {
@@ -581,7 +580,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Static key={staticKey} items={items}>
-        {(item) => <TranscriptItem key={item.id} item={item} verbose={verbose} stdout={stdout} />}
+        {(item) => <TranscriptItem key={item.id} item={item} verbose={verbose} columns={columns} />}
       </Static>
 
       {firstLaunch && items.length <= 1 && phase === "input" && (
@@ -597,10 +596,7 @@ export function App({
 
       {stream ? (
         <Box marginBottom={1}>
-          <Markdown
-            text={tailForViewport(stream, terminalColumns(stdout), terminalRows(stdout))}
-            streaming
-          />
+          <Markdown text={tailForViewport(stream, columns, rows)} streaming />
         </Box>
       ) : null}
 
@@ -610,10 +606,7 @@ export function App({
           borderStyle="round"
           borderColor="blue"
           paddingX={1}
-          width={Math.min(
-            terminalColumns(stdout) - 2,
-            Math.max(...tasks.map((t) => stringWidth(t.text))) + 6
-          )}
+          width={Math.min(columns - 2, Math.max(...tasks.map((t) => stringWidth(t.text))) + 6)}
         >
           {tasks.map((t, i) => (
             <Text
