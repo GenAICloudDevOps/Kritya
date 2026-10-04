@@ -4,6 +4,47 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.28-beta] — 2026-10-04
+
+### Added
+
+- Added `kritya doctor [dir] [--json] [--offline]`, a diagnostic command
+  that prints a single report covering the Node runtime, the update
+  check, the loaded config, provider reachability, the workspace,
+  sandbox/safety settings, and the discovered extensions. `--json`
+  emits the same data as machine-readable JSON for bug reports, and
+  `--offline` skips every network probe. It exits non-zero when a
+  section reports a problem, so it can be used as a pre-flight check.
+- Added a newer-version notice: `kritya --version` now checks the
+  registry at most once every 24 hours (cached in
+  `~/.kritya/update-check.json`, 2-second timeout) and prints a
+  one-line "a newer version is available" hint to stderr when one
+  exists. It is TTY-only, so scripts and pipes still see a single
+  clean version line, and it can be disabled entirely with
+  `KRITYA_NO_UPDATE_CHECK=1`.
+
+### Changed
+
+- Every release now verifies that the version it just published is
+  actually readable back from the registry, polling
+  `registry.npmjs.org/<name>/<version>` for up to 60 seconds. A
+  successful `npm publish` only means the upload was accepted, so a
+  propagation delay previously looked identical to a release that
+  never reached npm.
+- The packaged tarball is now verified on Windows, macOS, and Linux in
+  CI rather than on Linux alone, and the checks assert the contents of
+  the published artifact (required files, bin targets, a minimum
+  unpacked size) plus a real install-and-run smoke test.
+- `prepublishOnly` now runs the packaging gates, so a hand-run
+  `npm publish` is gated the same way the workflow is.
+
+### Fixed
+
+- npm could not be launched from a Node script on Windows, where it is
+  an `npm.cmd` shim that Node refuses to spawn directly. Scripts now
+  go through `process.execPath` and `npm_execpath` instead, which also
+  survives paths containing spaces.
+
 ## [0.8.27-beta] — 2026-10-04
 
 ### Added
