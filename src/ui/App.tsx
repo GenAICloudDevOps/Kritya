@@ -358,7 +358,10 @@ export function App({
     if (editorBusy.current) return;
     const target = undoStack.lastTouchedFile();
     if (!target) {
-      addItem({ kind: "info", text: "Ctrl+E: the agent hasn't touched any file yet this session." });
+      addItem({
+        kind: "info",
+        text: "Ctrl+E: the agent hasn't touched any file yet this session.",
+      });
       return;
     }
     editorBusy.current = true;
