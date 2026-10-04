@@ -12,6 +12,14 @@ updates:
       # entry once typescript-eslint widens its peer range to accept TS 7.
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
+      # The other half of the pair. This entry is an npm alias for the real
+      # TypeScript 7 compiler, so a major bump swaps the compiler underneath the
+      # build. `npm run check:typescript-setup` guards the aliases themselves,
+      # but that only fires once a PR exists — ignoring majors here keeps the
+      # noisy one from being opened at all. Minor/patch updates still come
+      # through. See CONTRIBUTING.md ("Why are there two TypeScript packages?").
+      - dependency-name: "@typescript/native"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

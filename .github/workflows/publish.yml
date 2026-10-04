@@ -43,9 +43,22 @@ jobs:
           node-version: 22.x
           cache: npm
 
+      # Before anything expensive. A tag that disagrees with package.json, a
+      # stale lock, or a missing/empty CHANGELOG section each produce a green
+      # workflow with a wrong or blank result, so they are worth catching in
+      # the first seconds rather than after the build and test run below.
+      - run: npm run check:release
+
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+      # The last gate before the artifact goes public. `npm publish` would
+      # happily ship a tarball missing its entry point or a file it imports;
+      # these two pack, install, and run the real result, so that fails here
+      # instead of in a user's terminal.
+      - run: npm run check:package
+      - run: npm run check:smoke
 
       # OIDC trusted publishing needs npm >= 11.5.1; the version bundled with
       # Node 22 is older, so it's upgraded just for this job. Bounded to the

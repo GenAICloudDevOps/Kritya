@@ -44,8 +44,10 @@ project, while the package named `typescript` is secretly TypeScript 6
 needs the older compiler API, and Microsoft recommends this side-by-side
 arrangement until TypeScript 7 has a stable programmatic API. It looks like
 a mistake, but "cleaning it up" breaks the build or lint, so don't touch
-these two entries — and don't let Dependabot auto-merge updates to them.
-`npm run check:typescript-setup` (also run in CI) fails loudly if the
+these two entries: a plain `"typescript": "^7.x"` breaks eslint, and a plain
+`"^6.x"` breaks the build. Dependabot is configured to skip major bumps of
+both, but review any PR that touches them by hand rather than merging it
+blind. `npm run check:typescript-setup` (also run in CI) fails loudly if the
 aliases ever get mixed up.
 
 ## Project layout
@@ -63,8 +65,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
   CI runs:
 
   ```bash
-  npm ci && npm run check:audit && npm run format:check && npm run lint && npm run check:install-scripts && npm run check:typescript-setup && npm run test:coverage && npm run build
+  npm ci && npm run check:audit && npm run format:check && npm run lint && npm run check:install-scripts && npm run check:typescript-setup && npm run test:coverage && npm run build && npm run check:package && npm run check:smoke
   ```
+
+  The last two inspect and then run the **packed tarball** rather than the repo
+  tree — they are what catch a broken `files` field or a missing entry point
+  before a user does. Both need a working `npm`, so they can't run over a WSL
+  UNC mount; run them from inside WSL (or let CI run them) if that's how you
+  have the repo open.
 
 ## Reporting bugs and requesting features
 

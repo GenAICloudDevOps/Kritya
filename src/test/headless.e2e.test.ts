@@ -339,7 +339,20 @@ test("load_skill followed by reading a bundled reference file works end to end",
   }
 });
 
-async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> {
+/**
+ * Poll for a file to appear. The default budget matches the 20s `runKritya`
+ * allows the CLI, because what is being waited on is the same cost: booting the
+ * built binary, loading config, and completing a provider round trip. A budget
+ * half that size is how this wait fails under load while its sibling tests pass.
+ *
+ * `describeFailure` runs only on timeout, so a failure reports the child's
+ * output instead of just the path that never showed up.
+ */
+async function waitForFile(
+  filePath: string,
+  timeoutMs = 20_000,
+  describeFailure?: () => string
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -349,7 +362,10 @@ async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> 
       await new Promise((r) => setTimeout(r, 50));
     }
   }
-  throw new Error(`timed out waiting for ${filePath}`);
+  const detail = describeFailure?.();
+  throw new Error(
+    `timed out waiting for ${filePath} after ${timeoutMs}ms` + (detail ? `\n${detail}` : "")
+  );
 }
 
 function isAlive(pid: number): boolean {
@@ -410,8 +426,28 @@ test("SIGINT during a hung model call still tears down a background process it s
     const exited = new Promise<number | null>((resolve) => {
       child.on("exit", (code) => resolve(code));
     });
+    // Drain both pipes. Leaving them unread lets a child that writes more than
+    // the OS pipe buffer (64KB on Linux) block forever on its next write, which
+    // presents here as the pid file simply never appearing. Capturing the
+    // output also gives the timeout below something useful to report.
+    let childOut = "";
+    let childErr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      childOut += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      childErr += chunk.toString();
+    });
     try {
-      await waitForFile(pidFile);
+      await waitForFile(pidFile, 20_000, () =>
+        [
+          "kritya output so far:",
+          "--- stdout ---",
+          childOut || "(empty)",
+          "--- stderr ---",
+          childErr || "(empty)",
+        ].join("\n")
+      );
       const bgPid = Number((await fs.readFile(pidFile, "utf8")).trim());
       assert.ok(isAlive(bgPid), "background process should be running before SIGINT");
 
