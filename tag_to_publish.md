@@ -77,10 +77,16 @@ git push origin v0.8.27-beta
    `prepublishOnly` rather than as their own steps here so that a `npm publish`
    run by hand from a laptop is gated the same way.
 5. Verifies the version is actually readable back from the registry
-   (`https://registry.npmjs.org/kritya/<version>`, polled for up to 60s).
+   (`https://registry.npmjs.org/kritya/<version>`, polled for up to 120s).
    `npm publish` exiting 0 only means the upload was accepted — propagation is
    not instant, and a delay looks identical to a failed release from the
    outside. This step is what turns that ambiguity into a red or green run.
+   The budget is deliberately generous (24 × 5s) because this step runs _before_
+   the release is created: if it gives up, the publish has still succeeded but
+   step 6 never runs, leaving the version on npm with no GitHub release. If you
+   ever see that, do **not** re-run the job — `npm publish` would fail on the
+   already-published version and step 6 still would not run. Create the release
+   by hand instead, using the same `awk` extraction against `CHANGELOG.md`.
 6. Extracts that version's section out of `CHANGELOG.md` and creates a
    **GitHub prerelease** (`gh release create ... --prerelease`) using it
    as the release notes.

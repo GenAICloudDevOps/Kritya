@@ -87,16 +87,23 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           NAME="$(node -p 'require("./package.json").name')"
-          for attempt in $(seq 1 12); do
+          # 24 x 5s = 120s. 12 x 5s (60s) proved too tight: 0.8.27 got through but
+          # 0.8.28 did not, and because this step sits *before* the release-creation
+          # steps, a slow registry cost the GitHub release even though the publish
+          # had succeeded. Keep the budget in one place so the count, the progress
+          # line, and the error message cannot drift apart.
+          ATTEMPTS=24
+          INTERVAL=5
+          for attempt in $(seq 1 "$ATTEMPTS"); do
             status="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$NAME/$VERSION")"
             if [ "$status" = "200" ]; then
               echo "$NAME@$VERSION is live on the registry."
               exit 0
             fi
-            echo "attempt $attempt/12: $NAME@$VERSION not visible yet (HTTP $status); retrying in 5s"
-            sleep 5
+            echo "attempt $attempt/$ATTEMPTS: $NAME@$VERSION not visible yet (HTTP $status); retrying in ${INTERVAL}s"
+            sleep "$INTERVAL"
           done
-          echo "::error::$NAME@$VERSION was accepted by npm publish but is still not on the registry after 60s"
+          echo "::error::$NAME@$VERSION was accepted by npm publish but is still not on the registry after $((ATTEMPTS * INTERVAL))s"
           exit 1
 
       - name: Extract this version's changelog section
