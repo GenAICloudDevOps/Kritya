@@ -27,7 +27,7 @@ import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
 import { runSkillsCli } from "./agent/skillsCli.js";
 import { createTracer, cleanupOldTelemetry } from "./telemetry/tracer.js";
-import { createMeter } from "./telemetry/metrics.js";
+import { createMeter, RENDER_BOUNDS_MS } from "./telemetry/metrics.js";
 import { retentionDaysFor } from "./config/retention.js";
 import { backgroundManager } from "./shell/background.js";
 import { defaultSandboxMode, sandboxAvailable, sandboxUnavailableReason } from "./shell/sandbox.js";
@@ -484,6 +484,16 @@ async function main() {
           sessionMeter.flushAndWait(),
           new Promise((resolve) => setTimeout(resolve, 2000).unref()),
         ]);
+        // Hand the terminal back before leaving. Ink hides the cursor for the
+        // whole time it is rendering and only shows it again from its own
+        // teardown — which the process.exit() below skips, leaving the shell's
+        // prompt invisible until the user runs `reset`. unmount() is that
+        // teardown; it also finishes drawing the frame we are standing on.
+        try {
+          ui.instance?.unmount();
+        } catch {
+          // Whatever brought us here may have been the UI itself. Exit anyway.
+        }
         cleanup();
         process.exit(code);
       })();
@@ -859,6 +869,14 @@ async function main() {
   // run the same Agent class and can also trigger auto-compaction.
   agent.autoMemory = true;
 
+  // How long Ink takes to turn the React tree into a frame, per frame. This is
+  // the part of drawing a screen that grows with the size of the transcript, so
+  // it is the number that says whether the UI is getting sluggish — the
+  // terminal write it excludes is bounded by the terminal, not by us.
+  // `renderTime` excludes Ink's own throttling, so it is the raw cost of the
+  // frame rather than the interval between frames.
+  const renderHistogram = sessionMeter.histogram("kritya.render.duration_ms", RENDER_BOUNDS_MS);
+
   ui.instance = render(
     <App
       agent={agent}
@@ -884,7 +902,10 @@ async function main() {
       }}
       privacyMode={privacyMode}
       firstLaunch={firstLaunch}
-    />
+    />,
+    {
+      onRender: ({ renderTime }) => renderHistogram.record(renderTime),
+    }
   );
   markBannerSeen(workspace);
 }

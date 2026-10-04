@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createMeter, NOOP_METER, DEFAULT_LATENCY_BOUNDS_MS } from "../telemetry/metrics.js";
+import {
+  createMeter,
+  NOOP_METER,
+  DEFAULT_LATENCY_BOUNDS_MS,
+  RENDER_BOUNDS_MS,
+} from "../telemetry/metrics.js";
 
 function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
   const prev: Record<string, string | undefined> = {};
@@ -65,4 +70,29 @@ test("counter and histogram aggregate cumulatively and flush an OTLP snapshot", 
   assert.equal(histMetric.histogram.dataPoints[0].sum, 80);
   // bounds [10,50,100,...] -> 5 falls in bucket 0 (<=10), 75 falls in bucket 2 (<=100)
   assert.deepEqual(histMetric.histogram.dataPoints[0].bucketCounts.slice(0, 3), ["1", "0", "1"]);
+});
+
+test("render bounds resolve frame times finely and pin the 30fps budget", () => {
+  for (let i = 1; i < RENDER_BOUNDS_MS.length; i++) {
+    assert.ok(
+      RENDER_BOUNDS_MS[i] > RENDER_BOUNDS_MS[i - 1],
+      `bounds must ascend, got ${RENDER_BOUNDS_MS.join(", ")}`
+    );
+  }
+
+  // Ink caps rendering at 30fps, so 1000/30ms is the frame budget. The whole
+  // point of measuring render time is spotting frames that overrun it, and a
+  // histogram can only report that if a bound sits on the budget.
+  const budget = 1000 / 30;
+  assert.ok(
+    RENDER_BOUNDS_MS.some((b) => Math.abs(b - budget) < 5),
+    `expected a bound near the ${budget.toFixed(1)}ms frame budget, got ${RENDER_BOUNDS_MS.join(", ")}`
+  );
+
+  // And it needs resolution below the budget, or every healthy frame lands in
+  // the same bucket and the histogram cannot show a regression.
+  assert.ok(
+    RENDER_BOUNDS_MS.filter((b) => b < budget).length >= 4,
+    `expected several bounds under the frame budget, got ${RENDER_BOUNDS_MS.join(", ")}`
+  );
 });

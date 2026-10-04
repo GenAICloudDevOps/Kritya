@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
+import { TextInput } from "./TextInput.js";
 
 /**
  * Shown once, only when the active provider has no API key resolved, on the

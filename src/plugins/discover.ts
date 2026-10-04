@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { writeStderr } from "../stderr.js";
 
 export interface DiscoveredPlugin {
   name: string;
@@ -92,7 +93,7 @@ export function scanPluginsDetailed(roots: string[]): PluginScanResult {
 }
 
 let warnSink: (message: string) => void = (message) => {
-  process.stderr.write(`kritya: ${message}\n`);
+  writeStderr(`kritya: ${message}\n`);
 };
 
 function warn(message: string): void {

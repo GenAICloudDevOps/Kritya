@@ -1,3 +1,5 @@
+import { writeStderr } from "../stderr.js";
+
 /**
  * Most best-effort persistence (session/audit/telemetry writes, config and
  * trust-file reads, hook loading, …) deliberately swallows its own errors —
@@ -10,11 +12,7 @@ export function debugLog(context: string, err: unknown): void {
   if ((process.env.KRITYA_DEBUG ?? "").toLowerCase() !== "1" && process.env.KRITYA_DEBUG !== "true")
     return;
   const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  try {
-    process.stderr.write(`[kritya debug] ${context}: ${message}\n`);
-  } catch {
-    // stderr itself failing isn't something debug logging can do anything about
-  }
+  writeStderr(`[kritya debug] ${context}: ${message}\n`);
 }
 
 /**
@@ -40,11 +38,7 @@ export function warnUser(context: string, err: unknown): void {
   }
   warnedContexts.add(context);
   const message = err instanceof Error ? err.message : String(err);
-  try {
-    process.stderr.write(`[kritya] warning: ${context} failed: ${message}\n`);
-  } catch {
-    // stderr itself failing isn't something this can do anything about
-  }
+  writeStderr(`[kritya] warning: ${context} failed: ${message}\n`);
   debugLog(context, err);
 }
 

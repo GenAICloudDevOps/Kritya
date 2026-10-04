@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { writeStderr } from "../stderr.js";
 import { pluginsDir, pluginSkillsRoots, scanPlugins, userPluginsDir } from "../plugins/discover.js";
 
 export interface DiscoveredSkill {
@@ -85,7 +86,7 @@ function unquote(value: string): string {
 }
 
 let warnSink: (message: string) => void = (message) => {
-  process.stderr.write(`kritya: ${message}\n`);
+  writeStderr(`kritya: ${message}\n`);
 };
 
 function warn(message: string): void {

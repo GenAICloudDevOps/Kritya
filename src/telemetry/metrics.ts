@@ -54,6 +54,18 @@ export const NOOP_METER: Meter = {
 
 export const DEFAULT_LATENCY_BOUNDS_MS = [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000];
 
+/**
+ * Buckets for Ink's per-frame `onRender` timing.
+ *
+ * The default latency bounds are useless here: drawing a frame is a
+ * sub-millisecond to low-single-digit-millisecond affair, so every sample would
+ * land in the first bucket and the histogram would say nothing. These cluster
+ * below the frame budget instead, and 33ms is the edge that matters — Ink caps
+ * rendering at 30fps (1000 / 30 ≈ 33.3ms), so a sample past it is a frame the
+ * UI could not draw on time.
+ */
+export const RENDER_BOUNDS_MS = [0.25, 0.5, 1, 2, 4, 8, 16, 24, 33, 66, 133];
+
 function nowUnixNano(): string {
   return (BigInt(Date.now()) * 1_000_000n).toString();
 }

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { writeStderr } from "../stderr.js";
 import type { McpServerConfig } from "../config/config.js";
 import type { DiscoveredPlugin } from "./discover.js";
 
@@ -86,7 +87,7 @@ export function scanPluginMcpServers(plugins: DiscoveredPlugin[]): PluginMcpScan
  */
 export function loadPluginMcpServers(
   plugins: DiscoveredPlugin[],
-  warn: (message: string) => void = (m) => process.stderr.write(`kritya: ${m}\n`)
+  warn: (message: string) => void = (m) => writeStderr(`kritya: ${m}\n`)
 ): { servers: Record<string, McpServerConfig>; provenance: Record<string, string> } {
   const { loaded, skipped } = scanPluginMcpServers(plugins);
   for (const s of skipped) {

@@ -6,10 +6,10 @@ import {
   useApp,
   useBoxMetrics,
   useInput,
+  useStderr,
   useWindowSize,
   type DOMElement,
 } from "ink";
-import TextInput from "ink-text-input";
 import fs from "node:fs";
 import { glob } from "tinyglobby";
 import stringWidth from "string-width";
@@ -17,6 +17,7 @@ import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
 import { modelDisplaySlug } from "../config/models.js";
+import { setStderrSink } from "../stderr.js";
 import type { ProviderClient } from "../provider/client.js";
 import { SessionStore, type SessionMeta } from "../session/store.js";
 import { defaultSandboxMode, sandboxAvailable } from "../shell/sandbox.js";
@@ -32,6 +33,7 @@ import { SelectList } from "./SelectList.js";
 import { Spinner } from "./Spinner.js";
 import { StatusLine } from "./StatusLine.js";
 import { StreamViewport } from "./StreamViewport.js";
+import { TextInput } from "./TextInput.js";
 import { TranscriptItem } from "./TranscriptItem.js";
 import { terminalColumns, terminalRows } from "./viewport.js";
 import type { CustomCommand } from "../commands/custom.js";
@@ -94,7 +96,38 @@ export function App({
   privacyMode,
   firstLaunch,
 }: AppProps) {
-  const { exit } = useApp();
+  const { exit, waitUntilRenderFlush } = useApp();
+  /**
+   * Leave, but not until the screen has caught up.
+   *
+   * Ink's `exit()` tears the tree down in the same tick it is called, so a
+   * state update made in that same tick — the last line of a transcript, a
+   * "goodbye" item — is committed to a tree that is already being unmounted and
+   * never reaches the terminal. Verified: `setState(x); exit();` drops `x`,
+   * while deferring `exit()` by one macrotask draws it. `waitUntilRenderFlush()`
+   * is Ink's own barrier for exactly this — it yields so React can commit, then
+   * settles the throttled frame timer and waits for the write to drain.
+   */
+  const exitAfterFlush = useCallback(async () => {
+    await waitUntilRenderFlush();
+    exit();
+  }, [exit, waitUntilRenderFlush]);
+  /**
+   * Hand warnings raised outside React a way through Ink.
+   *
+   * Agent loops, MCP clients and plugin loaders are plain module functions, so
+   * they cannot call useStderr() themselves and had been writing straight to
+   * process.stderr — which Ink knows nothing about, so the text landed in the
+   * middle of the frame and the next repaint drew against the wrong line count.
+   * Registering Ink's own writer for the lifetime of the UI puts them back
+   * inside the clear-write-repaint sandwich. Cleared on unmount so the fallback
+   * is raw stderr again for anything that outlives the UI. See src/stderr.ts.
+   */
+  const { write: writeStderr } = useStderr();
+  useEffect(() => {
+    setStderrSink(writeStderr);
+    return () => setStderrSink(undefined);
+  }, [writeStderr]);
   // Ink 8 types `stdout` as a plain Node stream, so the terminal's dimensions
   // come from useWindowSize() rather than stdout.columns / stdout.rows — and
   // it drives the re-layout on resize by itself. Kritya used to wipe the screen
@@ -126,41 +159,12 @@ export function App({
   const inputHistory = useRef<string[]>([]);
   const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
 
-  /**
-   * Ctrl-chord bookkeeping for the text inputs.
-   *
-   * Ink delivers a keypress to every `useInput` hook, and ink-text-input
-   * ignores only Ctrl+C — so Ctrl+K and Ctrl+O run their shortcut *and* get
-   * typed into the box as a bare "k"/"o". Hitting the kill switch left junk on
-   * the prompt line, which the next Enter would have sent as a message.
-   *
-   * The two hooks can fire in either order, so both directions are covered:
-   * `ctrlChord` makes onChange drop the echoed letter when the shortcut ran
-   * first, and re-setting the value from `inputRef` undoes it when the input
-   * ran first. `inputRef` tracks committed state, so it always holds the value
-   * from before this keypress.
-   */
-  const ctrlChord = useRef<string | null>(null);
-  const inputRef = useRef("");
-  const steerInputRef = useRef("");
-  useEffect(() => {
-    inputRef.current = input;
-  }, [input]);
-  useEffect(() => {
-    steerInputRef.current = steerInput;
-  }, [steerInput]);
-
-  const noteCtrlChord = (letter: string) => {
-    ctrlChord.current = letter;
-    setInput(inputRef.current);
-    setSteerInput(steerInputRef.current);
-    setTimeout(() => {
-      ctrlChord.current = null;
-    }, 0);
-  };
-  /** The change a Ctrl chord echoed into the box, rather than a real keystroke. */
-  const isCtrlEcho = (prev: string, next: string): boolean =>
-    ctrlChord.current !== null && next === prev + ctrlChord.current;
+  // Ctrl-chord bookkeeping used to live here: Ink delivers a keypress to every
+  // `useInput` hook, and ink-text-input swallowed only Ctrl+C, so Ctrl+K and
+  // Ctrl+O ran their shortcut *and* typed a bare "k"/"o" into the prompt — which
+  // the next Enter would have sent as a message. Kritya's own TextInput drops
+  // every ctrl/meta chord before it reaches the buffer, so there is nothing left
+  // to undo and the workaround is gone.
 
   const refreshFileList = useCallback(() => {
     glob("**/*", {
@@ -349,7 +353,6 @@ export function App({
     // input line is not a panic button. It fires mid-stream, mid-tool, and
     // while a permission prompt is on screen.
     if (key.ctrl && _input === "k") {
-      noteCtrlChord(_input);
       if (killed) return; // already stopped; /kill off is the way back
       engageKill("Ctrl+K");
       return;
@@ -360,7 +363,6 @@ export function App({
     }
     // Ctrl+O toggles showing full tool output.
     if (key.ctrl && _input === "o") {
-      noteCtrlChord(_input);
       setVerbose((v) => !v);
       return;
     }
@@ -471,7 +473,7 @@ export function App({
       costReport,
       statusReport,
       gitDiffStat,
-      exit,
+      exit: exitAfterFlush,
     };
     void runCommand(cmd, ctx);
   };
@@ -646,7 +648,7 @@ export function App({
             <Text color="yellow">↳ </Text>
             <TextInput
               value={steerInput}
-              onChange={(v) => setSteerInput((prev) => (isCtrlEcho(prev, v) ? prev : v))}
+              onChange={setSteerInput}
               onSubmit={(value) => {
                 const text = value.trim();
                 setSteerInput("");
@@ -773,7 +775,7 @@ export function App({
               key={inputKey}
               value={input}
               onChange={(v) => {
-                setInput((prev) => (isCtrlEcho(prev, v) ? prev : v.replace(/\t/g, "")));
+                setInput(v.replace(/\t/g, ""));
                 setCmdIndex(0);
                 setFileIndex(0);
               }}

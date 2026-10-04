@@ -4,6 +4,7 @@ import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
 import { hardenWindowsDir } from "../config/winAcl.js";
 import { debugLog, warnPersistenceFailure } from "../config/debug.js";
+import { writeStderr } from "../stderr.js";
 import { VERSION } from "../version.js";
 import { encodeSpan, postOtlp, type OtlpResource } from "./otlp.js";
 
@@ -226,11 +227,7 @@ function fileSink(file: string): Sink {
 
 function consoleSink(): Sink {
   return (span) => {
-    try {
-      process.stderr.write(`[otel] ${JSON.stringify(span)}\n`);
-    } catch {
-      // best-effort
-    }
+    writeStderr(`[otel] ${JSON.stringify(span)}\n`);
   };
 }
 

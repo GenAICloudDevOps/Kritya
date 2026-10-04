@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeStderr } from "../stderr.js";
 import type { McpServerConfig, McpToolFilter } from "../config/config.js";
 import type { ElicitationField, ElicitationResult, ToolDef } from "../types.js";
 import { VERSION } from "../version.js";
@@ -957,7 +958,7 @@ function exposedToolName(server: string, toolName: string): string {
  * is registered on the transport so `tools/call` can mirror argument values
  * into `Mcp-Param-{Name}` headers later — see `ModernHttpTransport.
  * setToolHeaderMap`/`send`. Logged the same way other "skip with a warning"
- * MCP failures are (`process.stderr.write("kritya: ...")`).
+ * MCP failures are (`writeStderr("kritya: ...")`).
  */
 function filterHeaderAnnotatedTools(
   server: string,
@@ -968,7 +969,7 @@ function filterHeaderAnnotatedTools(
   for (const spec of specs) {
     const result = validateToolHeaders(spec.inputSchema);
     if (!result.ok) {
-      process.stderr.write(
+      writeStderr(
         `kritya: MCP server "${server}" tool "${spec.name}" excluded — invalid x-mcp-header ` +
           `annotation: ${result.reason}\n`
       );
@@ -995,7 +996,7 @@ function filterSchemaSafeTools(server: string, specs: McpToolSpec[]): McpToolSpe
   for (const spec of specs) {
     const result = checkSchemaSafety(spec.inputSchema);
     if (!result.ok) {
-      process.stderr.write(
+      writeStderr(
         `kritya: MCP server "${server}" tool "${spec.name}" excluded — unsafe inputSchema: ` +
           `${result.reason}\n`
       );
@@ -1188,7 +1189,7 @@ export async function connectServer(
       });
     } else {
       status.error = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);
+      writeStderr(`kritya: MCP server "${name}" failed to start: ${status.error}\n`);
       span.setStatus("ERROR", status.error);
       // status.error comes from the (untrusted) server process's own error
       // output, which could echo back an env var or header value it was
