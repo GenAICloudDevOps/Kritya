@@ -61,7 +61,18 @@ function rowColor(row: number): string {
 
 const BETA_LABEL = "beta";
 
-export function Banner({ subtitle, compact }: { subtitle?: string; compact?: boolean }) {
+/** Product tagline shown under the banner on launch. */
+export const TAGLINE = "Superintelligence at your command line";
+
+export function Banner({
+  tagline,
+  subtitle,
+  compact,
+}: {
+  tagline?: string;
+  subtitle?: string;
+  compact?: boolean;
+}) {
   if (compact) {
     return (
       <Box marginBottom={1}>
@@ -103,6 +114,7 @@ export function Banner({ subtitle, compact }: { subtitle?: string; compact?: boo
         </Text>
       )}
       {betaLine ? <Text dimColor>{betaLine}</Text> : null}
+      {tagline ? <Text>{center(tagline)}</Text> : null}
       <Box marginTop={2}>{subtitle ? <Text dimColor>{center(subtitle)}</Text> : null}</Box>
       <Text dimColor>{center("AI can make mistakes. Verify important output.")}</Text>
     </Box>
