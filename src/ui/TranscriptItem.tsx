@@ -50,7 +50,9 @@ export function TranscriptItem({ item, verbose, contentWidth }: TranscriptItemPr
         </Box>
       )}
       {item.kind === "info" && <Text dimColor>{item.text}</Text>}
-      {item.kind === "banner" && <Banner subtitle={item.subtitle} compact={item.compact} />}
+      {item.kind === "banner" && (
+        <Banner tagline={item.tagline} subtitle={item.subtitle} compact={item.compact} />
+      )}
       {item.kind === "summary" && (
         <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
           <Text bold color="green">

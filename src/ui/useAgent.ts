@@ -18,6 +18,7 @@ import {
 import { createSwitchyardClient } from "../provider/switchyardClient.js";
 import { SWITCHYARD_ROUTE_ID, resolveEffectiveModel } from "../provider/switchyardSidecar.js";
 import { KillSwitchError } from "../agent/killSwitch.js";
+import { TAGLINE } from "./Banner.js";
 import { defaultSandboxMode, sandboxAvailable } from "../shell/sandbox.js";
 import {
   loadProjectState,
@@ -124,6 +125,7 @@ export function useAgent({
       {
         id: nextId.current++,
         kind: "banner",
+        tagline: TAGLINE,
         subtitle: `${path.basename(workspace)} · ${modelRef.current} · type a request, or /help for commands`,
         compact: !firstLaunch,
       },

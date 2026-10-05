@@ -21,7 +21,7 @@ export type ItemBody =
       resultSummary?: string;
     }
   | { kind: "info"; text: string }
-  | { kind: "banner"; subtitle: string; compact?: boolean }
+  | { kind: "banner"; subtitle: string; tagline?: string; compact?: boolean }
   | { kind: "summary"; files: string[]; nextStep: string };
 
 export type Phase =
