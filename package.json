@@ -64,7 +64,7 @@
     "ink": "^8.0.0",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.2",
-    "openai": "^7.10.0",
+    "openai": "^7.28.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "pptxgenjs": "^4.0.1",
@@ -78,6 +78,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "c8": "^12.0.0",
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
@@ -89,8 +90,7 @@
     "prettier": "^3.9.0",
     "tsx": "^4.23.13",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "@typescript/native": "npm:typescript@^7.0.2",
-    "typescript-eslint": "^8.69.0"
+    "typescript-eslint": "^8.71.1"
   },
   "overrides": {
     "brace-expansion": "^5.0.12",
