@@ -4,6 +4,57 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.30-beta] — 2026-10-05
+
+### Added
+
+- Subagents report progress while they work. `spawn_agent` and
+  `spawn_write_agent` now show a one-line "step 4/15 · grep src/auth"
+  status as each subagent runs, and each result is reported as soon as it
+  finishes instead of only once the slowest sibling in the batch does.
+- Subagent behaviour is configurable via `subagentConcurrency`,
+  `subagentTimeoutSeconds`, `subagentMaxSteps`, and
+  `subagentWriteMaxSteps` — how many run at once, how long each may take,
+  and how many model round-trips read-only and write subagents get. The
+  previous hardcoded values (3 at a time, 10 minutes, 15 and 30 steps)
+  are the defaults.
+- A subagent that hits its step limit now says so, and is advised to
+  re-dispatch a narrower task or raise `subagentMaxSteps`, instead of
+  returning findings that look complete but are not.
+
+### Fixed
+
+- A subagent's assistant text is accumulated rather than replaced. The
+  loop emits one message per step, so only the last one used to survive:
+  a subagent that reported findings and then kept working silently lost
+  them.
+- A write subagent that died mid-run was reported as an ordinary success
+  whose summary merely began "(subagent stopped: …)", and its partial
+  edits were still committed. It now returns an error, which the tool
+  renders as one.
+- A subagent that hit its 10-minute cap was indistinguishable from one
+  the user cancelled — both produced the same bare abort message. The two
+  are now reported separately, and a timeout no longer reads as a
+  cancellation.
+- A single failing subagent's reason was dropped when only one task was
+  dispatched: that path returned the summary with no header, so the error
+  had nowhere to appear.
+
+### Changed
+
+- The subagent runner moved out of the CLI entry point into
+  `src/agent/subagents.ts`. It is now reachable from the test suite, and
+  ready to be wired into the headless and Electron entry points, which
+  previously had no subagents at all.
+- CI now runs the test suite unsharded as well as sharded, so a test that
+  only fails under the heavier single-machine load fails on the commit
+  rather than only at release time. That gap is what made 0.8.29-beta's
+  publish run fail while CI was green on the same commit.
+- The `headless.e2e` test that asserts a background process is torn down
+  no longer races the teardown it checks: it polls for the process to
+  exit instead of testing once, which was inherently a coin flip because
+  a SIGKILLed process is not reaped until after kritya has exited.
+
 ## [0.8.29-beta] — 2026-10-05
 
 ### Changed
