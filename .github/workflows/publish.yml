@@ -78,20 +78,26 @@ jobs:
 
       # `npm publish` exiting 0 means the registry accepted the upload, not
       # that the version is readable back yet — propagation is not
-      # instantaneous. From the outside a delay looks exactly like a failed
-      # release (the GitHub release exists, `npm view` still shows the previous
-      # version), which is a confusing state to be left debugging. Ask the
-      # registry directly so this run ends with a definite answer, and goes red
-      # if the answer is no.
+      # instantaneous. Ask the registry directly so the run ends with a definite
+      # answer, instead of leaving "the release exists but `npm view` still
+      # shows the previous version" to be puzzled out from the outside.
+      #
+      # It must not be able to *cost* the release, though. This step sits before
+      # the release-creation steps, and a slow registry did exactly that on
+      # 0.8.28-beta: the publish succeeded, the check timed out, and the GitHub
+      # release was never created. Hence the raised budget below *and*
+      # `continue-on-error` — the outcome is reported at the end of the job
+      # instead of failing the run here. `steps.verify.outcome` still records
+      # the true result even though the job stays green.
       - name: Verify the version is live on the registry
+        id: verify
+        continue-on-error: true
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           NAME="$(node -p 'require("./package.json").name')"
-          # 24 x 5s = 120s. 12 x 5s (60s) proved too tight: 0.8.27 got through but
-          # 0.8.28 did not, and because this step sits *before* the release-creation
-          # steps, a slow registry cost the GitHub release even though the publish
-          # had succeeded. Keep the budget in one place so the count, the progress
-          # line, and the error message cannot drift apart.
+          # 24 x 5s = 120s. 12 x 5s (60s) proved too tight: 0.8.27 got through
+          # but 0.8.28 did not. Keep the budget in one place so the count, the
+          # progress line, and the final message cannot drift apart.
           ATTEMPTS=24
           INTERVAL=5
           for attempt in $(seq 1 "$ATTEMPTS"); do
@@ -103,7 +109,7 @@ jobs:
             echo "attempt $attempt/$ATTEMPTS: $NAME@$VERSION not visible yet (HTTP $status); retrying in ${INTERVAL}s"
             sleep "$INTERVAL"
           done
-          echo "::error::$NAME@$VERSION was accepted by npm publish but is still not on the registry after $((ATTEMPTS * INTERVAL))s"
+          echo "::warning::$NAME@$VERSION was accepted by npm publish but is still not visible on the registry after $((ATTEMPTS * INTERVAL))s"
           exit 1
 
       - name: Extract this version's changelog section
@@ -123,3 +129,13 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes-file /tmp/release-notes.md \
             --prerelease
+
+      # Only reachable when the registry check above gave up. Deliberately last:
+      # by this point the package is published *and* the GitHub release exists,
+      # so this step can only ever add information — it cannot cost a release
+      # the way failing inside the check itself did on 0.8.28-beta. Reads
+      # `.outcome` rather than `.conclusion`, because continue-on-error is what
+      # makes those two differ.
+      - name: Warn if the registry check timed out
+        if: steps.verify.outcome == 'failure'
+        run: echo "::warning::${GITHUB_REF_NAME} was published and released, but is not yet readable on the registry — confirm it with npm view kritya@${GITHUB_REF_NAME#v} version"
