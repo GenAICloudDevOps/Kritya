@@ -377,6 +377,41 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Poll until a pid stops being visible, or fail with `describeFailure`'s text.
+ *
+ * A single `isAlive` check is the wrong tool immediately after kritya's `exit`
+ * event, because a process that has been signalled is not instantly gone:
+ * `backgroundManager.killAll()` SIGKILLs the whole process group and returns,
+ * so what the caller then observes is the kernel finishing the job. A process
+ * that is dead but not yet reaped is a zombie, and a zombie's pid still answers
+ * `kill(pid, 0)` — so one instantaneous check is a race, not a fact. It is lost
+ * under load: this is the test that failed the unsharded Publish run
+ * (1121 tests, 1 fail) while passing in every ~29-file CI shard, where the same
+ * machine is far less busy.
+ *
+ * Polling to a deadline asserts what the test is actually about — that the
+ * background job does not *survive* the session — without pinning it to one
+ * scheduler-dependent moment. A process that genuinely leaks still fails, just
+ * after the full budget instead of instantly.
+ */
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs = 10_000,
+  describeFailure?: () => string
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const detail = describeFailure?.();
+  throw new Error(
+    `background process ${pid} was still alive ${timeoutMs}ms after kritya exited` +
+      (detail ? `\n${detail}` : "")
+  );
+}
+
 test("SIGINT during a hung model call still tears down a background process it started", async () => {
   if (os.platform() === "win32") return; // POSIX signals/process groups only.
 
@@ -438,6 +473,9 @@ test("SIGINT during a hung model call still tears down a background process it s
     child.stderr?.on("data", (chunk: Buffer) => {
       childErr += chunk.toString();
     });
+    // Declared out here so the `finally` can still clean up the background
+    // process when an assertion throws before its pid has been read.
+    let bgPid = 0;
     try {
       await waitForFile(pidFile, 20_000, () =>
         [
@@ -448,7 +486,7 @@ test("SIGINT during a hung model call still tears down a background process it s
           childErr || "(empty)",
         ].join("\n")
       );
-      const bgPid = Number((await fs.readFile(pidFile, "utf8")).trim());
+      bgPid = Number((await fs.readFile(pidFile, "utf8")).trim());
       assert.ok(isAlive(bgPid), "background process should be running before SIGINT");
 
       child.kill("SIGINT");
@@ -460,10 +498,30 @@ test("SIGINT during a hung model call still tears down a background process it s
         ),
       ]);
       assert.equal(code, 1, "SIGINT should be handled as a stopped turn, not a raw kill");
-      assert.ok(!isAlive(bgPid), "background process should be terminated once kritya exits");
+      // Polled, not checked once: the teardown is a SIGKILL whose delivery and
+      // reaping complete after kritya has already exited — see
+      // waitForProcessExit for why a single isAlive here is a race.
+      await waitForProcessExit(bgPid, 10_000, () =>
+        [
+          `kritya exited with code ${code}`,
+          "--- stdout ---",
+          childOut || "(empty)",
+          "--- stderr ---",
+          childErr || "(empty)",
+        ].join("\n")
+      );
     } finally {
       // Never leave a stuck child (or the process it started) running past a
       // failed assertion above — this test's whole point is process cleanup.
+      // The background job is its own process group (see background.ts), so the
+      // negated pid reaches the whole group, `sleep` included.
+      if (bgPid && isAlive(bgPid)) {
+        try {
+          process.kill(-bgPid, "SIGKILL");
+        } catch {
+          // Already gone, or never a group leader — nothing left to clean up.
+        }
+      }
       if (!child.killed) child.kill("SIGKILL");
     }
   } finally {
