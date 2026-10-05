@@ -63,6 +63,23 @@ export interface CliConfig {
    * negative disables the cap entirely.
    */
   toolTimeoutSeconds?: number;
+  /**
+   * How many subagents (spawn_agent / spawn_write_agent) may run at once.
+   * Default 3. Clamped to 1..6 — spawn_agent accepts at most 6 tasks per call,
+   * so anything higher can never be used. Raising it trades wall-clock for
+   * API rate limits and token burn: a batch that took two waves now runs in
+   * one, at six times the concurrent spend.
+   */
+  subagentConcurrency?: number;
+  /**
+   * Wall-clock cap for one subagent, in seconds. Default 600. This is what
+   * reports as `stoppedEarly: "timeout"`, distinct from a cancellation.
+   */
+  subagentTimeoutSeconds?: number;
+  /** Model round-trips allowed per read-only subagent. Default 15. Hitting it reports `stoppedEarly: "max-steps"`. */
+  subagentMaxSteps?: number;
+  /** Model round-trips allowed per write subagent. Default 30 — building takes longer than searching. */
+  subagentWriteMaxSteps?: number;
   /** MCP servers to launch/connect and expose as tools (stdio or Streamable HTTP). */
   mcpServers?: Record<string, McpServerConfig>;
   /**

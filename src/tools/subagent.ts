@@ -1,4 +1,5 @@
 import type { ToolDef } from "../types.js";
+import { subagentStatusNote } from "../agent/subagents.js";
 
 const MAX_AGENTS = 6;
 
@@ -36,7 +37,7 @@ export const spawnAgentTool: ToolDef = {
   // Self-managed: each subagent has its own wall-clock cap and the batch runs
   // several in sequence, so the total legitimately exceeds any per-tool limit.
   timeoutMs: 0,
-  async execute(args, ctx, signal) {
+  async execute(args, ctx, signal, onProgress) {
     const tasks = Array.isArray(args.tasks)
       ? args.tasks.map((t) => String(t).trim()).filter(Boolean)
       : [];
@@ -46,11 +47,21 @@ export const spawnAgentTool: ToolDef = {
 
     const results = await ctx.spawnAgents(
       tasks.map((task) => ({ task, write: false })),
-      signal
+      signal,
+      // The runner reports per-subagent status; the batch is what knows how
+      // many there are, so the "2/6" framing is added here.
+      (index, text) => onProgress?.(`subagent ${index + 1}/${tasks.length} · ${text}`)
     );
-    if (results.length === 1) return results[0].summary;
+    if (results.length === 1) {
+      const note = subagentStatusNote(results[0]);
+      return note ? `${results[0].summary}\n\n${note}` : results[0].summary;
+    }
     return results
-      .map((r, i) => `--- Subagent ${i + 1}: ${r.task.slice(0, 60)} ---\n${r.summary}`)
+      .map((r, i) => {
+        const note = subagentStatusNote(r);
+        const header = `--- Subagent ${i + 1}: ${r.task.slice(0, 60)} ---`;
+        return note ? `${header}\n${r.summary}\n${note}` : `${header}\n${r.summary}`;
+      })
       .join("\n\n");
   },
   summarize: (args) => {

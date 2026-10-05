@@ -81,6 +81,37 @@ test("summarize shows a single task's text, or a count for several", () => {
   );
 });
 
+test("execute forwards the runner's status with a 1-based position for the batch", async () => {
+  const ctx: ToolContext = {
+    workspace: "/tmp",
+    spawnAgents: async (specs, _signal, onProgress) => {
+      onProgress?.(0, "step 2/30 · edit_file");
+      return specs.map((s) => ({ task: s.task, write: true, summary: "done" }));
+    },
+  };
+  const updates: string[] = [];
+  await spawnWriteAgentTool.execute({ tasks: ["a", "b"] }, ctx, undefined, (t) => updates.push(t));
+  assert.deepEqual(updates, ["subagent 1/2 · step 2/30 · edit_file"]);
+});
+
+test("a step-capped write subagent gets the cap note, not the branch advice", async () => {
+  // Telling someone to review a branch is wrong when the subagent stopped
+  // before finishing what it was doing — the note has to win.
+  const results: SubagentResult[] = [
+    {
+      task: "big refactor",
+      write: true,
+      summary: "half done",
+      branch: "kritya/agent-abc",
+      stoppedEarly: "max-steps",
+    },
+  ];
+  const ctx: ToolContext = { workspace: "/tmp", spawnAgents: async () => results };
+  const out = await spawnWriteAgentTool.execute({ tasks: ["big refactor"] }, ctx);
+  assert.match(out, /half done\n\[stopped early:/);
+  assert.doesNotMatch(out, /Changes committed to branch/);
+});
+
 test("preview lists every task with a reminder that nothing touches the real tree", async () => {
   const preview = await spawnWriteAgentTool.preview!({ tasks: ["a", "b"] }, { workspace: "/tmp" });
   assert.match(preview!, /About to run 2 write-capable subagent\(s\)/);

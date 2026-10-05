@@ -39,7 +39,13 @@ import { TrustPrompt } from "./ui/TrustPrompt.js";
 import { AiDisclosurePrompt } from "./ui/AiDisclosurePrompt.js";
 import { ApiKeySetupPrompt } from "./ui/ApiKeySetupPrompt.js";
 import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
-import type { ElicitationField, ElicitationResult, TaskItem, ToolDef } from "./types.js";
+import type {
+  AgentHandlers,
+  ElicitationField,
+  ElicitationResult,
+  TaskItem,
+  ToolDef,
+} from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
 import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import {
@@ -58,14 +64,7 @@ import { isBannerSeen, markBannerSeen } from "./trust/bannerSeen.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
 import { installCrashHandlers } from "./crash.js";
-import {
-  createWorktree,
-  commitWorktree,
-  worktreeDiffStat,
-  removeWorktree,
-  isGitRepo,
-} from "./agent/worktree.js";
-import type { AgentHandlers, SubagentResult, SubagentSpec } from "./types.js";
+import { createSubagentRunner } from "./agent/subagents.js";
 import { VERSION } from "./version.js";
 import { updateNoticeForUser } from "./update/check.js";
 
@@ -638,229 +637,32 @@ async function main() {
     ...mcpTools.filter((t) => !t.requiresPermission),
   ];
 
-  // Hard caps so a runaway or hung subagent can't stall the session or burn
-  // unbounded API/compute: a wall-clock timeout per subagent, and a bound on
-  // how many run at once.
-  const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
-  const SUBAGENT_CONCURRENCY = 3;
-
-  function silentHandlers(
-    onFinalText: (t: string) => void,
-    requestPermission: AgentHandlers["requestPermission"]
-  ): AgentHandlers {
-    return {
-      onTextDelta: () => {},
-      onReasoningDelta: () => {},
-      onAssistantText: onFinalText,
-      onToolStart: () => {},
-      onToolEnd: () => {},
-      requestPermission,
-      onUsage: () => {},
-    };
-  }
-
-  async function runReadOnlyAgent(task: string, signal: AbortSignal): Promise<SubagentResult> {
-    const sub = new Agent(
-      client,
-      () => modelRef.current,
-      readOnlySubTools,
-      { workspace, sandboxMode, trustWorkspace },
-      new PermissionManager([], workspace),
-      new SessionStore(workspace, true),
-      []
-    );
-    sub.maxSteps = 15;
-    sub.audit = sessionAudit;
-    sub.tracer = sessionTracer;
-    sub.meter = sessionMeter;
-    // Share the parent's kill switch: a subagent with its own would keep
-    // running after the user stopped the session.
-    sub.kill = agent.kill;
-    sub.spanParent = agent.turnSpan;
-    sub.spanAttributes = { "kritya.subagent": true, "kritya.subagent_task": task.slice(0, 120) };
-    let finalText = "";
-    await sub.runTurn(
-      task,
-      // read-only tools never require permission, so this is never invoked
-      silentHandlers(
-        (t) => (finalText = t),
-        async () => "no"
-      ),
-      signal
-    );
-    return { task, write: false, summary: finalText.trim() || "(subagent returned no findings)" };
-  }
-
-  async function runWriteAgent(task: string, signal: AbortSignal): Promise<SubagentResult> {
-    if (!isGitRepo(workspace)) {
-      return {
-        task,
-        write: true,
-        summary: "",
-        error:
-          "the workspace is not a git repository, so an isolated worktree could not be created",
-      };
-    }
-    const wt = createWorktree(workspace);
-    if (!wt) {
-      sessionAudit?.logTool({
-        tool: "subagent_worktree",
-        summary: `worktree creation failed for task: ${task.slice(0, 72)}`,
-        outcome: "error",
-      });
-      return { task, write: true, summary: "", error: "failed to create an isolated git worktree" };
-    }
-    sessionAudit?.logTool({
-      tool: "subagent_worktree",
-      summary: `created branch "${wt.branch}" for task: ${task.slice(0, 72)}`,
-      outcome: "ok",
-    });
-
-    let finalText = "";
-    try {
-      // Auto-allow ordinary writes/edits/shell (no human is watching this run),
-      // but a destructive command still forces `warning` via classifyDanger in
-      // the agent loop regardless of the allowlist — fail-safe deny it there,
-      // since there's no one to confirm it and letting it run unattended would
-      // be unsafe even inside an isolated worktree (it still has real shell/
-      // network access).
-      const sub = new Agent(
-        client,
-        () => modelRef.current,
-        writeSubTools,
-        { workspace: wt.dir, sandboxMode, trustWorkspace },
-        new PermissionManager({ allow: ["write_file", "edit_file", "shell(*)"], deny: [] }, wt.dir),
-        new SessionStore(wt.dir, true),
-        []
-      );
-      sub.maxSteps = 30;
-      // No human is watching this run (see the auto-allow comment above) —
-      // the forced unsandboxed-fallback warning must resolve on its own via
-      // the handler below rather than be raised at all.
-      sub.interactive = false;
-      sub.audit = sessionAudit;
-      sub.tracer = sessionTracer;
-      sub.meter = sessionMeter;
-      sub.kill = agent.kill; // see runReadOnlyAgent
-      sub.spanParent = agent.turnSpan;
-      sub.spanAttributes = {
-        "kritya.subagent": true,
-        "kritya.subagent_write": true,
-        "kritya.subagent_task": task.slice(0, 120),
-        "kritya.subagent_branch": wt.branch,
-      };
-      await sub.runTurn(
-        task,
-        silentHandlers(
-          (t) => (finalText = t),
-          async (_name, _summary, _diff, warning) => (warning ? "no" : "yes")
-        ),
-        signal
-      );
-    } catch (err) {
-      if (!finalText)
-        finalText = `(subagent stopped: ${err instanceof Error ? err.message : String(err)})`;
-    }
-
-    const commitState = commitWorktree(wt, `kritya subagent: ${task.slice(0, 72)}`);
-    sessionAudit?.logTool({
-      tool: "subagent_worktree",
-      summary: `branch "${wt.branch}": commit ${commitState}`,
-      outcome: commitState === "failed" ? "error" : "ok",
-    });
-    if (commitState === "clean") {
-      const cleaned = removeWorktree(workspace, wt, true);
-      const summary = finalText.trim() || "(no changes made)";
-      // Surface this rather than silently leave an empty orphaned branch: a
-      // failed `git branch -D` (e.g. a transient ref lock) shouldn't look
-      // identical to a subagent that genuinely made no changes.
-      return cleaned
-        ? { task, write: true, summary }
-        : {
-            task,
-            write: true,
-            summary,
-            error:
-              `made no changes, but its empty scratch branch "${wt.branch}" could not be ` +
-              `auto-deleted (a transient git lock) — safe to remove manually with ` +
-              `\`git branch -D ${wt.branch}\``,
-          };
-    }
-    if (commitState === "failed") {
-      // Don't discard the worktree: the subagent's edits are real work, even
-      // if a commit hook rejected them. Leave it on disk for manual recovery.
-      return {
-        task,
-        write: true,
-        summary: finalText.trim(),
-        error: `changes could not be committed (a commit hook may have rejected them) — left uncommitted at ${wt.dir}`,
-      };
-    }
-    const diffstat = worktreeDiffStat(workspace, wt);
-    removeWorktree(workspace, wt, false);
-    return {
-      task,
-      write: true,
-      branch: wt.branch,
-      summary: `${finalText.trim() || "(no summary)"}${diffstat ? `\n\n${diffstat}` : ""}`,
-    };
-  }
-
-  async function runOneAgent(
-    spec: SubagentSpec,
-    parentSignal?: AbortSignal
-  ): Promise<SubagentResult> {
-    const controller = new AbortController();
-    const onParentAbort = () => controller.abort();
-    parentSignal?.addEventListener("abort", onParentAbort);
-    const timer = setTimeout(() => controller.abort(), SUBAGENT_TIMEOUT_MS);
-    try {
-      return spec.write
-        ? await runWriteAgent(spec.task, controller.signal)
-        : await runReadOnlyAgent(spec.task, controller.signal);
-    } catch (err) {
-      return {
-        task: spec.task,
-        write: Boolean(spec.write),
-        summary: "",
-        error: err instanceof Error ? err.message : String(err),
-      };
-    } finally {
-      clearTimeout(timer);
-      parentSignal?.removeEventListener("abort", onParentAbort);
-    }
-  }
-
-  // Runs subagents concurrently, capped at SUBAGENT_CONCURRENCY at a time, so
-  // a burst of parallel tasks can't exhaust API rate limits or system resources.
-  const spawnAgents = async (
-    specs: SubagentSpec[],
-    signal?: AbortSignal
-  ): Promise<SubagentResult[]> => {
-    // Don't stand up worktrees and API calls for work that the shared kill
-    // switch would abort on its first step anyway.
-    if (agent.kill.active) {
-      return specs.map((s) => ({
-        task: s.task,
-        write: Boolean(s.write),
-        summary: "",
-        error: "not started — the kill switch is active",
-      }));
-    }
-    const results: SubagentResult[] = new Array(specs.length);
-    let next = 0;
-    const workers = Array.from(
-      { length: Math.min(SUBAGENT_CONCURRENCY, specs.length) },
-      async () => {
-        while (next < specs.length) {
-          const i = next++;
-          results[i] = await runOneAgent(specs[i], signal);
-        }
-      }
-    );
-    await Promise.all(workers);
-    return results;
-  };
+  // The runner itself lives in agent/subagents.ts. It used to be inline here,
+  // which put it out of reach of both the headless and Electron entry points
+  // (neither of which wires subagents at all as a result) and out of reach of
+  // the test suite, since dist/index.js is excluded from coverage.
+  const { spawnAgents } = createSubagentRunner({
+    client,
+    model: () => modelRef.current,
+    readOnlyTools: readOnlySubTools,
+    writeTools: writeSubTools,
+    workspace,
+    sandboxMode,
+    trustWorkspace,
+    audit: sessionAudit,
+    tracer: sessionTracer,
+    meter: sessionMeter,
+    // Read lazily: this runner is constructed before `agent` exists below.
+    kill: () => agent.kill,
+    spanParent: () => agent.turnSpan,
+    concurrency: config.subagentConcurrency,
+    timeoutMs:
+      config.subagentTimeoutSeconds === undefined
+        ? undefined
+        : config.subagentTimeoutSeconds * 1000,
+    readMaxSteps: config.subagentMaxSteps,
+    writeMaxSteps: config.subagentWriteMaxSteps,
+  });
 
   const agent = new Agent(
     client,

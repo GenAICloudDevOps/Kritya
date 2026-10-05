@@ -42,6 +42,19 @@ export class Agent {
   /** Max model round-trips per request before stopping to ask the user. */
   maxSteps = DEFAULT_MAX_STEPS;
   /**
+   * 1-based index of the step the loop is currently on, 0 before the first
+   * model call. Read by the subagent runner to report "step 4/15" as it works.
+   */
+  stepIndex = 0;
+  /**
+   * True when the last run stopped because it reached `maxSteps` rather than
+   * finishing. That is the "wants to keep going" case, and it is the only
+   * signal that distinguishes it — the loop just ends either way, and the
+   * message it appends afterwards is indistinguishable from model output to
+   * anything that doesn't parse it.
+   */
+  hitStepLimit = false;
+  /**
    * How long one tool call may run before it's abandoned (config
    * `toolTimeoutSeconds`). A tool with its own deadline opts out via
    * `ToolDef.timeoutMs = 0`; 0 here disables the cap for every tool.
@@ -501,7 +514,13 @@ export class Agent {
     handlers: AgentHandlers,
     signal?: AbortSignal
   ): Promise<void> {
+    // Reset per run, not per Agent: the main agent serves many turns in one
+    // process, so a previous turn that hit the cap must not leave the flag set
+    // for the next one.
+    this.stepIndex = 0;
+    this.hitStepLimit = false;
     for (let i = 0; i < this.maxSteps; i++) {
+      this.stepIndex = i + 1;
       // Checked ahead of the generic abort so a kill mid-turn is reported as
       // a kill rather than an ordinary cancellation.
       this.kill.assertLive();
@@ -590,6 +609,7 @@ export class Agent {
       }
     }
 
+    this.hitStepLimit = true;
     handlers.onAssistantText(
       `[Stopped after ${this.maxSteps} steps — the safety limit for one request. ` +
         `Send "continue" to keep going, or raise "maxSteps" in ~/.kritya/config.json.]`

@@ -47,6 +47,15 @@ export interface SubagentSpec {
   write?: boolean;
 }
 
+/** Why a subagent stopped before finishing. */
+export type SubagentStopReason =
+  /** It reached its step cap — the findings are real but incomplete, and it would keep going if given more room. */
+  | "max-steps"
+  /** The per-subagent wall-clock cap fired. */
+  | "timeout"
+  /** The user cancelled, or the session's kill switch tripped. */
+  | "cancelled";
+
 /** Outcome of one subagent run. */
 export interface SubagentResult {
   task: string;
@@ -57,6 +66,13 @@ export interface SubagentResult {
   branch?: string;
   /** Set if the subagent's work could not be safely reconciled (e.g. commit hook rejected it). */
   error?: string;
+  /**
+   * Set when the subagent stopped short of finishing. `max-steps` is the
+   * "needs more room" case — re-dispatch with a narrower task, or raise
+   * `subagentMaxSteps`; the other two are infrastructure, not the agent
+   * asking for direction.
+   */
+  stoppedEarly?: SubagentStopReason;
 }
 
 export interface ToolContext {
@@ -89,8 +105,17 @@ export interface ToolContext {
    * Read-only agents can only inspect the repo. Write agents get an isolated
    * git worktree + branch, so their edits and shell commands never touch the
    * real working tree until the user reviews and merges the branch.
+   *
+   * `onProgress` reports one subagent's status by its index in `specs` — both
+   * the "step 4/15 · grep src/auth" beats while it works and a one-line
+   * headline as each result lands, so a batch is not silent until its slowest
+   * member finishes.
    */
-  spawnAgents?(specs: SubagentSpec[], signal?: AbortSignal): Promise<SubagentResult[]>;
+  spawnAgents?(
+    specs: SubagentSpec[],
+    signal?: AbortSignal,
+    onProgress?: (index: number, text: string) => void
+  ): Promise<SubagentResult[]>;
 }
 
 export interface ToolDef {

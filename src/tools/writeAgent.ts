@@ -1,4 +1,5 @@
 import type { ToolDef } from "../types.js";
+import { subagentStatusNote } from "../agent/subagents.js";
 
 const MAX_AGENTS = 4;
 
@@ -51,7 +52,7 @@ export const spawnWriteAgentTool: ToolDef = {
       `\n\nNone of this touches your working tree directly — review each branch's diff before merging.`
     );
   },
-  async execute(args, ctx, signal) {
+  async execute(args, ctx, signal, onProgress) {
     const tasks = Array.isArray(args.tasks)
       ? args.tasks.map((t) => String(t).trim()).filter(Boolean)
       : [];
@@ -61,17 +62,24 @@ export const spawnWriteAgentTool: ToolDef = {
 
     const results = await ctx.spawnAgents(
       tasks.map((task) => ({ task, write: true })),
-      signal
+      signal,
+      // See subagent.ts — the batch owns the "2/4" framing, the runner reports status.
+      (index, text) => onProgress?.(`subagent ${index + 1}/${tasks.length} · ${text}`)
     );
     return results
       .map((r, i) => {
         const header = `--- Write subagent ${i + 1}: ${r.task.slice(0, 60)} ---`;
-        if (r.error) return `${header}\n${r.summary}\n[error: ${r.error}]`;
-        const branchNote = r.branch
-          ? `\n\nChanges committed to branch "${r.branch}". Review with ` +
-            `\`git diff main...${r.branch}\` (or your base branch), merge with \`git merge ${r.branch}\`.`
-          : "\n\n(no file changes were made)";
-        return `${header}\n${r.summary}${branchNote}`;
+        const note = subagentStatusNote(r);
+        // A problem replaces the branch note rather than sitting next to it:
+        // telling someone to review a branch is wrong advice when the commit
+        // failed, or when the subagent never finished what it was doing.
+        const tail = note
+          ? `\n${note}`
+          : r.branch
+            ? `\n\nChanges committed to branch "${r.branch}". Review with ` +
+              `\`git diff main...${r.branch}\` (or your base branch), merge with \`git merge ${r.branch}\`.`
+            : "\n\n(no file changes were made)";
+        return `${header}\n${r.summary}${tail}`;
       })
       .join("\n\n");
   },
