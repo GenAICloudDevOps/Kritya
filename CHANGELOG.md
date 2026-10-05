@@ -4,6 +4,23 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.29-beta] — 2026-10-05
+
+### Changed
+
+- The tagline shown under the launch banner is now "Superintelligence at
+  your command line"; the package description and README were updated to
+  match.
+- Upgraded `openai` 7.27.0 → 7.28.0 and `typescript-eslint` 8.71.0 →
+  8.71.1. Routine dependency maintenance.
+- The release workflow can no longer lose a GitHub release to a slow
+  registry. The check that a freshly published version is readable back
+  from npm now runs with `continue-on-error`, so the release is created
+  first and a timeout is reported as a warning at the end of the job
+  instead of failing the run before the release step — which is what
+  happened to 0.8.28-beta, whose package was published but never got a
+  GitHub release.
+
 ## [0.8.28-beta] — 2026-10-04
 
 ### Added
