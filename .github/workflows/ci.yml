@@ -203,6 +203,44 @@ jobs:
       - run: node scripts/run-tests.mjs --shard=${{ matrix.shard }}/4
         if: ${{ !matrix.cell.coverage }}
 
+  # The whole suite the way `npm test` runs it — every file in one `node --test`
+  # invocation on one machine — because that is the profile publish.yml gates a
+  # release on. Every other test job here shards (--shard=N/4, ~29 files per
+  # runner), so without this job that profile is exercised nowhere in CI.
+  #
+  # This is not hypothetical. 0.8.29-beta failed at release because a test that
+  # passes in every 29-file shard lost a race under the ~117-file load of the
+  # single unsharded run, while CI was green on the very same commit. Since
+  # ci.yml never runs on tags, that failure could only ever appear on the tag,
+  # where it is the release's only gate and there is no retry.
+  #
+  # Deliberately not a matrix cell, and deliberately unsharded: sharding is the
+  # thing that hides the failure. Invokes run-tests.mjs directly rather than
+  # `npm test` so the build above is not repeated.
+  unsharded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # ubuntu + 22.x on purpose, matching publish.yml: the point is to
+      # reproduce the release environment, not to widen coverage. Lint and
+      # format are already covered once per cell by the test matrix.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/run-tests.mjs
+
   # Merges the raw per-shard coverage from the ubuntu + 22.x test cells and
   # enforces the .c8rc.json thresholds. Waits for every test shard, so a red
   # suite never produces a green coverage gate.
