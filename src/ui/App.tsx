@@ -189,6 +189,7 @@ export function App({
   const {
     items,
     addItem,
+    clearItems,
     phase,
     setPhase,
     stream,
@@ -491,6 +492,7 @@ export function App({
       resetBudget,
       setBudgetLimit,
       addItem,
+      clearItems,
       setPhase,
       setActivity,
       setRunningPhase,
