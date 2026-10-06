@@ -213,6 +213,9 @@ export interface CommandContext {
   resetBudget(): void;
   setBudgetLimit(n: number): void;
   addItem(item: ItemBody): void;
+  /** Empty the visible transcript. The agent's conversation history is
+   *  separate (see Agent.reset()) — clear both for a true fresh start. */
+  clearItems(): void;
   setPhase(phase: Phase): void;
   setActivity(activity: string | null): void;
   /** The workflow phase driving the current turn: labels the spinner, and tells
@@ -549,6 +552,7 @@ const handlers: Record<string, CommandHandler> = {
   "/clear": (ctx) => {
     ctx.agent.reset();
     ctx.setTasks([]);
+    ctx.clearItems();
     ctx.addItem({ kind: "info", text: "Conversation cleared." });
   },
   "/cost": (ctx) => {

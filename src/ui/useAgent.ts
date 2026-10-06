@@ -273,6 +273,12 @@ export function useAgent({
     });
   }, []);
 
+  /** Empty the visible transcript (e.g. /clear). The agent's own history is
+   *  separate — see Agent.reset() — so callers clear both when they mean it. */
+  const clearItems = useCallback(() => {
+    setItems([]);
+  }, []);
+
   const {
     usageByModel,
     totalUsage,
@@ -725,6 +731,7 @@ export function useAgent({
   return {
     items,
     addItem,
+    clearItems,
     phase,
     setPhase,
     stream,
