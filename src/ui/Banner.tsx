@@ -64,23 +64,7 @@ const BETA_LABEL = "beta";
 /** Product tagline shown under the banner on launch. */
 export const TAGLINE = "Superintelligence at your command line";
 
-export function Banner({
-  tagline,
-  subtitle,
-  compact,
-}: {
-  tagline?: string;
-  subtitle?: string;
-  compact?: boolean;
-}) {
-  if (compact) {
-    return (
-      <Box marginBottom={1}>
-        <Text dimColor>{subtitle}</Text>
-      </Box>
-    );
-  }
-
+export function Banner({ tagline, subtitle }: { tagline?: string; subtitle?: string }) {
   const columns = terminalColumns(process.stdout);
   const wide = bannerLines("KRITYA", "░░");
   const narrow = bannerLines("KRITYA", "░");

@@ -96,8 +96,6 @@ export interface UseAgentParams {
   refreshFileList(): void;
   /** Updates the client subagents (spawn_agent) construct with, so a provider switch applies to them too. */
   onSwitchClient(client: ProviderClient): void;
-  /** Whether the full ASCII banner has never been shown for this workspace before; see bannerSeen.ts. */
-  firstLaunch: boolean;
 }
 
 /**
@@ -117,7 +115,6 @@ export function useAgent({
   resumeSessions,
   refreshFileList,
   onSwitchClient,
-  firstLaunch,
 }: UseAgentParams) {
   const nextId = useRef(0);
   const [items, setItems] = useState<Item[]>(() => {
@@ -127,7 +124,6 @@ export function useAgent({
         kind: "banner",
         tagline: TAGLINE,
         subtitle: `${path.basename(workspace)} · ${modelRef.current} · type a request, or /help for commands`,
-        compact: !firstLaunch,
       },
     ];
     if (resumedCount > 0) {

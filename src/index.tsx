@@ -363,6 +363,8 @@ async function promptApiKeySetup(
 async function main() {
   const config = loadConfig();
   const privacyMode = args.privacy || privacyModeFor(config);
+  // The ASCII banner renders on every launch regardless — this only decides
+  // whether to also show the first-run "Try asking:" hints.
   const firstLaunch = !isBannerSeen(workspace);
   if (!isAiDisclosureShown(workspace)) {
     await showAiDisclosureNotice();

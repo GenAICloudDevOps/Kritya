@@ -5,9 +5,13 @@ import { hardenWindowsDir } from "../config/winAcl.js";
 import { debugLog } from "../config/debug.js";
 
 /**
- * Tracks which workspaces have already shown the full ASCII banner once, so
- * repeat launches (which cost real vertical space in a terminal) can fall
- * back to a compact one-line header instead. Same shape and persistence
+ * Tracks which workspaces have already been opened once.
+ *
+ * The full ASCII banner itself no longer consults this — it renders on every
+ * launch, because the compact one-line fallback it used to select made repeat
+ * launches look broken. What remains gated on it is the first-run
+ * "Try asking:" hint block in App.tsx, which is genuine onboarding text and
+ * would be noise on every subsequent launch. Same shape and persistence
  * pattern as aiDisclosure.ts's ai-disclosure.json.
  */
 
@@ -25,12 +29,12 @@ function loadStore(storeFile: string): Record<string, string> {
   }
 }
 
-/** Whether the full ASCII banner has already been shown for this workspace. */
+/** Whether this workspace has been opened before (drives the first-run hints). */
 export function isBannerSeen(workspace: string, storeFile = BANNER_FILE): boolean {
   return typeof loadStore(storeFile)[path.resolve(workspace)] === "string";
 }
 
-/** Record that the full ASCII banner has been shown for this workspace, now. */
+/** Record that this workspace has been opened, now. */
 export function markBannerSeen(workspace: string, storeFile = BANNER_FILE): void {
   const store = loadStore(storeFile);
   store[path.resolve(workspace)] = new Date().toISOString();

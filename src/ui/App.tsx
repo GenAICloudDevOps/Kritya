@@ -60,7 +60,12 @@ export interface AppProps {
   resumeSessions?: SessionMeta[];
   customCommands?: CustomCommand[];
   mcpToolCount?: number;
-  /** Whether the full ASCII banner has never been shown for this workspace before; see bannerSeen.ts. */
+  /**
+   * Whether this workspace has never been opened before. The full ASCII banner
+   * shows on *every* launch (see Banner.tsx); this flag now only gates the
+   * first-run "Try asking:" hints, which would be noise once you know the tool.
+   * See bannerSeen.ts.
+   */
   firstLaunch: boolean;
   /** Hands the caller a stable reference to the same permission prompt tool
    *  calls use, so MCP sampling (which can arrive outside any turn) can ask
@@ -252,7 +257,6 @@ export function App({
     resumeSessions,
     refreshFileList,
     onSwitchClient,
-    firstLaunch,
   });
 
   useEffect(() => {
