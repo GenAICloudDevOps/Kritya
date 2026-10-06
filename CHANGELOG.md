@@ -4,6 +4,22 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.32-beta] — 2026-10-06
+
+### Fixed
+
+- `/clear` now clears the visible transcript as well as the agent's
+  conversation history. Previously it reset the model context but left the
+  old messages on screen, so it never felt like a fresh start.
+
+### Changed
+
+- Dependency upgrades: docx 9.8.1, jszip 3.10.2, mammoth 1.13.0,
+  pdfjs-dist 6.4.299, react 19.3.0, string-width 8.3.0,
+  @types/node 26.6.4, @types/react 19.3.0, electron 44.5.1,
+  eslint 10.12.0, globals 17.13.0, lint-staged 17.6.0, prettier 3.9.9,
+  tsx 4.23.15.
+
 ## [0.8.31-beta] — 2026-10-06
 
 ### Changed
