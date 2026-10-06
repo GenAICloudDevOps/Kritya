@@ -4,6 +4,33 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.33-beta] — 2026-10-06
+
+### Added
+
+- Sessions can be resumed by name: `kritya -r <code>` opens one specific past
+  session directly, where `-r` previously only opened a picker. The code is a
+  short five-character handle derived from the transcript (e.g. `a3f9k2`), and
+  any unambiguous prefix of it works, so it is short enough to actually retype.
+  Resuming copies the history into a new session file — the original stays on
+  disk as an archived branch — so a session's code changes when you resume it.
+- Quitting now says where the conversation went and how to get back to it:
+
+  ```
+  Session saved · 24 messages
+    resume  kritya -r a3f9k2
+    list    kritya -r
+  ```
+
+  It prints on every way out — `/exit`, `/quit`, Ctrl+C, and a real signal — and
+  stays silent for a session that wrote nothing. Under `--privacy` it says the
+  session was not saved, rather than pointing at a file that does not exist.
+
+### Changed
+
+- The `--resume` picker shows each session's short code, so a code can be read
+  off the list rather than only off the exit notice.
+
 ## [0.8.32-beta] — 2026-10-06
 
 ### Fixed
