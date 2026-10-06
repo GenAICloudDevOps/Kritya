@@ -49,14 +49,28 @@ function letterWidth(ch: string, pixelLen: number): number {
   return (GLYPHS[ch] ?? GLYPHS["-"])[0].length * pixelLen;
 }
 
-// Vertical gradient: cyan at the top fading into NVIDIA green.
+// The banner's palette: cyan at the top of the glyphs fading into NVIDIA green.
 const TOP_RGB = [0x00, 0xd9, 0xff];
 const BOTTOM_RGB = [0x76, 0xb9, 0x00];
 
-function rowColor(row: number): string {
-  const t = row / (ROWS - 1);
+/** One step of the cyan→green ramp, where t=0 is the cyan end and t=1 the green end. */
+function ramp(t: number): string {
   const [r, g, b] = TOP_RGB.map((c, i) => Math.round(c + (BOTTOM_RGB[i] - c) * t));
   return `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function rowColor(row: number): string {
+  return ramp(row / (ROWS - 1));
+}
+
+/**
+ * The tagline walks the glyphs' own cyan→green ramp, but left-to-right instead
+ * of top-to-bottom, so it reads as the bottom edge of the same object rather
+ * than an unrelated third colour. Ink has no text gradient, so this is applied
+ * one character at a time.
+ */
+export function sweepColor(index: number, length: number): string {
+  return ramp(length <= 1 ? 0 : index / (length - 1));
 }
 
 const BETA_LABEL = "beta";
@@ -71,8 +85,8 @@ export function Banner({ tagline, subtitle }: { tagline?: string; subtitle?: str
   const pixelLen = wide[0].length <= columns ? 2 : narrow[0].length <= columns ? 1 : 0;
   const lines = pixelLen === 2 ? wide : pixelLen === 1 ? narrow : null;
 
-  const center = (text: string) =>
-    " ".repeat(Math.max(0, Math.floor((columns - text.length) / 2))) + text;
+  const pad = (text: string) => " ".repeat(Math.max(0, Math.floor((columns - text.length) / 2)));
+  const center = (text: string) => pad(text) + text;
 
   // Right-align "beta" under the final "A" of KRITYA, one line below the glyph.
   const betaLine = (() => {
@@ -98,7 +112,16 @@ export function Banner({ tagline, subtitle }: { tagline?: string; subtitle?: str
         </Text>
       )}
       {betaLine ? <Text dimColor>{betaLine}</Text> : null}
-      {tagline ? <Text>{center(tagline)}</Text> : null}
+      {tagline ? (
+        <Text>
+          {pad(tagline)}
+          {[...tagline].map((ch, i) => (
+            <Text key={i} color={sweepColor(i, tagline.length)}>
+              {ch}
+            </Text>
+          ))}
+        </Text>
+      ) : null}
       <Box marginTop={2}>{subtitle ? <Text dimColor>{center(subtitle)}</Text> : null}</Box>
       <Text dimColor>{center("AI can make mistakes. Verify important output.")}</Text>
     </Box>
