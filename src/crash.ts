@@ -104,6 +104,16 @@ export function installCrashHandlers(opts: CrashHandlerOptions): void {
   process.on("unhandledRejection", (reason) => onCrash(reason, "unhandled rejection"));
 }
 
+/**
+ * True while the crash path is running. The crash report already tells the user
+ * where the transcript is and how to resume, so anything that would print its
+ * own sign-off on the way out (the interactive exit notice) checks this first
+ * and stays quiet rather than saying it twice, in two different formats.
+ */
+export function isHandlingCrash(): boolean {
+  return handling;
+}
+
 /** Test seam: forget that handlers were installed. */
 export function resetCrashHandlersForTest(): void {
   installed = false;

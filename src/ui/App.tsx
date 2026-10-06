@@ -51,6 +51,8 @@ export interface AppProps {
   providerRef: { current: string };
   config: CliConfig;
   resumedCount: number;
+  /** Short name of the session opened by `-r <name>`, so the transcript can name it. */
+  resumedName?: string;
   /** Updates the client subagents (spawn_agent) construct with, so a /provider switch applies to them too. */
   onSwitchClient(client: ProviderClient): void;
   /** Task checklist saved alongside the resumed session (via -c), if any. */
@@ -90,6 +92,7 @@ export function App({
   providerRef,
   config,
   resumedCount,
+  resumedName,
   initialTasks,
   undoStack,
   uiBridge,
@@ -254,6 +257,7 @@ export function App({
     config,
     uiBridge,
     resumedCount,
+    resumedName,
     initialTasks,
     resumeSessions,
     refreshFileList,
@@ -783,7 +787,10 @@ export function App({
       {phase === "resume" && (
         <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1}>
           <Text bold color="magenta">
-            Resume a session <Text dimColor>(type to search · Esc for a fresh one)</Text>
+            Resume a session{" "}
+            <Text dimColor>
+              (type to search · Esc for a fresh one · -r &lt;code&gt; to skip this)
+            </Text>
           </Text>
           {resumeFilter ? (
             <Text>
@@ -801,7 +808,7 @@ export function App({
               .map((s) => ({
                 label: s.title,
                 value: s.file,
-                hint: `${s.date} · ${s.count} msgs`,
+                hint: `${s.shortId} · ${s.date} · ${s.count} msgs`,
               }))}
             onSelect={onResumeSelect}
             onCancel={() => onResumeSelect("")}

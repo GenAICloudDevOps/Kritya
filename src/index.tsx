@@ -22,7 +22,8 @@ import {
   resolveEffectiveModel,
   staleSwitchyardModelWarning,
 } from "./provider/switchyardSidecar.js";
-import { SessionStore } from "./session/store.js";
+import { SessionStore, shortSessionId } from "./session/store.js";
+import { exitNotice } from "./session/exitNotice.js";
 import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
 import { runSkillsCli } from "./agent/skillsCli.js";
@@ -41,6 +42,7 @@ import { ApiKeySetupPrompt } from "./ui/ApiKeySetupPrompt.js";
 import { McpTrustPrompt } from "./ui/McpTrustPrompt.js";
 import type {
   AgentHandlers,
+  ChatMessage,
   ElicitationField,
   ElicitationResult,
   TaskItem,
@@ -63,7 +65,7 @@ import { isAiDisclosureShown, markAiDisclosureShown } from "./trust/aiDisclosure
 import { isBannerSeen, markBannerSeen } from "./trust/bannerSeen.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { runHeadless } from "./headless.js";
-import { installCrashHandlers } from "./crash.js";
+import { installCrashHandlers, isHandlingCrash } from "./crash.js";
 import { createSubagentRunner } from "./agent/subagents.js";
 import { VERSION } from "./version.js";
 import { updateNoticeForUser } from "./update/check.js";
@@ -74,7 +76,8 @@ Usage: kritya [directory] [options]
 
 Options:
   -c, --continue      resume the most recent session for this directory
-  -r, --resume        pick a past session for this directory from a list
+  -r, --resume [name] list past sessions, or resume one by its short name
+                      (e.g. kritya -r a3f9k2; plain -r opens the picker)
   -m, --model <id>    model ID to use (any model your provider offers)
   -p, --provider <n>  provider: nvidia (default), openai, openrouter, groq,
                       deepseek, mistral, together, ollama, or a custom one
@@ -114,11 +117,34 @@ Setup:
 
 Config file: ~/.kritya/config.json  { "apiKey", "model", "customModels": [{"id"}] }`;
 
+/** True if `p` names an existing directory — used to keep `-r <dir>` unambiguous. */
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write the exit notice to stdout. Best-effort: this runs from an "exit"
+ * handler, where the stream may already be gone, and there is nowhere left to
+ * report that if it is.
+ */
+function writeExitNotice(text: string): void {
+  try {
+    process.stdout.write(text + "\n");
+  } catch {
+    // Nothing left to write to.
+  }
+}
+
 function parseArgs(argv: string[]) {
   const args = {
     dir: ".",
     continue: false,
     resume: false,
+    resumeName: "",
     model: "",
     provider: "",
     help: false,
@@ -133,8 +159,22 @@ function parseArgs(argv: string[]) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-c" || a === "--continue") args.continue = true;
-    else if (a === "-r" || a === "--resume") args.resume = true;
-    else if (a === "-m" || a === "--model") args.model = argv[++i] ?? "";
+    else if (a === "-r" || a === "--resume") {
+      args.resume = true;
+      // `-r <name>` resumes one session directly; a bare `--resume` opens the
+      // picker. The value is only consumed when it cannot be the directory
+      // positional — `kritya -r some-dir` is the documented way to open a
+      // project, so an existing directory always wins. When the name really is
+      // an existing directory, `--resume=<name>` still forces it through.
+      const next = argv[i + 1];
+      if (next && !next.startsWith("-") && !isDirectory(next)) {
+        args.resumeName = next;
+        i++;
+      }
+    } else if (a.startsWith("--resume=")) {
+      args.resume = true;
+      args.resumeName = a.slice("--resume=".length);
+    } else if (a === "-m" || a === "--model") args.model = argv[++i] ?? "";
     else if (a === "-p" || a === "--provider") args.provider = argv[++i] ?? "";
     else if (a === "-h" || a === "--help") args.help = true;
     else if (a === "-v" || a === "--version") args.version = true;
@@ -453,12 +493,61 @@ async function main() {
     ? createMeter(session.id, "off")
     : createMeter(session.id, config.otel);
 
-  const initialHistory =
-    !privacyMode && args.continue ? (SessionStore.loadLatest(workspace) ?? []) : [];
-  const initialTasks = !privacyMode && args.continue ? SessionStore.loadLatestTasks(workspace) : [];
+  // `-r <name>` is resolved before the session file is opened, so a typo fails
+  // fast with a clear message instead of silently starting an empty session.
+  // Precedence is named resume > -c > a fresh session.
+  let resumedFile: string | undefined;
+  if (!privacyMode && args.resumeName) {
+    const found = SessionStore.resolveSession(workspace, args.resumeName);
+    if ("error" in found) {
+      console.error(found.error);
+      process.exit(1);
+    }
+    resumedFile = found.file;
+  }
+
+  let initialHistory: ChatMessage[] = [];
+  let initialTasks: TaskItem[] = [];
+  if (!privacyMode) {
+    if (resumedFile) {
+      initialHistory = SessionStore.loadFile(resumedFile);
+      initialTasks = SessionStore.loadTasksForSession(resumedFile);
+    } else if (args.continue) {
+      initialHistory = SessionStore.loadLatest(workspace) ?? [];
+      initialTasks = SessionStore.loadLatestTasks(workspace);
+    }
+  }
   session.start(initialHistory);
 
-  const resumeSessions = !privacyMode && args.resume ? SessionStore.listSessions(workspace) : [];
+  // The picker only opens when no session was named — `-r a3f9k2` has already
+  // decided which conversation to open.
+  const resumeSessions =
+    !privacyMode && args.resume && !resumedFile ? SessionStore.listSessions(workspace) : [];
+
+  // Where the conversation went, said once on the way out. This is the last
+  // thing on screen and the only place the session's short name is discoverable
+  // without re-running --resume, so it is worth printing rather than leaving
+  // the user to guess. Registered on "exit" rather than drawn as a transcript
+  // item so it covers every way out — Ctrl+C and a real signal included, not
+  // just /exit. The crash handler prints its own version of this, so it is
+  // skipped there rather than said twice in two formats.
+  let farewellPrinted = false;
+  const printFarewell = () => {
+    if (farewellPrinted || isHandlingCrash()) return;
+    farewellPrinted = true;
+    const file = session.path;
+    const text = exitNotice({
+      privacyMode,
+      messageCount: session.messageCount,
+      // A count with no file on disk means persistence failed somewhere along
+      // the way — don't promise a resume that cannot work.
+      file: file && fs.existsSync(file) ? file : undefined,
+      workspace,
+      cwd: process.cwd(),
+      isTTY: Boolean(process.stdout.isTTY),
+    });
+    if (text) writeExitNotice(text);
+  };
 
   // Filled in once the app is mounted, below; the crash handler needs a way to
   // tear the UI down and is installed before there is a UI to tear down.
@@ -476,6 +565,10 @@ async function main() {
   // resort fallback path stays on the synchronous, fire-and-forget flush()
   // inside cleanup() — it's best-effort only, not guaranteed to land.
   process.on("exit", cleanup);
+  // Registered after cleanup so the sign-off really is the last thing printed:
+  // cleanup kills background servers and MCP children, and anything they write
+  // to stderr on the way down would otherwise land after it.
+  process.on("exit", printFarewell);
   // Same reasoning as the signal handlers below, for the other way the process
   // can die without firing "exit": an error nothing caught. Also hands the
   // terminal back — Ink leaves it in raw mode with the cursor hidden.
@@ -485,9 +578,13 @@ async function main() {
     unmountUi: () => ui.instance?.unmount(),
     details: () => {
       const file = session.path;
-      return file
-        ? ["", `The conversation was saved to ${file}`, `Resume it with:  kritya -c ${workspace}`]
-        : [];
+      if (!file) return [];
+      const where = workspace === process.cwd() ? "" : ` ${workspace}`;
+      return [
+        "",
+        `The conversation was saved to ${file}`,
+        `Resume it with:  kritya -r ${shortSessionId(file)}${where}`,
+      ];
     },
   });
   // Default signal handling terminates WITHOUT firing "exit", which would
@@ -718,6 +815,7 @@ async function main() {
       providerRef={providerRef}
       config={config}
       resumedCount={initialHistory.length}
+      resumedName={resumedFile ? shortSessionId(resumedFile) : undefined}
       initialTasks={initialTasks}
       undoStack={undoStack}
       uiBridge={uiBridge}

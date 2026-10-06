@@ -249,3 +249,129 @@ test("isSessionFile rejects a symlink inside the session dir that points outside
 
   assert.equal(SessionStore.isSessionFile(workspace, link), false);
 });
+
+test("shortSessionId is a stable 5-char code that differs per transcript", async () => {
+  await freshHome();
+  const { SessionStore, shortSessionId } = await import(
+    `../session/store.js?t=${Date.now()}-shortid`
+  );
+  const workspace = "/tmp/some-workspace-shortid";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "hi" });
+  const [session] = SessionStore.listSessions(workspace);
+
+  const code = shortSessionId(session.file);
+  assert.match(code, /^[0-9a-z]{5}$/);
+  assert.equal(shortSessionId(session.file), code, "deriving it twice must not drift");
+  assert.equal(session.shortId, code, "listSessions must expose the same code");
+
+  // The long timestamp id is untouched — it is still the audit/telemetry key.
+  assert.notEqual(code, session.file);
+  assert.ok(path.basename(session.file).startsWith("20"), "the file keeps its timestamp name");
+});
+
+test("resolveSession finds a session by full code, unique prefix, or full timestamp id", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-resolve`);
+  const workspace = "/tmp/some-workspace-resolve";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "hello there" });
+  const [session] = SessionStore.listSessions(workspace);
+
+  assert.deepEqual(SessionStore.resolveSession(workspace, session.shortId), { file: session.file });
+  assert.deepEqual(SessionStore.resolveSession(workspace, session.shortId.slice(0, 3)), {
+    file: session.file,
+  });
+  assert.deepEqual(SessionStore.resolveSession(workspace, path.basename(session.file, ".jsonl")), {
+    file: session.file,
+  });
+  // Case and surrounding whitespace are the user's problem to not have.
+  assert.deepEqual(SessionStore.resolveSession(workspace, `  ${session.shortId.toUpperCase()} `), {
+    file: session.file,
+  });
+});
+
+test("resolveSession explains a miss, an empty query, and an empty directory instead of guessing", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-resolve-miss`);
+  const workspace = "/tmp/some-workspace-resolve-miss";
+
+  const noDir = SessionStore.resolveSession(workspace, "zzzzz");
+  assert.ok("error" in noDir && /No saved sessions/.test(noDir.error));
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "hi" });
+
+  const miss = SessionStore.resolveSession(workspace, "zzzzz");
+  assert.ok("error" in miss && /No session matching/.test(miss.error));
+
+  const blank = SessionStore.resolveSession(workspace, "   ");
+  assert.ok("error" in blank && /No session name/.test(blank.error));
+});
+
+test("resolveSession refuses an ambiguous prefix rather than opening the wrong conversation", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-resolve-amb`);
+  const workspace = "/tmp/some-workspace-resolve-amb";
+
+  const first = new SessionStore(workspace);
+  first.start();
+  first.append({ role: "user", content: "first" });
+  // Distinct millisecond, or both stores would claim the same timestamp filename.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const second = new SessionStore(workspace);
+  second.start();
+  second.append({ role: "user", content: "second" });
+
+  assert.equal(SessionStore.listSessions(workspace).length, 2);
+
+  // Every transcript basename starts with the year, so "20" matches both.
+  const result = SessionStore.resolveSession(workspace, "20");
+  assert.ok("error" in result, "an ambiguous prefix must not silently pick one");
+  assert.match(result.error, /matches 2 sessions/);
+});
+
+test("messageCount tracks what is really on disk, through rewind and /clear", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-count`);
+  const workspace = "/tmp/some-workspace-count";
+
+  const store = new SessionStore(workspace);
+  assert.equal(store.messageCount, 0, "nothing written yet");
+  store.start();
+  assert.equal(store.messageCount, 0);
+
+  store.append({ role: "user", content: "one" });
+  store.append({ role: "assistant", content: "two" });
+  assert.equal(store.messageCount, 2);
+
+  store.overwrite([{ role: "user", content: "one" }]);
+  assert.equal(store.messageCount, 1, "/rewind must rewind the count too");
+
+  store.rotate();
+  assert.equal(store.messageCount, 0, "/clear starts a new file at zero");
+});
+
+test("messageCount includes resumed history and stays 0 for an ephemeral (--privacy) store", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-count-seed`);
+  const workspace = "/tmp/some-workspace-count-seed";
+
+  const store = new SessionStore(workspace);
+  store.start([
+    { role: "user", content: "a" },
+    { role: "assistant", content: "b" },
+  ]);
+  assert.equal(store.messageCount, 2, "a resumed seed is already on disk");
+
+  const ephemeral = new SessionStore(workspace, true);
+  ephemeral.start([{ role: "user", content: "a" }]);
+  ephemeral.append({ role: "assistant", content: "b" });
+  assert.equal(ephemeral.messageCount, 0, "privacy mode persists nothing to count");
+  assert.equal(ephemeral.path, undefined);
+});

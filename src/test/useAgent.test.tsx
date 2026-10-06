@@ -649,6 +649,7 @@ test("resuming a session replays recent messages and restores its task checklist
         file: sessionFile,
         title: "old chat",
         preview: "first question",
+        shortId: "abc12",
         date: "2026-01-01",
         count: 2,
       },

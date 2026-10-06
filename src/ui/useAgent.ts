@@ -91,6 +91,8 @@ export interface UseAgentParams {
   config: CliConfig;
   uiBridge: UiBridge;
   resumedCount: number;
+  /** Short name of the session opened by `-r <name>`, when one was named. */
+  resumedName?: string;
   initialTasks?: TaskItem[];
   resumeSessions?: SessionMeta[];
   refreshFileList(): void;
@@ -111,6 +113,7 @@ export function useAgent({
   config,
   uiBridge,
   resumedCount,
+  resumedName,
   initialTasks,
   resumeSessions,
   refreshFileList,
@@ -134,7 +137,9 @@ export function useAgent({
       initial.push({
         id: nextId.current++,
         kind: "info",
-        text: `Resumed previous session (${resumedCount} messages)${taskNote}.`,
+        text: resumedName
+          ? `Resumed session ${resumedName} (${resumedCount} messages)${taskNote}.`
+          : `Resumed previous session (${resumedCount} messages)${taskNote}.`,
       });
     }
     return initial;

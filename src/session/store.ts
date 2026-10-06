@@ -66,6 +66,30 @@ function sessionDir(workspace: string): string {
 }
 
 /**
+ * Short, typeable handle for a session — a 5-character base36 code derived
+ * deterministically from the transcript's filename.
+ *
+ * The full id (the ISO timestamp basename) stays the on-disk name and the key
+ * that correlates the audit log and telemetry spans, and nothing here changes
+ * that. This is only what the user reads and retypes: `2026-10-06T19-08-39-123Z`
+ * is not a thing anyone types twice, which is why the exit notice and the
+ * `--resume` picker both show this instead.
+ *
+ * Derived rather than stored on purpose — there is no index file to drift out
+ * of sync with the directory, and the code is stable for the life of the
+ * transcript. Uniqueness is therefore *checked* at lookup time rather than
+ * assumed: see resolveSession(), which reports an ambiguous prefix instead of
+ * silently opening the wrong conversation.
+ */
+export function shortSessionId(file: string): string {
+  const name = path.basename(file, ".jsonl");
+  const digest = crypto.createHash("sha1").update(name).digest();
+  // Low-order base36 digits, so the code is uniformly distributed over the
+  // alphabet rather than clustered by the timestamp's shared prefix.
+  return digest.readUInt32BE(0).toString(36).padStart(5, "0").slice(-5);
+}
+
+/**
  * Transcripts can contain secrets that passed through tool output, so they are
  * always written 0o600 rather than inheriting whatever mode the file had.
  * writeFileAtomicSync is the shared implementation (see src/atomicWrite.ts):
@@ -83,6 +107,13 @@ function writeSessionFile(filePath: string, data: string): void {
 export class SessionStore {
   private dir: string;
   private file: string;
+  /**
+   * Messages persisted to the current file so far. Tracked in memory rather
+   * than re-read from disk because the exit notice needs it after the process
+   * has already begun tearing down, where reading back a possibly 50 MB
+   * transcript would be both slow and pointless.
+   */
+  private count = 0;
 
   /** When ephemeral, nothing is persisted to disk (used by subagents). */
   constructor(
@@ -91,6 +122,11 @@ export class SessionStore {
   ) {
     this.dir = sessionDir(workspace);
     this.file = this.newFilePath();
+  }
+
+  /** How many messages this session has written. 0 means nothing is on disk yet. */
+  get messageCount(): number {
+    return this.count;
   }
 
   private newFilePath(): string {
@@ -176,6 +212,7 @@ export class SessionStore {
         seed.map((m) => JSON.stringify(capMessageContent(m)) + "\n").join("")
       );
     }
+    this.count = seed.length;
   }
 
   /**
@@ -194,6 +231,7 @@ export class SessionStore {
       fs.appendFileSync(this.file, JSON.stringify(capMessageContent(message)) + "\n", {
         mode: 0o600,
       });
+      this.count++;
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
       warnPersistenceFailure(`SessionStore.append(${this.file})`, err);
@@ -203,6 +241,7 @@ export class SessionStore {
   /** Start over with a fresh session file (used by /clear). */
   rotate(): void {
     this.file = this.newFilePath();
+    this.count = 0;
   }
 
   /**
@@ -220,6 +259,7 @@ export class SessionStore {
         this.file,
         messages.map((m) => JSON.stringify(capMessageContent(m)) + "\n").join("")
       );
+      this.count = messages.length;
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
       warnPersistenceFailure(`SessionStore.overwrite(${this.file})`, err);
@@ -273,6 +313,62 @@ export class SessionStore {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Turn a user-typed session handle into a transcript file.
+   *
+   * Accepts the short code shown by the exit notice and the `--resume` picker,
+   * or the full timestamp basename, or any unambiguous prefix of either — the
+   * whole point is that the user can retype something short. Deliberately
+   * searches the entire directory rather than listSessions()' display window of
+   * 20, so a code copied from an earlier exit notice still resolves.
+   *
+   * Returns an error string instead of throwing so the CLI can print it and
+   * exit(1) without the caller having to distinguish "no such session" from
+   * "ambiguous" itself.
+   */
+  static resolveSession(workspace: string, name: string): { file: string } | { error: string } {
+    const query = name.trim().toLowerCase();
+    if (!query) return { error: "No session name given." };
+
+    const dir = sessionDir(workspace);
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      return { error: "No saved sessions for this directory yet." };
+    }
+    if (!entries.length) return { error: "No saved sessions for this directory yet." };
+
+    // Keyed by file, not appended to a list: a query can prefix both a
+    // transcript's short code *and* its timestamp basename (every basename
+    // starts with the year), and counting that file twice would report a
+    // perfectly unambiguous name as ambiguous.
+    const matches = new Map<string, string>();
+    for (const entry of entries) {
+      const file = path.join(dir, entry);
+      // Same containment check the IPC path uses — a symlink dropped into the
+      // session directory must not turn `--resume <name>` into an arbitrary
+      // file read.
+      if (!SessionStore.isSessionFile(workspace, file)) continue;
+      const base = path.basename(entry, ".jsonl").toLowerCase();
+      const short = shortSessionId(file);
+      if (short.startsWith(query) || base.startsWith(query)) matches.set(file, short);
+    }
+
+    if (!matches.size) {
+      return {
+        error: `No session matching "${name}" in this directory. Run \`kritya -r\` to list them.`,
+      };
+    }
+    if (matches.size > 1) {
+      const codes = [...matches.values()].join(", ");
+      return {
+        error: `"${name}" matches ${matches.size} sessions (${codes}) — use more characters.`,
+      };
+    }
+    return { file: [...matches.keys()][0] };
   }
 
   static loadFile(filePath: string): ChatMessage[] {
@@ -418,7 +514,14 @@ export class SessionStore {
       } catch {
         // leave empty
       }
-      sessions.push({ file, date, preview, title, count: lines.length });
+      sessions.push({
+        file,
+        date,
+        preview,
+        title,
+        shortId: shortSessionId(file),
+        count: lines.length,
+      });
     }
     return sessions;
   }
@@ -430,5 +533,7 @@ export interface SessionMeta {
   preview: string;
   /** First user message, cleaned, for display and search in --resume. */
   title: string;
+  /** Short typeable handle (see shortSessionId) — what the picker shows and `-r <name>` accepts. */
+  shortId: string;
   count: number;
 }
