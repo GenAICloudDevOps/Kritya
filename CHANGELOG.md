@@ -4,6 +4,20 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.31-beta] — 2026-10-06
+
+### Changed
+
+- The launch banner renders in full on every launch. It used to fall back to
+  a dim one-line subtitle on any launch after the first in a given folder,
+  which read as a broken banner rather than as a deliberately compact header.
+  The compact variant and the `firstLaunch` flag that selected it are gone;
+  the first-run "Try asking:" hints are still shown only once per workspace.
+- The tagline under the banner now walks the glyphs' own cyan-to-green
+  gradient, left to right, instead of rendering in the terminal's default
+  foreground — which matched nothing else in the banner, since the glyphs are
+  the only place in the UI with a colour ramp.
+
 ## [0.8.30-beta] — 2026-10-05
 
 ### Added
