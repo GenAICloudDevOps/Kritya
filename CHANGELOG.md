@@ -4,6 +4,23 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.40-beta] — 2026-10-07
+
+### Added
+
+- `Ctrl+P` opens a command palette that fuzzy-finds commands and checkpoints
+  from a single list. Matching is subsequence-based and case-insensitive, so
+  `rwd` reaches `/rewind` and `exmd` reaches `/export` — order matters, but
+  contiguity does not, which is what makes it feel different from the `/`
+  prefix completion. Type to filter, `↑`/`↓` to navigate, `Esc` closes, and
+  `Ctrl+P` again toggles it shut.
+- Picking a command inserts it into the input line rather than running it, so a
+  fuzzy finder can never execute something destructive on Enter; picking a
+  checkpoint rewinds to it immediately, because the name is already complete
+  and unambiguous. The palette is offered at the idle prompt only — opening it
+  mid-turn would race the agent — and it leaves `Ctrl+K`'s kill-switch chord
+  unshared.
+
 ## [0.8.39-beta] — 2026-10-07
 
 ### Added
