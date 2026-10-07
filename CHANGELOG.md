@@ -4,6 +4,20 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.38-beta] — 2026-10-06
+
+### Fixed
+
+- A second copy of `sprintf-js` (`1.0.3`) is gone from the dependency tree. It arrived through `mammoth` →
+  `argparse ~1.0.3`, and `argparse` only needs it for `mammoth`'s command-line tool, which kritya never
+  runs. `argparse` 2.x dropped the `sprintf-js` dependency outright, so an `overrides` entry pins
+  `argparse` to `^2.0.1` and the affected package is deleted from the tree rather than allowlisted.
+  `mammoth`'s library API — all kritya uses, via `extractRawText` — is unaffected; the CLI still parses
+  its arguments under 2.x through the deprecated aliases.
+- The remaining `sprintf-js` (`1.1.3`, via `electron-builder` → `@electron/get` → `global-agent` →
+  `roarr`) stays: no patched release exists upstream (1.1.3 is both the newest version and the last
+  affected), and it is not reachable from kritya's code.
+
 ## [0.8.36-beta] — 2026-10-06
 
 ### Fixed
