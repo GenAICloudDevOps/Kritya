@@ -203,7 +203,8 @@ export function useAgent({
   const hasConfirmedAcceptEdits = useRef(false);
   const hasConfirmedBypassMode = useRef(false);
   /** Whether auto/bypass mode is even reachable — requires a real sandbox
-   *  backend on this platform (Windows never has one; see sandboxAvailable). */
+   *  backend on this platform (on Windows that means MXC is installed; see
+   *  sandboxAvailable). */
   const sandboxActive =
     (config.sandboxExec ?? defaultSandboxMode()) !== "off" && sandboxAvailable();
   const abortRef = useRef<AbortController | null>(null);

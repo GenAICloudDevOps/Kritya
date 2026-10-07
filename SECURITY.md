@@ -93,16 +93,22 @@ of:
 - **Sandboxed execution** (`sandboxExec` in config — see
   [Sandboxed execution](docs/CONFIGURATION.md#sandboxed-execution)) adds an
   OS-enforced backstop for the case above: shell commands run under `bwrap`
-  (Linux) or `sandbox-exec` (macOS) with writes confined to the workspace, so
-  evading the regex no longer means unrestricted write access to the rest of
-  the machine. Default is `"auto"`, which sandboxes every command on
-  Linux/macOS when the required binary is present, and (since there's no
-  sandbox binary to fall back to) only commands flagged as dangerous on
-  Windows; `"always"` and `"strict"` sandbox every command on every platform.
-  It does not confine reads or network access — treat it as raising the cost
-  of an evasion, not eliminating one. `"auto"` and `"always"` fall back to an
-  unsandboxed run (with a warning) if the sandbox binary isn't available;
-  `"strict"` refuses to run the command at all in that case instead.
+  (Linux), `sandbox-exec` (macOS), or MXC
+  ([Microsoft Execution Containers](https://github.com/microsoft/mxc), Windows)
+  with writes confined to the workspace, so evading the regex no longer means
+  unrestricted write access to the rest of the machine. On Windows the backend
+  is an optional install — a ProcessContainer (AppContainer + DACLs) enforced
+  by the kernel, located via `MXC_BIN_DIR` or `KRITYA_MXC_EXEC`. Default is
+  `"auto"`, which sandboxes every command on Linux/macOS when the required
+  binary is present, and on Windows sandboxes every command once MXC is
+  present (falling back to only commands flagged as dangerous when it isn't);
+  `"always"` and `"strict"` sandbox every command on every platform. On Windows
+  the default is `"strict"`, so a host without MXC refuses commands rather than
+  running them unconfined. It does not confine reads or network access — treat
+  it as raising the cost of an evasion, not eliminating one. `"auto"` and
+  `"always"` fall back to an unsandboxed run (with a warning) if the sandbox
+  binary isn't available; `"strict"` refuses to run the command at all in that
+  case instead.
 - **File access is confined** to the workspace root — including via a symlink
   inside the workspace that points outside it — and paths that look like
   secrets (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys)

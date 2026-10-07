@@ -59,18 +59,25 @@ the workspace, regardless of what the command text looks like.
 ```
 
 - `"auto"` (**default on Linux/macOS**) — sandbox every command when the
-  sandbox binary is present.
+  sandbox backend is present. On Windows the backend is an optional install,
+  so `"auto"` there sandboxes every command once `wxc-exec.exe` is found, and
+  otherwise only the commands the danger guard flags.
 - `"always"` — sandbox every command on every platform, Windows included
-  (where each one then takes the unavailable-fallback path below).
-- `"strict"` (**default on Windows**, since there's no sandbox binary there to
-  back `"auto"`) — like `"always"`, but **fail-closed**: if no sandbox binary
-  is available, the command is refused outright instead of running
-  unsandboxed. Use this when the sandbox is a hard requirement rather than a
-  best-effort one.
+  (where a missing backend then takes the unavailable-fallback path below).
+- `"strict"` (**default on Windows**) — like `"always"`, but **fail-closed**:
+  if no sandbox backend is available, the command is refused outright instead
+  of running unsandboxed. Use this when the sandbox is a hard requirement
+  rather than a best-effort one. With MXC installed this means every command
+  runs _inside_ the container; on a host without it, every command is refused.
 - `"off"` — disables sandboxing entirely.
 
-Backed by `bwrap`/bubblewrap on Linux and `sandbox-exec` on macOS; not yet
-available on Windows. If the required binary isn't on `PATH`, `"auto"` and
+Backed by `bwrap`/bubblewrap on Linux, `sandbox-exec` on macOS, and MXC
+([Microsoft Execution Containers](https://github.com/microsoft/mxc)) on
+Windows, which runs the command inside a ProcessContainer (AppContainer +
+DACLs) enforced by the kernel rather than by matching command text. MXC is an
+optional dependency: install `@microsoft/mxc-sdk`, point `MXC_BIN_DIR` at its
+`bin/` directory, or set `KRITYA_MXC_EXEC` to the `wxc-exec.exe` binary
+itself. If the required binary isn't found, `"auto"` and
 `"always"` fall back to an unsandboxed run rather than failing silently:
 in an interactive session, the first such command forces a red warning
 prompt that you must explicitly approve — after that, the session
@@ -79,11 +86,11 @@ output instead of prompting again. Headless runs and unattended
 subagents skip the prompt (there's no one to answer it) and go straight
 to the unsandboxed run with the note. `"strict"` refuses the command
 instead of ever falling back. The sandbox
-confines **writes** to the workspace (plus system temp dirs) — reads and
-network access are left open, since restricting those breaks most ordinary
-tooling (dynamic linking, package manager caches, `git push`, etc.). It
-contains accidental or malicious damage outside your project; it isn't a full
-read-confinement or network isolation sandbox.
+confines **writes** to the workspace (plus system temp dirs on Linux/macOS) —
+reads and network access are left open, since restricting those breaks most
+ordinary tooling (dynamic linking, package manager caches, `git push`, etc.).
+It contains accidental or malicious damage outside your project; it isn't a
+full read-confinement or network isolation sandbox.
 
 Background processes (`background: true`) run under the same policy, including
 `"strict"`'s fail-closed behavior — kritya refuses to start an unconfined

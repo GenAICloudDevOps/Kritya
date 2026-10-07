@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { classifyDanger } from "../permissions/danger.js";
@@ -15,7 +16,8 @@ export interface SandboxedCommand {
   cleanup?: () => void;
 }
 
-let cachedTool: "bwrap" | "sandbox-exec" | null | undefined;
+let cachedTool: "bwrap" | "sandbox-exec" | "mxc" | null | undefined;
+let cachedMxcExec: string | null | undefined;
 
 function commandExists(bin: string): boolean {
   const finder = os.platform() === "win32" ? "where" : "which";
@@ -26,14 +28,81 @@ function commandExists(bin: string): boolean {
   }
 }
 
-/** Which sandbox binary (if any) is usable on this platform, cached after the first check. */
-function sandboxTool(): "bwrap" | "sandbox-exec" | null {
+/**
+ * MXC ships `wxc-exec.exe` per architecture (`bin/x64/`, `bin/arm64/`), and its
+ * own resolver picks the same way — see `sdk/node/src/v1/platform.ts::
+ * findWxcExecutable`, which this mirrors.
+ */
+function mxcArch(): string {
+  return os.arch() === "arm64" ? "arm64" : "x64";
+}
+
+/** The `@microsoft/mxc-sdk` install directory, or null when it isn't installed. */
+function mxcPackageRoot(): string | null {
+  try {
+    // `./package.json` is in the SDK's exports map, so this resolves whether or
+    // not the package's main entry is importable.
+    const require = createRequire(import.meta.url);
+    return path.dirname(require.resolve("@microsoft/mxc-sdk/package.json"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Locate `wxc-exec.exe`, in the order a user would expect to override it: an
+ * explicit path, then MXC's own `MXC_BIN_DIR`, then `PATH`, then an optional
+ * `@microsoft/mxc-sdk` install. Null means MXC isn't present, which leaves
+ * Windows behaving exactly as it did before MXC support existed.
+ */
+function locateMxcExecutable(): string | null {
+  const explicit = process.env.KRITYA_MXC_EXEC;
+  if (explicit && fs.existsSync(explicit)) return explicit;
+
+  // MXC's own override: <MXC_BIN_DIR>/<arch>/wxc-exec.exe.
+  const binDir = process.env.MXC_BIN_DIR;
+  if (binDir) {
+    const candidate = path.join(binDir, mxcArch(), "wxc-exec.exe");
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  // On PATH — kept as a bare name so the OS resolves it at spawn time.
+  if (commandExists("wxc-exec.exe")) return "wxc-exec.exe";
+
+  const root = mxcPackageRoot();
+  if (root) {
+    const candidate = path.join(root, "bin", mxcArch(), "wxc-exec.exe");
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+/** Cached after the first check — locating it can shell out to `where`. */
+function mxcExecutable(): string | null {
+  if (cachedMxcExec === undefined) cachedMxcExec = locateMxcExecutable();
+  return cachedMxcExec;
+}
+
+/** Test-only: drops the memoized backend and MXC path between cases. */
+export function resetSandboxToolCache(): void {
+  cachedTool = undefined;
+  cachedMxcExec = undefined;
+}
+
+/** Which sandbox backend (if any) is usable on this platform, cached after the first check. */
+function sandboxTool(): "bwrap" | "sandbox-exec" | "mxc" | null {
   if (cachedTool !== undefined) return cachedTool;
   const platform = os.platform();
   if (platform === "linux") {
     cachedTool = commandExists("bwrap") ? "bwrap" : null;
   } else if (platform === "darwin") {
     cachedTool = commandExists("sandbox-exec") ? "sandbox-exec" : null;
+  } else if (platform === "win32") {
+    // MXC (Microsoft eXecution Containers) is Windows' only containment
+    // backend — AppContainer + DACLs, enforced by the kernel. It is an
+    // optional install, so "not there" is the common case and stays null.
+    cachedTool = mxcExecutable() ? "mxc" : null;
   } else {
     cachedTool = null;
   }
@@ -47,10 +116,11 @@ export function sandboxAvailable(): boolean {
 /**
  * Default `sandboxMode` when the config leaves `sandboxExec` unset. "auto" on
  * Linux/macOS, where bwrap/sandbox-exec can actually confine writes to the
- * workspace. On Windows there's no sandbox backend at all (see
- * `sandboxUnavailableReason`), so "auto"/"always" would let a flagged command
- * run unprotected outside the workspace — "strict" refuses those instead of
- * silently falling back.
+ * workspace. On Windows "strict" is kept even though MXC can now back it,
+ * because "strict" is the mode that fails closed: with MXC installed every
+ * command runs *inside* the container instead of being refused, and on a host
+ * where MXC isn't present (or can't be served) commands are refused rather
+ * than silently falling back to an unconfined run.
  */
 export function defaultSandboxMode(): SandboxMode {
   return os.platform() === "win32" ? "strict" : "auto";
@@ -59,7 +129,12 @@ export function defaultSandboxMode(): SandboxMode {
 /** One-line reason sandboxing can't run here, for a fallback warning. */
 export function sandboxUnavailableReason(): string {
   const platform = os.platform();
-  if (platform === "win32") return "sandboxed execution isn't supported on Windows yet";
+  if (platform === "win32") {
+    return (
+      "wxc-exec.exe not found (install @microsoft/mxc-sdk, set MXC_BIN_DIR, " +
+      "or point KRITYA_MXC_EXEC at the binary)"
+    );
+  }
   if (platform === "linux") return "bwrap (bubblewrap) not found on PATH";
   if (platform === "darwin") return "sandbox-exec not found on PATH";
   return `sandboxed execution isn't supported on ${platform}`;
@@ -68,16 +143,16 @@ export function sandboxUnavailableReason(): string {
 /** Whether `command` should run sandboxed under the given mode. */
 export function shouldSandbox(mode: SandboxMode | undefined, command: string): boolean {
   if (!mode || mode === "off") return false;
-  // "always"/"strict" mean always, on every platform — including Windows,
-  // where there's no sandbox binary to back it, so every command falls back
-  // to the "[sandbox unavailable]" note ("always") or is refused outright
-  // ("strict"). That's deliberate: these are the modes for someone who wants
-  // maximum enforcement/visibility even without a real sandbox backing it.
+  // "always"/"strict" mean always, on every platform. Where no backend can be
+  // found that falls back to the "[sandbox unavailable]" note ("always") or a
+  // refusal ("strict") — deliberate, since these are the modes for someone who
+  // wants maximum enforcement/visibility even without a sandbox behind them.
   if (mode === "always" || mode === "strict") return true;
-  // "auto": Windows has no sandbox binary at all — falling back to "only
-  // flagged commands" (today's behavior) avoids a spurious fallback note on
-  // every single shell call, which "sandbox everything" would otherwise cause.
-  if (os.platform() === "win32") return classifyDanger(command) !== null;
+  // "auto" on Windows without a backend: falling back to "only flagged
+  // commands" avoids a spurious fallback note on every single shell call,
+  // which "sandbox everything" would otherwise cause. With MXC installed
+  // there *is* a backend, so "auto" means here what it means elsewhere.
+  if (os.platform() === "win32") return sandboxAvailable() || classifyDanger(command) !== null;
   return true;
 }
 
@@ -383,6 +458,52 @@ ${readExtra}
 `;
 }
 
+/** Windows' system-drive root, e.g. `C:\` — the read-everything analogue of bwrap's `--ro-bind / /`. */
+function systemDriveRoot(): string {
+  const drive = process.env.SystemDrive || "C:";
+  return drive.endsWith("\\") ? drive : `${drive}\\`;
+}
+
+/**
+ * The MXC request for one command, as JSON. Mirrors the posture of the bwrap
+ * and sandbox-exec branches below: reads stay open, writes are confined to the
+ * workspace plus the same short allowlist of tool caches.
+ *
+ * MXC's schema is versioned and the version marker is part of the contract, so
+ * this targets 1.0.0 (`schemas/stable/mxc-config.schema.1.0.0.json`).
+ * `wxc-exec` validates natively and refuses a request it cannot serve, so a
+ * policy that is wrong here fails the command rather than running it unconfined.
+ *
+ * Two deliberate omissions, both to keep Windows consistent with the other
+ * platforms rather than stricter by accident:
+ *  - The network is left open. Neither bwrap nor sandbox-exec restricts it, and
+ *    a contained command that cannot reach the network cannot `npm install`,
+ *    `git push`, or run a dev server. Tightening it is a cross-platform call.
+ *  - The temp dir is not isolated. Windows has no tmpfs equivalent, so scratch
+ *    state already persists across calls without a shared-dir bind.
+ */
+export function mxcPolicyJson(command: string, workspace: string, writable: string[]): string {
+  return JSON.stringify({
+    version: "1.0.0",
+    containment: "processcontainer",
+    process: { commandLine: command, cwd: workspace },
+    filesystem: {
+      // Existing paths only: the bwrap branch skips missing binds for the same
+      // reason, and naming a path that is not there is a needless way to have
+      // the whole request rejected.
+      readwritePaths: [...new Set([...writable, workspace])],
+      // Read-only over the system drive, mirroring `--ro-bind / /`: dynamic
+      // linking, package caches and toolchains keep working while writes stay
+      // confined to the list above.
+      readonlyPaths: [systemDriveRoot()],
+    },
+    network: { egress: { default: "allow" }, ingress: { default: "allow" } },
+    // MXC telemetry is off unless the run opts in, the user consents, and
+    // administrative policy permits it. Kritya opts out on the user's behalf.
+    telemetry: { enabled: false },
+  });
+}
+
 /**
  * Wraps `command` (run via `sh -c`) so it's confined to `workspace`: writes
  * are blocked everywhere else, network and (outside the real temp-dir roots)
@@ -400,6 +521,32 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
 
   // Linked worktrees / submodules keep their real git dir outside the workspace.
   const gitDir = externalGitCommonDir(workspace);
+
+  if (tool === "mxc") {
+    // Windows: hand the whole request to wxc-exec, which creates the
+    // AppContainer and runs the command inside it. The policy travels as
+    // base64 rather than a file — the same way MXC's own SDK passes it — so
+    // there is no profile file to create, guard, or clean up. Compare the
+    // symlink/TOCTOU defences the macOS branch needs for its profile: never
+    // writing a policy to disk removes that whole class of problem.
+    //
+    // Deliberately ahead of the shared-temp-dir setup below, which creates a
+    // directory as a side effect: Windows has no tmpfs to carve it out of, so
+    // there is nothing for it to do here.
+    const exe = mxcExecutable();
+    if (!exe) return null;
+    const writable = [...extraWritablePaths(), ...(gitDir ? [gitDir] : [])].filter((p) =>
+      fs.existsSync(p)
+    );
+    return {
+      cmd: exe,
+      args: [
+        "--config-base64",
+        Buffer.from(mxcPolicyJson(command, workspace, writable), "utf8").toString("base64"),
+      ],
+    };
+  }
+
   // null if the path exists but isn't a real, self-owned directory (e.g.
   // another local user squatted it as a symlink) — see safeSandboxSharedTmpDir.
   const shared = safeSandboxSharedTmpDir();

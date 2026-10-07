@@ -84,17 +84,18 @@ export interface CliConfig {
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * OS-level sandboxing for shell commands, confining writes to the workspace
-   * (bubblewrap on Linux, sandbox-exec on macOS; no sandbox binary exists on
-   * Windows). This is a backstop for when destructive-command detection is
-   * evaded, not a replacement for it. "auto" (default on Linux/macOS)
-   * sandboxes every shell command when the sandbox binary is present; on
-   * Windows, where it isn't, "auto" falls back to sandboxing only commands
-   * flagged by classifyDanger. "always" sandboxes every shell command,
-   * falling back to unsandboxed execution with a warning if the required
-   * binary isn't on PATH. "strict" (default on Windows, since no sandbox
-   * binary exists there to back "auto") is the same as "always" but refuses
-   * to run the command at all instead of falling back — use this when the
-   * sandbox is a hard requirement, not a best-effort one. "off" disables it.
+   * (bubblewrap on Linux, sandbox-exec on macOS, MXC — Microsoft Execution
+   * Containers — on Windows). This is a backstop for when destructive-command
+   * detection is evaded, not a replacement for it. "auto" (default on
+   * Linux/macOS) sandboxes every shell command when the sandbox backend is
+   * present; on Windows the backend is an optional install, so "auto" there
+   * sandboxes every command once MXC is present and otherwise falls back to
+   * sandboxing only commands flagged by classifyDanger. "always" sandboxes
+   * every shell command, falling back to unsandboxed execution with a warning
+   * if the required binary isn't available. "strict" (default on Windows) is
+   * the same as "always" but refuses to run the command at all instead of
+   * falling back — use this when the sandbox is a hard requirement, not a
+   * best-effort one. "off" disables it.
    */
   sandboxExec?: "auto" | "always" | "strict" | "off";
   /**

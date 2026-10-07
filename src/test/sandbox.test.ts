@@ -4,9 +4,13 @@ import { test } from "node:test";
 import {
   buildSandboxedCommand,
   defaultSandboxMode,
+  mxcPolicyJson,
+  requiresSandbox,
+  resetSandboxToolCache,
   sandboxAvailable,
   sandboxPathVariants,
   sandboxSharedTmpDir,
+  sandboxUnavailableReason,
   shouldSandbox,
 } from "../shell/sandbox.js";
 import { shellTool } from "../tools/shell.js";
@@ -24,10 +28,13 @@ test("shouldSandbox: always sandboxes everything", () => {
 
 test("shouldSandbox: auto sandboxes every command on platforms with a sandbox binary", () => {
   if (os.platform() === "win32") {
-    // No sandbox binary exists on Windows — auto must not claim otherwise,
-    // or every command would show a spurious "[sandbox unavailable]" note.
-    assert.equal(shouldSandbox("auto", "npm test"), false);
-    assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true); // still flagged via classifyDanger fallback
+    // On Windows the backend (MXC) is an optional install, so "auto" follows
+    // availability rather than claiming unconditionally: with MXC present
+    // every command is sandboxed, and without it only the commands
+    // classifyDanger flags — otherwise every shell call would show a
+    // spurious "[sandbox unavailable]" note.
+    assert.equal(shouldSandbox("auto", "npm test"), sandboxAvailable());
+    assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true); // flagged either way
     assert.equal(shouldSandbox("always", "npm test"), true);
     return;
   }
@@ -36,7 +43,7 @@ test("shouldSandbox: auto sandboxes every command on platforms with a sandbox bi
   assert.equal(shouldSandbox("auto", "rm -rf /tmp/x"), true);
 });
 
-test("defaultSandboxMode: strict on Windows (no sandbox binary to back auto), auto elsewhere", (t) => {
+test("defaultSandboxMode: strict on Windows (the mode that fails closed), auto elsewhere", (t) => {
   t.mock.method(os, "platform", () => "win32");
   assert.equal(defaultSandboxMode(), "strict");
 
@@ -60,7 +67,7 @@ test("buildSandboxedCommand returns null when unavailable, else a runnable wrapp
 
 test("shell tool sandboxes destructive commands in auto mode when available, else falls back with a note", async (t) => {
   if (os.platform() === "win32") {
-    t.skip("no sandbox support on Windows");
+    t.skip("POSIX shell semantics — the Windows/MXC path is covered by the mxc* tests below");
     return;
   }
   const ctx: ToolContext = { workspace: os.tmpdir(), sandboxMode: "auto" };
@@ -450,4 +457,136 @@ test("shell tool redacts secrets from command output", async () => {
   const out = await shellTool.execute({ command: "echo AKIAABCDEFGHIJKLMNOP" }, ctx);
   assert.doesNotMatch(out, /AKIAABCDEFGHIJKLMNOP/);
   assert.match(out, /secret\(s\) redacted/);
+});
+
+// --- MXC (Windows) ---------------------------------------------------------
+// These do not need MXC installed: `mxcPolicyJson` is pure, and discovery is
+// driven through the documented `KRITYA_MXC_EXEC` override.
+
+test("mxcPolicyJson builds a versioned ProcessContainer request", () => {
+  const policy = JSON.parse(mxcPolicyJson("echo hi", "/work/proj", ["/home/u/.npm"]));
+  // The version marker is part of MXC's contract, not a comment: wxc-exec
+  // rejects a request without it.
+  assert.equal(policy.version, "1.0.0");
+  assert.equal(policy.containment, "processcontainer");
+  assert.deepEqual(policy.process, { commandLine: "echo hi", cwd: "/work/proj" });
+  assert.deepEqual(policy.filesystem.readwritePaths, ["/home/u/.npm", "/work/proj"]);
+  // Reads stay open (the `--ro-bind / /` analogue) and writes do not.
+  assert.equal(policy.filesystem.readonlyPaths.length, 1);
+  assert.match(policy.filesystem.readonlyPaths[0], /\\$/);
+  // Left open on purpose, matching bwrap/sandbox-exec — see mxcPolicyJson.
+  assert.equal(policy.network.egress.default, "allow");
+  assert.equal(policy.network.ingress.default, "allow");
+  assert.equal(policy.telemetry.enabled, false);
+});
+
+test("mxcPolicyJson always makes the workspace writable, without duplicating it", () => {
+  const policy = JSON.parse(mxcPolicyJson("true", "/work/proj", ["/work/proj", "/home/u/.npm"]));
+  assert.deepEqual(policy.filesystem.readwritePaths, ["/work/proj", "/home/u/.npm"]);
+});
+
+test("mxcPolicyJson survives a workspace path that needs JSON escaping", () => {
+  // Windows workspaces are full of backslashes; a policy that mangles them
+  // would confine the command to the wrong directory.
+  const workspace = "C:\\Users\\dev\\proj";
+  const policy = JSON.parse(mxcPolicyJson("dir", workspace, []));
+  assert.equal(policy.process.cwd, workspace);
+  assert.ok(policy.filesystem.readwritePaths.includes(workspace));
+});
+
+test("MXC is discovered on Windows and wraps the command for wxc-exec", (t) => {
+  const previous = process.env.KRITYA_MXC_EXEC;
+  t.mock.method(os, "platform", () => "win32");
+  // Point at a file that certainly exists. Nothing is executed here — the
+  // wrapper is only built, never spawned.
+  process.env.KRITYA_MXC_EXEC = process.execPath;
+  resetSandboxToolCache();
+  try {
+    assert.equal(sandboxAvailable(), true);
+    // With a backend present, "auto" means what it means on other platforms.
+    assert.equal(shouldSandbox("auto", "npm test"), true);
+
+    const workspace = os.tmpdir();
+    const wrapped = buildSandboxedCommand("echo hi", workspace);
+    assert.ok(wrapped, "MXC backend should produce a wrapper");
+    assert.equal(wrapped!.cmd, process.execPath);
+    assert.equal(wrapped!.args[0], "--config-base64");
+
+    const policy = JSON.parse(Buffer.from(wrapped!.args[1], "base64").toString("utf8"));
+    assert.equal(policy.version, "1.0.0");
+    assert.equal(policy.containment, "processcontainer");
+    assert.equal(policy.process.commandLine, "echo hi");
+    assert.ok(policy.filesystem.readwritePaths.includes(workspace));
+
+    // The policy travels as base64, so unlike the macOS branch there is no
+    // profile file to clean up and no temp dir was created.
+    assert.equal(wrapped!.cleanup, undefined);
+    assert.equal(wrapped!.args.length, 2, "just the flag and its payload");
+  } finally {
+    if (previous === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+  }
+});
+
+test("a strict run with MXC present is contained rather than refused", async (t) => {
+  const previous = process.env.KRITYA_MXC_EXEC;
+  t.mock.method(os, "platform", () => "win32");
+  process.env.KRITYA_MXC_EXEC = process.execPath;
+  resetSandboxToolCache();
+  try {
+    const mode = defaultSandboxMode();
+    assert.equal(mode, "strict");
+    // This is the behaviour change that matters: on Windows "strict" used to
+    // refuse every command, because there was no backend to run it in.
+    assert.equal(shouldSandbox(mode, "echo hi"), true);
+    assert.ok(buildSandboxedCommand("echo hi", os.tmpdir()));
+  } finally {
+    if (previous === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+  }
+});
+
+test("a nonexistent KRITYA_MXC_EXEC override is ignored, not trusted", async (t) => {
+  const path = await import("node:path");
+  const previous = process.env.KRITYA_MXC_EXEC;
+  const bogus = path.join(os.tmpdir(), "kritya-not-a-real-wxc-exec.exe");
+  t.mock.method(os, "platform", () => "win32");
+  process.env.KRITYA_MXC_EXEC = bogus;
+  resetSandboxToolCache();
+  try {
+    const wrapped = buildSandboxedCommand("echo hi", os.tmpdir());
+    if (wrapped) {
+      // Something else on this host served the request; it must not be the
+      // override path that does not exist.
+      assert.notEqual(wrapped.cmd, bogus);
+    } else {
+      assert.equal(sandboxAvailable(), false);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+  }
+});
+
+test("without MXC, Windows fails closed under strict rather than running unconfined", (t) => {
+  const previous = process.env.KRITYA_MXC_EXEC;
+  t.mock.method(os, "platform", () => "win32");
+  delete process.env.KRITYA_MXC_EXEC;
+  resetSandboxToolCache();
+  try {
+    // "strict" is a hard requirement regardless of what is installed — that is
+    // what keeps the Windows default safe when no backend can be found.
+    assert.equal(requiresSandbox("strict"), true);
+    assert.match(sandboxUnavailableReason(), /wxc-exec\.exe/);
+    if (!sandboxAvailable()) {
+      assert.equal(buildSandboxedCommand("echo hi", os.tmpdir()), null);
+      assert.equal(shouldSandbox("strict", "echo hi"), true);
+    }
+  } finally {
+    if (previous !== undefined) process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+  }
 });
