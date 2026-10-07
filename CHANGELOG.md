@@ -4,6 +4,21 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.39-beta] — 2026-10-07
+
+### Added
+
+- `/rename` overrides the auto-derived session name: `/rename <name>` sets it
+  (slugified with the same rules as auto-naming) and prints the
+  `kritya -r <name>` resume hint; bare `/rename` shows the current name.
+  Junk input gets a clear error instead of silently keeping the old name.
+- `/export` dumps the transcript to markdown: `/export` writes
+  `kritya-<session>-<yyyymmdd-hhmm>.md` in the workspace, `/export <path>`
+  picks the destination (`.md` is added to bare names). User and assistant
+  turns render as sections, each tool result sits under the call that produced
+  it, the system prompt is left out, and paths outside the workspace are
+  rejected.
+
 ## [0.8.38-beta] — 2026-10-06
 
 ### Fixed
