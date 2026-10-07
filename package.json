@@ -103,7 +103,8 @@
       "glob": "^13.0.0",
       "fast-csv": "^5.0.7"
     },
-    "glob": "^13.0.0"
+    "glob": "^13.0.0",
+    "image-size": "^2.0.4"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

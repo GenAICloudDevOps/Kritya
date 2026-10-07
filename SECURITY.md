@@ -26,13 +26,19 @@ buckets:
 - **High-severity CVEs with no available fix** are recorded in
   `scripts/audit-allowlist.json` with a reachability argument — why the
   vulnerable code path isn't reachable from kritya's own code — and an expiry
-  date that forces a re-check. As of this writing, that covers two advisories
-  in `image-size`'s ICNS/JXL/HEIF parsers (GHSA-w3rx-r6r6-pgpr,
-  GHSA-5p2g-fcmc-qvqq), pulled in transitively via `pptxgenjs`. The parsers
-  are only reached through `pptxgenjs`'s `addImage()`, which kritya never
-  calls; no patched `image-size` exists, and npm's only suggested fix
-  downgrades `pptxgenjs` to a version that removes the feature rather than
-  fixing it.
+  date that forces a re-check. The list is currently **empty**. It previously
+  carried two advisories in `image-size`'s ICNS/JXL/HEIF parsers
+  (GHSA-w3rx-r6r6-pgpr, GHSA-5p2g-fcmc-qvqq), pulled in transitively via
+  `pptxgenjs`: those parsers are only reached through `pptxgenjs`'s
+  `addImage()`, which kritya never calls. That case was resolved rather than
+  tolerated — no 1.x `image-size` after 1.2.1 exists and `pptxgenjs` still
+  pins `^1.2.1` on its latest release, so an `overrides` entry forces
+  `image-size ^2.0.4`. The override is safe precisely because the dependency
+  is never loaded: `image-size` is declared by `pptxgenjs` but absent from
+  all three of its shipped bundles, and driving `addImage()` under a
+  module-load hook never requests it. A third entry covered
+  `http-cache-semantics` in the build-time-only `electron-builder` chain and
+  was cleared by a `4.3.0` bump once that release shipped.
 - **Socket's supply-chain heuristics** ("obfuscated code," "deprecated,"
   "AI-detected anomaly," etc.) are reviewed rather than acted on
   automatically, since they flag patterns, not confirmed exploits:

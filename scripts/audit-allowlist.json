@@ -1,23 +1,4 @@
 {
   "_comment": "Advisories `npm audit` reports that do not fail CI, checked by scripts/check-audit.mjs. npm can only suppress by severity, never by advisory, so without this file one unfixable finding would force the whole high-severity gate down. An entry is only justified when there is no patched version to upgrade to AND the vulnerable code path is unreachable from this project — record the reachability argument in `reason`, not just the fact that it's inconvenient. `expires` is a hard deadline: past it, CI fails until someone re-checks whether a fix has shipped.",
-  "allow": [
-    {
-      "id": "GHSA-w3rx-r6r6-pgpr",
-      "package": "image-size",
-      "reason": "Infinite-loop DoS in image-size's ICNS parser, reached only when pptxgenjs sizes an image being placed on a slide. src/tools/document/pptx.ts never calls addImage and never hands pptxgenjs an image; reading .pptx goes through JSZip and a regex, not pptxgenjs at all. A patched version does exist (2.0.3, released 2026-09-14; affected <=2.0.2) but it is unreachable: pptxgenjs 4.0.1 pins image-size ^1.2.1 and there is no 1.x release after 1.2.1, so the fix cannot be installed without a major-version override. npm's suggested fix downgrades pptxgenjs ^4 to 1.1.5, which removes the feature rather than fixing it.",
-      "expires": "2026-12-31"
-    },
-    {
-      "id": "GHSA-5p2g-fcmc-qvqq",
-      "package": "image-size",
-      "reason": "Same parser family and same reachability argument as GHSA-w3rx-r6r6-pgpr, in image-size's JXL and HEIF parsers. Unreachable without an addImage call. The 2.0.3 patch is likewise unreachable through pptxgenjs's image-size ^1.2.1 pin.",
-      "expires": "2026-12-31"
-    },
-    {
-      "id": "GHSA-ch52-4w7c-c8xp",
-      "package": "http-cache-semantics",
-      "reason": "Cross-user cache disclosure via client max-stale directives in http-cache-semantics (affected <=4.2.0, which is also the current latest, so no patched version exists). Reached only at build time, never at runtime: electron-builder -> app-builder-lib -> @electron/get -> got -> cacheable-request -> http-cache-semantics, used to download Electron binaries. Every got and cacheable-request release still depends on http-cache-semantics ^4.2.0, and this chain is dev-only and absent from the published tarball (package.json `files` is dist only), so no shipped code path can hand an attacker-influenced cached response to the parser. The one escape, @electron/get 5.x (which dropped got entirely), would require forcing a major bump of app-builder-lib's pinned transitive dependency for a build-time-only path.",
-      "expires": "2026-12-31"
-    }
-  ]
+  "allow": []
 }
