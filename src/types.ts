@@ -30,6 +30,7 @@ export type Phase =
   | "permission"
   | "model"
   | "resume"
+  | "palette"
   | "confirmMode"
   | "confirmBypassMode"
   | "elicitation";
