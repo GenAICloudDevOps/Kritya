@@ -270,7 +270,9 @@ becomes `fix-login-bug` — and also has a short 5-character code as a fallback
 for sessions that never earned a name. The exit notice prints the name on the
 way out, the picker shows it, and `kritya -r <name>` opens that exact session —
 an unambiguous prefix is enough, and a directory that exists always wins the
-argument, so `kritya -r some-dir` still means "open this project". Resuming
+argument, so `kritya -r some-dir` still means "open this project". Override the
+auto-derived name any time with `/rename <name>` (`/rename` alone shows the
+current one). Resuming
 _forks_: the loaded history is written into a new session file, so the name
 (and code) change on each resume and the original stays on disk as an archived
 branch.
