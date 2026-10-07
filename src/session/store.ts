@@ -231,6 +231,37 @@ export class SessionStore {
     return this.ephemeral ? undefined : this.file;
   }
 
+  /**
+   * What `-r <name>` and the exit notice call this session right now: the
+   * auto-derived or user-set name, or the short hash code when unnamed.
+   */
+  get displayName(): string {
+    return this.ephemeral ? this.id : SessionStore.displayName(this.file);
+  }
+
+  /**
+   * Override the session's name (see /rename). Unlike the auto-derived name,
+   * this is explicit: it replaces whatever was there. The slug rules are the
+   * same — the name has to stay something `-r` can match. Returns the slug
+   * that was set, or undefined when ephemeral or when nothing usable remains
+   * (so the caller can say why instead of silently keeping the old name).
+   */
+  setName(raw: string): string | undefined {
+    if (this.ephemeral) return undefined;
+    const slug = slugifySessionName(raw);
+    if (!slug) return undefined;
+    try {
+      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      hardenWindowsDir(CONFIG_DIR);
+      writeSessionFile(SessionStore.nameFilePathFor(this.file), slug + "\n");
+    } catch (err) {
+      debugLog(`SessionStore.setName(${this.file})`, err);
+      return undefined;
+    }
+    this.nameResolved = true;
+    return slug;
+  }
+
   /** Path of the sidecar file that holds this session's task checklist. */
   private tasksFilePath(): string {
     return SessionStore.tasksFilePathFor(this.file);

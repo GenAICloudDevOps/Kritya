@@ -523,3 +523,56 @@ test("cleanupOldSessions removes the name sidecar with the transcript", async ()
   const leftovers = (await fs.readdir(dir)).filter((f) => f.endsWith(".name"));
   assert.equal(leftovers.length, 0, "no orphaned .name sidecars");
 });
+
+test("setName overrides the auto-derived name and slugifies the input", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-setname`);
+  const workspace = "/tmp/some-workspace-setname";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Fix the login bug" });
+  assert.equal(SessionStore.listSessions(workspace)[0].name, "fix-the-login-bug");
+
+  const slug = store.setName("Actually it's the signup flow!!");
+  assert.equal(slug, "actually-it-s-the-signup-flow");
+  assert.equal(SessionStore.listSessions(workspace)[0].name, "actually-it-s-the-signup-flow");
+  assert.equal(store.displayName, "actually-it-s-the-signup-flow");
+
+  // Renaming twice keeps the latest; -r resolves the new name.
+  store.setName("signup flow");
+  const [session] = SessionStore.listSessions(workspace);
+  assert.equal(session.name, "signup-flow");
+  assert.deepEqual(SessionStore.resolveSession(workspace, "signup-flow"), {
+    file: session.file,
+  });
+});
+
+test("setName returns undefined when nothing usable remains, keeping the old name", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-setname-junk`);
+  const workspace = "/tmp/some-workspace-setname-junk";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Fix the login bug" });
+
+  assert.equal(store.setName("!!!"), undefined);
+  assert.equal(
+    SessionStore.listSessions(workspace)[0].name,
+    "fix-the-login-bug",
+    "a junk rename must not clobber the existing name"
+  );
+});
+
+test("setName is a no-op for ephemeral (--privacy) sessions", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-setname-eph`);
+  const workspace = "/tmp/some-workspace-setname-eph";
+
+  const store = new SessionStore(workspace, true);
+  store.start();
+  store.append({ role: "user", content: "Fix the login bug" });
+  assert.equal(store.setName("renamed"), undefined);
+  assert.equal(SessionStore.listSessions(workspace).length, 0, "nothing persisted");
+});
