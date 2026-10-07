@@ -196,6 +196,20 @@ export class Agent {
     this.session.rotate();
   }
 
+  /**
+   * Rename the current session (/rename). Returns the slug that was set, or
+   * undefined when the name had nothing usable in it — the transcript keeps
+   * its old name in that case.
+   */
+  renameSession(name: string): string | undefined {
+    return this.session.setName(name);
+  }
+
+  /** What `-r <name>` and the exit notice call this session right now. */
+  sessionName(): string {
+    return this.session.displayName;
+  }
+
   /** Save (or overwrite) a named checkpoint at the current point in the
    *  conversation, paired with the undo turn so /rewind can restore both
    *  the transcript and the files together. */
