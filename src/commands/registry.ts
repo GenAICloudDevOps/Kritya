@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Agent } from "../agent/loop.js";
+import { resolveExportPath, transcriptToMarkdown } from "../session/export.js";
 import { AuditLog, summarizeAudit } from "../audit/audit.js";
 import { runMcpCommand } from "./mcpCommand.js";
 import { mcpPrompts } from "../mcp/client.js";
@@ -136,6 +137,12 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/rename",
     description: "rename this session: /rename <name> (no name shows the current one)",
+    category: SESSION,
+  },
+  {
+    name: "/export",
+    description:
+      "export the transcript to markdown: /export [path] (default: kritya-<name>-<stamp>.md)",
     category: SESSION,
   },
   {
@@ -577,6 +584,42 @@ const handlers: Record<string, CommandHandler> = {
     ctx.addItem({
       kind: "info",
       text: `Session renamed to "${slug}". Resume it later with: kritya -r ${slug}`,
+    });
+  },
+  "/export": (ctx) => {
+    const messages = ctx.agent.history.filter((m) => m.role !== "system");
+    if (!messages.length) {
+      ctx.addItem({ kind: "info", text: "Nothing to export — the conversation is empty." });
+      return;
+    }
+    let file: string;
+    try {
+      file = resolveExportPath(ctx.workspace, ctx.arg, ctx.agent.sessionName());
+    } catch (err) {
+      ctx.addItem({
+        kind: "info",
+        text: `Can't export there: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    const md = transcriptToMarkdown(messages, {
+      sessionName: ctx.agent.sessionName(),
+      model: ctx.model,
+      provider: ctx.provider,
+      exportedAt: new Date(),
+    });
+    try {
+      fs.writeFileSync(file, md, "utf8");
+    } catch (err) {
+      ctx.addItem({
+        kind: "info",
+        text: `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    ctx.addItem({
+      kind: "info",
+      text: `Transcript exported to ${file} (${messages.length} messages).`,
     });
   },
   "/cost": (ctx) => {
