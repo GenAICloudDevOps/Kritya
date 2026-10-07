@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import type { SessionMeta } from "../session/store.js";
 
 async function freshHome(): Promise<string> {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-home-"));
@@ -374,4 +375,148 @@ test("messageCount includes resumed history and stays 0 for an ephemeral (--priv
   ephemeral.append({ role: "assistant", content: "b" });
   assert.equal(ephemeral.messageCount, 0, "privacy mode persists nothing to count");
   assert.equal(ephemeral.path, undefined);
+});
+
+test("slugifySessionName turns a first message into a typeable slug", async () => {
+  const { slugifySessionName } = await import(`../session/store.js?t=${Date.now()}-slug`);
+  assert.equal(slugifySessionName("Fix the login bug!!"), "fix-the-login-bug");
+  assert.equal(slugifySessionName("  /init  "), "init");
+  assert.equal(slugifySessionName("a".repeat(100)), "a".repeat(40));
+  assert.equal(slugifySessionName("!!!"), "");
+  assert.equal(slugifySessionName(""), "");
+});
+
+test("append names the session from the first real user message, then never renames", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-name`);
+  const workspace = "/tmp/some-workspace-name";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "[undo] reverted 1 file" }); // synthetic note: skipped
+  store.append({ role: "assistant", content: "ok" }); // not a user message: skipped
+  assert.equal(SessionStore.listSessions(workspace)[0].name, "", "no name yet");
+
+  store.append({ role: "user", content: "Fix the login bug" });
+  const [session] = SessionStore.listSessions(workspace);
+  assert.equal(session.name, "fix-the-login-bug");
+  assert.equal(SessionStore.displayName(session.file), "fix-the-login-bug");
+
+  store.append({ role: "user", content: "Also update the docs" });
+  assert.equal(
+    SessionStore.listSessions(workspace)[0].name,
+    "fix-the-login-bug",
+    "a later message must not rename the session"
+  );
+});
+
+test("the name comes from text parts when the first message carries images", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-nameimg`);
+  const workspace = "/tmp/some-workspace-nameimg";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({
+    role: "user",
+    content: [
+      { type: "text", text: "Describe this screenshot" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,xx" } },
+    ],
+  });
+  assert.equal(SessionStore.listSessions(workspace)[0].name, "describe-this-screenshot");
+});
+
+test("displayName falls back to the short code for an unnamed session", async () => {
+  await freshHome();
+  const { SessionStore, shortSessionId } = await import(
+    `../session/store.js?t=${Date.now()}-noname`
+  );
+  const workspace = "/tmp/some-workspace-noname";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "assistant", content: "hello" });
+  const [session] = SessionStore.listSessions(workspace);
+  assert.equal(session.name, "");
+  assert.equal(SessionStore.displayName(session.file), shortSessionId(session.file));
+});
+
+test("resolveSession finds a session by its auto-derived name", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-resolvename`);
+  const workspace = "/tmp/some-workspace-resolvename";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Fix the login bug" });
+  const [session] = SessionStore.listSessions(workspace);
+
+  assert.deepEqual(SessionStore.resolveSession(workspace, "fix-the-login-bug"), {
+    file: session.file,
+  });
+  assert.deepEqual(SessionStore.resolveSession(workspace, "fix-the-login"), {
+    file: session.file,
+  });
+  assert.deepEqual(SessionStore.resolveSession(workspace, "FIX-THE-LOGIN-BUG"), {
+    file: session.file,
+  });
+});
+
+test("resolveSession reports ambiguity when two sessions share a name", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-nameamb`);
+  const workspace = "/tmp/some-workspace-nameamb";
+
+  const first = new SessionStore(workspace);
+  first.start();
+  first.append({ role: "user", content: "Fix the login bug" });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const second = new SessionStore(workspace);
+  second.start();
+  second.append({ role: "user", content: "Fix the login bug" });
+
+  const result = SessionStore.resolveSession(workspace, "fix-the-login-bug");
+  assert.ok("error" in result, "a shared name must not silently pick one");
+  assert.match(result.error, /matches 2 sessions/);
+});
+
+test("rotate() lets the new session earn its own name (/clear)", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-rotatename`);
+  const workspace = "/tmp/some-workspace-rotatename";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Fix the login bug" });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  store.rotate();
+  store.append({ role: "user", content: "Write the release notes" });
+
+  const names = SessionStore.listSessions(workspace)
+    .map((s: SessionMeta) => s.name)
+    .sort();
+  assert.deepEqual(names, ["fix-the-login-bug", "write-the-release-notes"]);
+});
+
+test("cleanupOldSessions removes the name sidecar with the transcript", async () => {
+  await freshHome();
+  const { SessionStore } = await import(`../session/store.js?t=${Date.now()}-cleanupname`);
+  const workspace = "/tmp/some-workspace-cleanupname";
+
+  const store = new SessionStore(workspace);
+  store.start();
+  store.append({ role: "user", content: "Fix the login bug" });
+  const [session] = SessionStore.listSessions(workspace);
+  assert.equal(session.name, "fix-the-login-bug");
+
+  // Age the transcript 60 days; the sidecar follows the transcript.
+  const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+  await fs.utimes(session.file, old, old);
+  SessionStore.cleanupOldSessions(30);
+
+  assert.equal(SessionStore.listSessions(workspace).length, 0);
+  const dir = session.file.replace(/[^/]+$/, "");
+  const leftovers = (await fs.readdir(dir)).filter((f) => f.endsWith(".name"));
+  assert.equal(leftovers.length, 0, "no orphaned .name sidecars");
 });

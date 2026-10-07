@@ -124,8 +124,9 @@ kritya               # enter
 kritya [directory] [options]
 
   -c, --continue        resume the most recent session for this directory
-  -r, --resume [name]   list past sessions, or resume one by its short name
-                        (e.g. `kritya -r a3f9k2`; plain `-r` opens the list)
+  -r, --resume [name]   list past sessions, or resume one by its auto-derived
+                        name (e.g. `kritya -r fix-login-bug`) or 5-character
+                        code; plain `-r` opens the list
   -m, --model <id>      use any model ID your provider offers
   -p, --provider <name> nvidia (default), openai, openrouter, groq, deepseek,
                         mistral, together, ollama, switchyard (multi-model

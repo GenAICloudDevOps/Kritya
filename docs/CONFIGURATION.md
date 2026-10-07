@@ -265,12 +265,15 @@ model round-trips per request. `contextWindow` overrides the per-model default.
 
 Sessions are stored as JSONL under `~/.kritya/sessions/<workspace>/` and reloaded
 with `kritya -c` (the most recent one) or `kritya -r` (a searchable picker). Each
-session also has a short 5-character code: the exit notice prints it on the way
-out, the picker shows it, and `kritya -r <code>` opens that exact session — an
-unambiguous prefix is enough, and a directory that exists always wins the
+session is auto-named from its first real user message — "Fix the login bug"
+becomes `fix-login-bug` — and also has a short 5-character code as a fallback
+for sessions that never earned a name. The exit notice prints the name on the
+way out, the picker shows it, and `kritya -r <name>` opens that exact session —
+an unambiguous prefix is enough, and a directory that exists always wins the
 argument, so `kritya -r some-dir` still means "open this project". Resuming
-_forks_: the loaded history is written into a new session file, so the code
-changes on each resume and the original stays on disk as an archived branch.
+_forks_: the loaded history is written into a new session file, so the name
+(and code) change on each resume and the original stays on disk as an archived
+branch.
 Each turn is appended as its own line, and the task checklist sidecar is written
 via tmp-file-then-rename, so a crash or kill mid-write loses at most the one
 in-flight message rather than the whole session — `-c`/`-r` resume from

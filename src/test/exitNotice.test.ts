@@ -96,3 +96,23 @@ test("exitNotice dims only when stdout is a terminal", () => {
   const piped = exitNotice({ ...base, isTTY: false });
   assert.ok(piped && !piped.includes("\x1b["), "a pipe must not receive escape codes");
 });
+
+test("exitNotice shows the auto-derived session name when the session has one", async () => {
+  const { default: fs } = await import("node:fs/promises");
+  const { default: os } = await import("node:os");
+  const { default: path } = await import("node:path");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-exit-"));
+  const file = path.join(dir, "2026-10-06T19-08-39-123Z.jsonl");
+  await fs.writeFile(file, "");
+  await fs.writeFile(file.replace(/\.jsonl$/, ".name"), "fix-the-login-bug\n");
+  const text = exitNotice({
+    privacyMode: false,
+    messageCount: 3,
+    file,
+    workspace: "/w",
+    cwd: "/w",
+    isTTY: false,
+  });
+  assert.ok(text);
+  assert.match(text, /kritya -r fix-the-login-bug/);
+});

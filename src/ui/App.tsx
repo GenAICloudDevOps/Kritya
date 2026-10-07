@@ -789,7 +789,7 @@ export function App({
           <Text bold color="magenta">
             Resume a session{" "}
             <Text dimColor>
-              (type to search · Esc for a fresh one · -r &lt;code&gt; to skip this)
+              (type to search · Esc for a fresh one · -r &lt;name&gt; to skip this)
             </Text>
           </Text>
           {resumeFilter ? (
@@ -800,13 +800,16 @@ export function App({
           ) : null}
           <SelectList
             items={(resumeSessions ?? [])
-              .filter(
-                (s) =>
-                  s.title.toLowerCase().includes(resumeFilter.toLowerCase()) ||
+              .filter((s) => {
+                const f = resumeFilter.toLowerCase();
+                return (
+                  s.title.toLowerCase().includes(f) ||
+                  s.name.toLowerCase().includes(f) ||
                   SessionStore.matchesContent(s.file, resumeFilter)
-              )
+                );
+              })
               .map((s) => ({
-                label: s.title,
+                label: s.name || s.title,
                 value: s.file,
                 hint: `${s.shortId} · ${s.date} · ${s.count} msgs`,
               }))}

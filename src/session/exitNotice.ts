@@ -1,4 +1,4 @@
-import { shortSessionId } from "./store.js";
+import { SessionStore } from "./store.js";
 
 export interface ExitNoticeInput {
   /** --privacy: nothing was persisted, so there is no session to point at. */
@@ -42,7 +42,7 @@ export function exitNotice(input: ExitNoticeInput): string | null {
 
   return (
     `${dim}Session saved · ${n} message${n === 1 ? "" : "s"}${plain}\n` +
-    `${dim}  resume  ${plain}kritya -r ${shortSessionId(input.file)}${where}\n` +
+    `${dim}  resume  ${plain}kritya -r ${SessionStore.displayName(input.file)}${where}\n` +
     `${dim}  list    ${plain}kritya -r`
   );
 }
