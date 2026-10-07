@@ -82,6 +82,13 @@ jobs:
       # answer, instead of leaving "the release exists but `npm view` still
       # shows the previous version" to be puzzled out from the outside.
       #
+      # Two things are checked, because they propagate independently and the
+      # dist-tag is the slower of the two: the version document, and the `beta`
+      # dist-tag actually pointing at that version. "Version readable while the
+      # tag still names the previous release" is a real, minutes-long state —
+      # it is what made 0.8.34-beta look unpublished from the outside while
+      # this job was green.
+      #
       # It must not be able to *cost* the release, though. This step sits before
       # the release-creation steps, and a slow registry did exactly that on
       # 0.8.28-beta: the publish succeeded, the check timed out, and the GitHub
@@ -89,27 +96,51 @@ jobs:
       # `continue-on-error` — the outcome is reported at the end of the job
       # instead of failing the run here. `steps.verify.outcome` still records
       # the true result even though the job stays green.
-      - name: Verify the version is live on the registry
+      - name: Verify the version and dist-tag are live on the registry
         id: verify
         continue-on-error: true
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           NAME="$(node -p 'require("./package.json").name')"
+          # The dist-tag the publish step above sets. Kept next to that step's
+          # `--tag` so the two cannot silently disagree about which tag this
+          # check is asserting.
+          TAG=beta
           # 24 x 5s = 120s. 12 x 5s (60s) proved too tight: 0.8.27 got through
           # but 0.8.28 did not. Keep the budget in one place so the count, the
           # progress line, and the final message cannot drift apart.
           ATTEMPTS=24
           INTERVAL=5
+          # Both conditions share one deadline: the version usually lands first,
+          # so after it does the loop stops paying for that request and spends
+          # the rest of the budget on the tag alone.
+          version_ok=no
+          tag_ok=no
           for attempt in $(seq 1 "$ATTEMPTS"); do
-            status="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$NAME/$VERSION")"
-            if [ "$status" = "200" ]; then
-              echo "$NAME@$VERSION is live on the registry."
+            if [ "$version_ok" = no ]; then
+              status="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$NAME/$VERSION" || true)"
+              if [ "$status" = "200" ]; then version_ok=yes; fi
+            fi
+            if [ "$tag_ok" = no ]; then
+              # Read the packument, NOT the `-/package/<name>/dist-tags`
+              # convenience endpoint: that one is CDN-cached and served the
+              # previous version for ~2 minutes after 0.8.34-beta had already
+              # published, which is exactly the stale reading this step exists
+              # to rule out. The packument carries the same field with no such
+              # lag. The `?? ""` keeps a missing tag from printing "undefined",
+              # and the `|| true` keeps a flaky request from failing the step
+              # early instead of letting the loop retry.
+              tag="$(curl -s "https://registry.npmjs.org/$NAME" | TAG="$TAG" node -e 'let d="";process.stdin.on("data",(c)=>{d+=c}).on("end",()=>{try{process.stdout.write(String((JSON.parse(d)["dist-tags"]||{})[process.env.TAG]??""))}catch{process.stdout.write("")}})' || true)"
+              if [ "$tag" = "$VERSION" ]; then tag_ok=yes; fi
+            fi
+            if [ "$version_ok" = yes ] && [ "$tag_ok" = yes ]; then
+              echo "$NAME@$VERSION is live on the registry and dist-tag '$TAG' points at it."
               exit 0
             fi
-            echo "attempt $attempt/$ATTEMPTS: $NAME@$VERSION not visible yet (HTTP $status); retrying in ${INTERVAL}s"
+            echo "attempt $attempt/$ATTEMPTS: version visible=$version_ok, dist-tag $TAG=${tag:-unset} matches=$tag_ok; retrying in ${INTERVAL}s"
             sleep "$INTERVAL"
           done
-          echo "::warning::$NAME@$VERSION was accepted by npm publish but is still not visible on the registry after $((ATTEMPTS * INTERVAL))s"
+          echo "::warning::$NAME@$VERSION: version visible=$version_ok, dist-tag $TAG matches=$tag_ok after $((ATTEMPTS * INTERVAL))s"
           exit 1
 
       - name: Extract this version's changelog section
@@ -138,4 +169,4 @@ jobs:
       # makes those two differ.
       - name: Warn if the registry check timed out
         if: steps.verify.outcome == 'failure'
-        run: echo "::warning::${GITHUB_REF_NAME} was published and released, but is not yet readable on the registry — confirm it with npm view kritya@${GITHUB_REF_NAME#v} version"
+        run: echo "::warning::${GITHUB_REF_NAME} was published and released, but the registry has not caught up — confirm the version with npm view kritya@${GITHUB_REF_NAME#v} version and the tag with npm view kritya dist-tags"
