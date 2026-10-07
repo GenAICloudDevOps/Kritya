@@ -195,7 +195,8 @@ Custom `/commands` you define (see [docs/CONFIGURATION.md](docs/CONFIGURATION.md
 
 `Esc` cancels a running request. `↑/↓` recalls input history. `Ctrl+O` toggles
 full tool output. `Ctrl+E` opens the file the agent touched most recently in
-`$EDITOR`. `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
+`$EDITOR`. `Ctrl+P` opens the command palette (fuzzy-find commands and
+checkpoints). `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 ### More features
 

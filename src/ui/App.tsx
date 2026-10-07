@@ -31,6 +31,7 @@ import { ModelPicker } from "./ModelPicker.js";
 import { ElicitationPrompt } from "./ElicitationPrompt.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
+import { buildPaletteItems } from "./palette.js";
 import { Spinner } from "./Spinner.js";
 import { StatusLine } from "./StatusLine.js";
 import { StreamViewport } from "./StreamViewport.js";
@@ -160,6 +161,7 @@ export function App({
   const [inputKey, setInputKey] = useState(0);
   const [steerInput, setSteerInput] = useState("");
   const [resumeFilter, setResumeFilter] = useState("");
+  const [paletteFilter, setPaletteFilter] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileList, setFileList] = useState<string[]>([]);
@@ -391,6 +393,18 @@ export function App({
       engageKill("Ctrl+K");
       return;
     }
+    // Ctrl+P opens the command palette — fuzzy-find commands and checkpoints.
+    // Idle prompt only, like Ctrl+E: opening it mid-turn would race the agent,
+    // and the kill switch above must keep its chord unshared.
+    if (key.ctrl && _input === "p") {
+      if (phase === "input") {
+        setPaletteFilter("");
+        setPhase("palette");
+      } else if (phase === "palette") {
+        setPhase("input");
+      }
+      return;
+    }
     if (key.escape && phase === "working") {
       setActivity("cancelling…");
       abortRef.current?.abort();
@@ -455,6 +469,12 @@ export function App({
       if (key.backspace || key.delete) setResumeFilter((f) => f.slice(0, -1));
       else if (_input && !key.upArrow && !key.downArrow && !key.return && !key.escape && !key.tab) {
         setResumeFilter((f) => f + _input);
+      }
+    }
+    if (phase === "palette") {
+      if (key.backspace || key.delete) setPaletteFilter((f) => f.slice(0, -1));
+      else if (_input && !key.upArrow && !key.downArrow && !key.return && !key.escape && !key.tab) {
+        setPaletteFilter((f) => f + _input);
       }
     }
     if (suggestions.length) {
@@ -523,6 +543,26 @@ export function App({
     };
     void runCommand(cmd, ctx);
   };
+
+  // Command palette selection. Commands are inserted into the input line —
+  // never executed blind: a fuzzy finder that runs on Enter is how
+  // conversations get cleared by accident. Checkpoints rewind immediately;
+  // the name is complete and unambiguous, exactly like /rewind <name>.
+  const onPaletteSelect = (value: string) => {
+    if (value.startsWith("checkpoint:")) {
+      const name = value.slice("checkpoint:".length);
+      setPhase("input");
+      handleSlash(`/rewind ${name}`);
+      return;
+    }
+    if (value.startsWith("cmd:")) {
+      setInput(`${value.slice("cmd:".length)} `);
+      setInputKey((k) => k + 1);
+      setPhase("input");
+    }
+  };
+
+  const paletteItems = buildPaletteItems(allCommands, agent.listCheckpoints(), paletteFilter);
 
   const expandMentions = async (text: string): Promise<string> => {
     const mentions = [...new Set([...text.matchAll(MENTION_ALL_RE)].map((m) => m[1]))];
@@ -815,6 +855,28 @@ export function App({
               }))}
             onSelect={onResumeSelect}
             onCancel={() => onResumeSelect("")}
+          />
+        </Box>
+      )}
+
+      {phase === "palette" && (
+        <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
+          <Text bold color="cyan">
+            Command palette{" "}
+            <Text dimColor>
+              (type to filter · ↑↓ navigate · Enter selects · Esc closes · Ctrl+P toggles)
+            </Text>
+          </Text>
+          {paletteFilter ? (
+            <Text>
+              <Text dimColor>filter: </Text>
+              {paletteFilter}
+            </Text>
+          ) : null}
+          <SelectList
+            items={paletteItems}
+            onSelect={onPaletteSelect}
+            onCancel={() => setPhase("input")}
           />
         </Box>
       )}
