@@ -22,7 +22,7 @@ import {
   resolveEffectiveModel,
   staleSwitchyardModelWarning,
 } from "./provider/switchyardSidecar.js";
-import { SessionStore, shortSessionId } from "./session/store.js";
+import { SessionStore } from "./session/store.js";
 import { exitNotice } from "./session/exitNotice.js";
 import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
@@ -76,8 +76,9 @@ Usage: kritya [directory] [options]
 
 Options:
   -c, --continue      resume the most recent session for this directory
-  -r, --resume [name] list past sessions, or resume one by its short name
-                      (e.g. kritya -r a3f9k2; plain -r opens the picker)
+  -r, --resume [name] list past sessions, or resume one by its auto-derived
+                      name (e.g. kritya -r fix-login-bug) or 5-character code;
+                      plain -r opens the picker
   -m, --model <id>    model ID to use (any model your provider offers)
   -p, --provider <n>  provider: nvidia (default), openai, openrouter, groq,
                       deepseek, mistral, together, ollama, or a custom one
@@ -583,7 +584,7 @@ async function main() {
       return [
         "",
         `The conversation was saved to ${file}`,
-        `Resume it with:  kritya -r ${shortSessionId(file)}${where}`,
+        `Resume it with:  kritya -r ${SessionStore.displayName(file)}${where}`,
       ];
     },
   });
@@ -815,7 +816,7 @@ async function main() {
       providerRef={providerRef}
       config={config}
       resumedCount={initialHistory.length}
-      resumedName={resumedFile ? shortSessionId(resumedFile) : undefined}
+      resumedName={resumedFile ? SessionStore.displayName(resumedFile) : undefined}
       initialTasks={initialTasks}
       undoStack={undoStack}
       uiBridge={uiBridge}
