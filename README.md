@@ -180,6 +180,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | `/checkpoint <name>`      | save a named point in the session (`/checkpoint` alone lists saved ones)                                                            |
 | `/rewind <name>`          | rewind both the conversation and the files to a checkpoint                                                                          |
 | `/rename <name>`          | rename this session (`/rename` alone shows the current name)                                                                        |
+| `/export [path]`          | export the transcript to markdown (default: `kritya-<name>-<stamp>.md`)                                                             |
 | `/compact`                | summarize older conversation to free context space                                                                                  |
 | `/clear`                  | start a fresh conversation                                                                                                          |
 | `/cost`                   | token usage and estimated $ (see Pricing below)                                                                                     |
