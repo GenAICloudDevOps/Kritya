@@ -90,6 +90,54 @@ export function shortSessionId(file: string): string {
 }
 
 /**
+ * Turn a first user message into a short, typeable session name:
+ * "Fix the login bug!!" -> "fix-the-login-bug". Lowercase, runs of
+ * non-alphanumerics become one hyphen, capped at 40 characters so the name
+ * stays something a person will actually retype. Returns "" when nothing
+ * usable remains (empty input, only punctuation).
+ */
+export function slugifySessionName(text: string): string {
+  const slug = text
+    .slice(0, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+  return slug;
+}
+
+/**
+ * Pull plain text out of a message for naming/preview purposes. Content can
+ * be a string, an array of content parts (text + images), or null — images
+ * contribute nothing to a name.
+ */
+function messageText(message: ChatMessage): string {
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+  }
+  return "";
+}
+
+/**
+ * The first message that may name a session: a real user message, not one of
+ * the synthetic "[...]" notes the agent writes to itself (undo, summaries).
+ * Mirrors the filter listSessions() uses for its preview, so the name and
+ * the preview always agree about what the conversation is about.
+ */
+function nameableText(message: ChatMessage): string | undefined {
+  if (message.role !== "user") return undefined;
+  const text = messageText(message).replace(/\s+/g, " ").trim();
+  if (!text || text.startsWith("[")) return undefined;
+  return text;
+}
+
+/**
  * Transcripts can contain secrets that passed through tool output, so they are
  * always written 0o600 rather than inheriting whatever mode the file had.
  * writeFileAtomicSync is the shared implementation (see src/atomicWrite.ts):
@@ -129,6 +177,37 @@ export class SessionStore {
     return this.count;
   }
 
+  /**
+   * Whether this file's name is settled — either a sidecar already exists
+   * (written earlier, or by a previous process) or we just wrote one.
+   * Reset by rotate(), which starts a new file that deserves its own name.
+   */
+  private nameResolved = false;
+
+  /**
+   * Name this session from its first real user message, once. Later messages
+   * never rename it: the name is meant to stay stable so `-r <name>` keeps
+   * working and the resume list doesn't shift under the user.
+   */
+  private maybeNameSession(message: ChatMessage): void {
+    if (this.nameResolved || this.ephemeral) return;
+    if (SessionStore.readName(this.file)) {
+      this.nameResolved = true;
+      return;
+    }
+    const text = nameableText(message);
+    if (!text) return;
+    const slug = slugifySessionName(text);
+    if (!slug) return;
+    try {
+      writeSessionFile(SessionStore.nameFilePathFor(this.file), slug + "\n");
+      this.nameResolved = true;
+    } catch (err) {
+      // Naming is cosmetic; never fail a turn over it.
+      debugLog(`SessionStore.maybeNameSession(${this.file})`, err);
+    }
+  }
+
   private newFilePath(): string {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     return path.join(this.dir, `${stamp}.jsonl`);
@@ -159,6 +238,37 @@ export class SessionStore {
 
   private static tasksFilePathFor(sessionFile: string): string {
     return sessionFile.replace(/\.jsonl$/, ".tasks.json");
+  }
+
+  /**
+   * Sidecar holding the session's human-readable name (see
+   * slugifySessionName), written once from the first real user message.
+   * A sidecar rather than a rename: the transcript filename is the session's
+   * stable id for audit/telemetry correlation, and renaming it mid-session
+   * would churn that id plus the tasks sidecar that keys off it.
+   */
+  private static nameFilePathFor(sessionFile: string): string {
+    return sessionFile.replace(/\.jsonl$/, ".name");
+  }
+
+  /** The auto-derived name for a session file, if it earned one yet. */
+  static readName(sessionFile: string): string | undefined {
+    try {
+      const name = fs.readFileSync(SessionStore.nameFilePathFor(sessionFile), "utf8").trim();
+      return name || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * What the user types and sees: the auto-derived name when the session has
+   * one, otherwise the short hash code. Every surface that names a session —
+   * the exit notice, the crash report, the `--resume` picker, `-r <name>` —
+   * goes through here so they can never disagree.
+   */
+  static displayName(sessionFile: string): string {
+    return SessionStore.readName(sessionFile) ?? shortSessionId(sessionFile);
   }
 
   /**
@@ -232,6 +342,7 @@ export class SessionStore {
         mode: 0o600,
       });
       this.count++;
+      this.maybeNameSession(message);
     } catch (err) {
       // Persistence is best-effort; never crash the session over it.
       warnPersistenceFailure(`SessionStore.append(${this.file})`, err);
@@ -242,6 +353,8 @@ export class SessionStore {
   rotate(): void {
     this.file = this.newFilePath();
     this.count = 0;
+    // The new file deserves its own name, from its own first message.
+    this.nameResolved = false;
   }
 
   /**
@@ -354,7 +467,13 @@ export class SessionStore {
       if (!SessionStore.isSessionFile(workspace, file)) continue;
       const base = path.basename(entry, ".jsonl").toLowerCase();
       const short = shortSessionId(file);
-      if (short.startsWith(query) || base.startsWith(query)) matches.set(file, short);
+      const slug = SessionStore.readName(file)?.toLowerCase();
+      if (
+        short.startsWith(query) ||
+        base.startsWith(query) ||
+        (slug !== undefined && (slug === query || slug.startsWith(query)))
+      )
+        matches.set(file, short);
     }
 
     if (!matches.size) {
@@ -449,6 +568,7 @@ export class SessionStore {
           if (fs.statSync(file).mtimeMs < cutoff) {
             fs.unlinkSync(file);
             fs.rmSync(SessionStore.tasksFilePathFor(file), { force: true });
+            fs.rmSync(SessionStore.nameFilePathFor(file), { force: true });
           }
         } catch (err) {
           debugLog(`SessionStore.cleanupOldSessions(${file})`, err);
@@ -519,6 +639,7 @@ export class SessionStore {
         date,
         preview,
         title,
+        name: SessionStore.readName(file) ?? "",
         shortId: shortSessionId(file),
         count: lines.length,
       });
@@ -533,6 +654,11 @@ export interface SessionMeta {
   preview: string;
   /** First user message, cleaned, for display and search in --resume. */
   title: string;
+  /**
+   * Auto-derived slug from the first user message ("" when the session never
+   * earned one). Shown in the picker and accepted by `-r <name>`.
+   */
+  name: string;
   /** Short typeable handle (see shortSessionId) — what the picker shows and `-r <name>` accepts. */
   shortId: string;
   count: number;
