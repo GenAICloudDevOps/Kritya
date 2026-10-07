@@ -4,6 +4,25 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.36-beta] — 2026-10-06
+
+### Fixed
+
+- Two high-severity dependency advisories are patched rather than allowlisted.
+  `image-size` is forced to `^2.0.4` by an `overrides` entry, clearing the
+  infinite-loop DoS in its ICNS parser (GHSA-w3rx-r6r6-pgpr) and the JXL/HEIF
+  equivalent (GHSA-5p2g-fcmc-qvqq). The override is safe because `pptxgenjs`
+  declares `image-size` but never loads it — the dependency is absent from all
+  three of its shipped bundles, so no kritya code path can reach the parsers.
+- `http-cache-semantics` moves to 4.3.0, clearing a cross-user cache disclosure
+  (GHSA-ch52-4w7c-c8xp) in the build-time-only `electron-builder` chain.
+- `scripts/audit-allowlist.json` is now empty: all three advisories it carried
+  are resolved rather than tolerated, so the `npm audit` gate runs with no
+  suppressions and no expiring entries. `SECURITY.md` records the change. The
+  remaining moderate `sprintf-js` advisory is unfixable upstream — 1.1.3 is
+  both the newest release and the last affected — and unreachable here, since
+  kritya uses `mammoth`'s library API and never its CLI.
+
 ## [0.8.34-beta] — 2026-10-06
 
 ### Added

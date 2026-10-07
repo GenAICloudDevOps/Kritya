@@ -1,6 +1,6 @@
 {
   "name": "kritya",
-  "version": "0.8.34-beta",
+  "version": "0.8.36-beta",
   "description": "Kritya — Superintelligence at your command line",
   "type": "module",
   "publishConfig": {
