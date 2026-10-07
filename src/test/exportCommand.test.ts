@@ -74,7 +74,10 @@ test("transcriptToMarkdown truncates huge tool outputs", () => {
 });
 
 test("resolveExportPath defaults, adds .md, and rejects traversal", () => {
-  const ws = "/work/proj";
+  // A platform-appropriate workspace. A POSIX literal like "/work/proj" is not
+  // drive-qualified, so resolveSafe's path.resolve() output ("D:\work\proj" on
+  // Windows) never equals a path.join() of it — this failed on Windows only.
+  const ws = path.resolve("/work/proj");
   const def = resolveExportPath(ws, "", "fix-the-login-bug", new Date("2026-10-07T05:45:00"));
   assert.equal(def, path.join(ws, "kritya-fix-the-login-bug-20261007-0545.md"));
 
