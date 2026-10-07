@@ -238,15 +238,20 @@ if (args.version) {
   // pipe never pays for it and never sees it), cached for a day, bounded, and
   // written to stderr.
   console.log(VERSION);
+  // Awaited, not fired off behind a deferred process.exit(). This is
+  // top-level module code with no `return`, so a detached exit does not stop
+  // the statements below it: on a TTY the whole interactive path ran anyway
+  // (the TTY check, then main() and its AI-disclosure banner) and was then
+  // killed mid-frame when the notice resolved, which trips a libuv assertion
+  // on Windows — "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+  // file src\win\async.c". Awaiting keeps the notice and makes the exit
+  // synchronous. checkForUpdate is capped by a 2s AbortSignal timeout, cached
+  // for a day, and never throws, so this cannot hang or fail.
   if (process.stdout.isTTY) {
-    void updateNoticeForUser()
-      .then((notice) => {
-        if (notice) console.error(notice);
-      })
-      .finally(() => process.exit(0));
-  } else {
-    process.exit(0);
+    const notice = await updateNoticeForUser();
+    if (notice) console.error(notice);
   }
+  process.exit(0);
 }
 
 const workspace = path.resolve(args.dir);
