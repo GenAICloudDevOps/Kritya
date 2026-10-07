@@ -4,6 +4,30 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.34-beta] — 2026-10-06
+
+### Added
+
+- Sessions name themselves after the first thing you ask. "Fix the login bug"
+  becomes `fix-login-bug`, so a session can be resumed by something you
+  remember rather than by a hash: `kritya -r fix-login-bug`. The name is
+  lowercased, punctuation collapses to single hyphens, and it is capped at 40
+  characters. It is written once, from the first real user message — later
+  messages never rename it, so the name stays stable and the resume list does
+  not shift under you. Sessions that never earned a name (empty, or only
+  agent-written notes) keep the 5-character code as a fallback.
+- The name is stored in a `.name` sidecar next to the transcript, not by
+  renaming the file: the transcript filename is the session's stable id for
+  audit and telemetry, and the task checklist keys off it too.
+
+### Changed
+
+- The exit notice, the crash report, and the `--resume` picker all show the
+  auto-derived name now, falling back to the short code. Every surface that
+  names a session goes through one helper, so they cannot disagree.
+- The `--resume` picker searches the name as well as the title and content, and
+  `kritya -r <name>` accepts the name or any unambiguous prefix of it.
+
 ## [0.8.33-beta] — 2026-10-06
 
 ### Added

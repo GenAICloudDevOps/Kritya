@@ -516,7 +516,10 @@ test("cleanupOldSessions removes the name sidecar with the transcript", async ()
   SessionStore.cleanupOldSessions(30);
 
   assert.equal(SessionStore.listSessions(workspace).length, 0);
-  const dir = session.file.replace(/[^/]+$/, "");
+  // path.dirname, not a "/"-anchored regex: on Windows the transcript path is
+  // backslash-separated, so stripping "[^/]+$" would eat the whole string and
+  // leave "" — which readdir then rejects with ENOENT.
+  const dir = path.dirname(session.file);
   const leftovers = (await fs.readdir(dir)).filter((f) => f.endsWith(".name"));
   assert.equal(leftovers.length, 0, "no orphaned .name sidecars");
 });
