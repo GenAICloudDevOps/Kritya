@@ -134,6 +134,11 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
     category: SESSION,
   },
   {
+    name: "/rename",
+    description: "rename this session: /rename <name> (no name shows the current one)",
+    category: SESSION,
+  },
+  {
     name: "/plan",
     description: "toggle plan mode (read-only): /plan, /plan on, /plan off",
     category: SAFETY,
@@ -554,6 +559,25 @@ const handlers: Record<string, CommandHandler> = {
     ctx.setTasks([]);
     ctx.clearItems();
     ctx.addItem({ kind: "info", text: "Conversation cleared." });
+  },
+  "/rename": (ctx) => {
+    const arg = ctx.arg.trim();
+    if (!arg) {
+      ctx.addItem({ kind: "info", text: `This session is named "${ctx.agent.sessionName()}".` });
+      return;
+    }
+    const slug = ctx.agent.renameSession(arg);
+    if (!slug) {
+      ctx.addItem({
+        kind: "info",
+        text: `Couldn't make a session name out of "${arg}" — try letters and numbers.`,
+      });
+      return;
+    }
+    ctx.addItem({
+      kind: "info",
+      text: `Session renamed to "${slug}". Resume it later with: kritya -r ${slug}`,
+    });
   },
   "/cost": (ctx) => {
     ctx.addItem({ kind: "info", text: ctx.costReport() });
