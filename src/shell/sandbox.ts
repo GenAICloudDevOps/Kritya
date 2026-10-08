@@ -469,6 +469,80 @@ function systemDriveRoot(): string {
 }
 
 /**
+ * `command` as a `cmd.exe` command line, the way `buildSandboxedCommand`'s
+ * other two branches get theirs from `sh -c`.
+ *
+ * `wxc-exec` takes one command-line string and hands it to CreateProcess, which
+ * reads it as an image plus arguments — no shell, so `a && b` arrives at the
+ * first program as literal arguments and `|`, `>`, `cd …` and the like do
+ * nothing at all. This mirrors what Node's own `child_process.exec` passes on
+ * Windows (`cmd.exe /d /s /c "…"`), so a sandboxed command and an unsandboxed
+ * one behave the same: `/d` skips the registry AutoRun hooks, and `/s` makes
+ * cmd strip only the outermost quotes so a command carrying its own quoted
+ * arguments survives. Verified through wxc-exec: `&&`, `|`, `>` and nested
+ * quotes (`node -e "…"`) all work, and `dir`/`echo` resolve as cmd builtins.
+ */
+function windowsShellCommand(command: string): string {
+  return `cmd.exe /d /s /c "${command}"`;
+}
+
+/**
+ * `PATH` directories the container must be able to read for `cmd.exe` to
+ * resolve bare tool names such as `git`, `npm` and `node`.
+ *
+ * The container's `PATH` is the real, registry-derived one, so it lists
+ * directories like `C:\Program Files\nodejs` — but those are `EPERM` to the
+ * container until granted, so cmd.exe's lookup fails inside them and reports
+ * `'node' is not recognized as an internal or external command`. Granting them
+ * read-only fixes it. This is the same job MXC's own
+ * `policy.filesystem.getAvailableToolsPolicy` does, and the filters below
+ * follow it.
+ *
+ * Filtered rather than passed through wholesale:
+ *  - only paths that exist and are directories,
+ *  - nothing under `%SystemRoot%` — the container already has a baseline over
+ *    the system directories, and MXC's helper excludes them for that reason,
+ *  - never a drive root, and never a path that contains the home directory or
+ *    the workspace: granting an ancestor of either aborts container creation
+ *    outright (see `mxcPolicyJson`), and a `PATH` entry that contains the
+ *    workspace would also contradict the read-write grant it already has.
+ */
+function windowsToolPaths(workspace: string): string[] {
+  const home = os.homedir();
+  const systemRoot = (process.env.SystemRoot || process.env.WINDIR || "C:\\Windows").replace(
+    /\\+$/,
+    ""
+  );
+  // True when `parent` is `child` or contains it.
+  const contains = (parent: string, child: string): boolean => {
+    const rel = path.relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of (process.env.PATH ?? "").split(path.delimiter)) {
+    const entry = raw.trim();
+    if (!entry || !path.isAbsolute(entry)) continue;
+    const abs = path.resolve(entry);
+    const key = abs.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // `C:\` (and a bare `C:`) is the read-everything entry, handled separately.
+    if (abs === path.parse(abs).root) continue;
+    if (abs.toLowerCase() === systemRoot.toLowerCase()) continue;
+    if (abs.toLowerCase().startsWith(systemRoot.toLowerCase() + "\\")) continue;
+    if (contains(abs, home) || contains(abs, workspace)) continue;
+    try {
+      if (!fs.statSync(abs).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    out.push(abs);
+  }
+  return out;
+}
+
+/**
  * The MXC request for one command, as JSON. Mirrors the posture of the bwrap
  * and sandbox-exec branches below: reads stay open, writes are confined to the
  * workspace plus the same short allowlist of tool caches.
@@ -512,14 +586,22 @@ function systemDriveRoot(): string {
  *    this shape: reads of `C:\`, `System32` and `Program Files` succeed, the
  *    workspace and the container's own temp dir are writable, and the profile
  *    root, the drive root and `C:\Windows\Temp` all stay unwritable.
- *    `readonlyPaths` is not needed for tooling: MXC already gives the container
- *    a baseline over the system directories and over anything whose ACL carries
- *    an AppContainer capability SID, so tool executables and the DLLs beside
- *    them stay readable without being named here. That makes them *readable*,
- *    not reliably *resolvable*: `process.commandLine` gets no PATH search as
- *    forgiving as a shell's, so a full path is the safe spelling.
+ *    `readonlyPaths` carries the `PATH` tool directories from
+ *    `windowsToolPaths`. MXC already gives the container a baseline over the
+ *    system directories and over anything whose ACL carries an AppContainer
+ *    capability SID, so most of `PATH` needs nothing said about it — but a
+ *    directory outside that baseline (per-user installs such as
+ *    `%APPDATA%\npm`) is `EPERM` until granted, and `cmd.exe` cannot resolve a
+ *    bare `npm` or `node` that lives in one. The key is omitted rather than
+ *    sent as `[]` when there is nothing to add, so a policy built without it
+ *    is byte-identical to what this function produced before.
  */
-export function mxcPolicyJson(command: string, workspace: string, writable: string[]): string {
+export function mxcPolicyJson(
+  command: string,
+  workspace: string,
+  writable: string[],
+  readable: string[] = []
+): string {
   return JSON.stringify({
     version: "1.0.0",
     containment: "processcontainer",
@@ -531,6 +613,9 @@ export function mxcPolicyJson(command: string, workspace: string, writable: stri
       // is the read-everything entry — see the note above for why it belongs
       // here rather than in `readonlyPaths`.
       readwritePaths: [...new Set([...writable, workspace, systemDriveRoot()])],
+      // Never the drive root or the profile chain — see the note above; both
+      // are fatal under `readonlyPaths`.
+      ...(readable.length > 0 ? { readonlyPaths: [...new Set(readable)] } : {}),
     },
     network: { egress: { default: "allow" }, ingress: { default: "allow" } },
     ui: { disable: false },
@@ -574,11 +659,23 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
     const writable = [...extraWritablePaths(), ...(gitDir ? [gitDir] : [])].filter((p) =>
       fs.existsSync(p)
     );
+    // Unlike the branches below there is no `sh -c` here to give the command a
+    // shell, so `windowsShellCommand` supplies the `cmd.exe` one — see its
+    // note. `windowsToolPaths` supplies the read-only grants cmd.exe needs to
+    // resolve bare tool names inside the container.
     return {
       cmd: exe,
       args: [
         "--config-base64",
-        Buffer.from(mxcPolicyJson(command, workspace, writable), "utf8").toString("base64"),
+        Buffer.from(
+          mxcPolicyJson(
+            windowsShellCommand(command),
+            workspace,
+            writable,
+            windowsToolPaths(workspace)
+          ),
+          "utf8"
+        ).toString("base64"),
       ],
     };
   }

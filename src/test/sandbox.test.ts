@@ -515,6 +515,59 @@ test("mxcPolicyJson survives a workspace path that needs JSON escaping", () => {
   assert.ok(policy.filesystem.readwritePaths.includes(workspace));
 });
 
+test("mxcPolicyJson emits readonlyPaths only when there is something to add", () => {
+  // Omitting the key rather than sending `[]` keeps a policy built without any
+  // read grants byte-identical to what this function produced before the
+  // parameter existed.
+  const bare = JSON.parse(mxcPolicyJson("dir", "/work/proj", []));
+  assert.equal(bare.filesystem.readonlyPaths, undefined);
+
+  const granted = JSON.parse(
+    mxcPolicyJson("dir", "/work/proj", [], ["/opt/tools", "/opt/tools", "/usr/local/bin"])
+  );
+  // Deduplicated, and never the drive root — see mxcPolicyJson.
+  assert.deepEqual(granted.filesystem.readonlyPaths, ["/opt/tools", "/usr/local/bin"]);
+  assert.ok(!granted.filesystem.readonlyPaths.includes("C:\\"));
+});
+
+test("the MXC read grants skip PATH entries that would abort container creation", async (t) => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  t.mock.method(os, "platform", () => "win32");
+  const previousExec = process.env.KRITYA_MXC_EXEC;
+  const previousPath = process.env.PATH;
+  // A real tree, so the "exists and is a directory" filter has something to
+  // keep: `root/tools` is a genuine tool directory, `root` is its parent and
+  // contains the workspace, and the home directory's parent contains home —
+  // granting either of those two aborts container creation outright.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-toolpath-"));
+  const tools = path.join(root, "tools");
+  const workspace = path.join(root, "ws");
+  await fs.mkdir(tools);
+  await fs.mkdir(workspace);
+  const homeParent = path.dirname(os.homedir());
+  process.env.KRITYA_MXC_EXEC = process.execPath;
+  process.env.PATH = [root, tools, homeParent].join(path.delimiter);
+  resetSandboxToolCache();
+  try {
+    const wrapped = buildSandboxedCommand("echo hi", workspace);
+    assert.ok(wrapped, "MXC backend should produce a wrapper");
+    const policy = JSON.parse(Buffer.from(wrapped!.args[1], "base64").toString("utf8"));
+    const granted: string[] = policy.filesystem.readonlyPaths ?? [];
+    assert.ok(granted.includes(tools), "a real tool directory should be granted");
+    assert.ok(!granted.includes(root), "a PATH entry containing the workspace must not be granted");
+    assert.ok(!granted.includes(homeParent), "a PATH entry containing home must not be granted");
+    // The drive root is the read-everything entry, and belongs in readwritePaths.
+    assert.ok(!granted.includes(path.parse(root).root));
+  } finally {
+    if (previousExec === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previousExec;
+    process.env.PATH = previousPath;
+    resetSandboxToolCache();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("MXC is discovered on Windows and wraps the command for wxc-exec", (t) => {
   const previous = process.env.KRITYA_MXC_EXEC;
   t.mock.method(os, "platform", () => "win32");
@@ -536,7 +589,11 @@ test("MXC is discovered on Windows and wraps the command for wxc-exec", (t) => {
     const policy = JSON.parse(Buffer.from(wrapped!.args[1], "base64").toString("utf8"));
     assert.equal(policy.version, "1.0.0");
     assert.equal(policy.containment, "processcontainer");
-    assert.equal(policy.process.commandLine, "echo hi");
+    // The command goes to cmd.exe rather than straight to CreateProcess: this
+    // branch has no `sh -c` to give it a shell, so without the wrapper `a && b`
+    // would reach the first program as literal arguments and pipes, redirects
+    // and `cd … && …` would silently do nothing.
+    assert.equal(policy.process.commandLine, 'cmd.exe /d /s /c "echo hi"');
     assert.ok(policy.filesystem.readwritePaths.includes(workspace));
 
     // The policy travels as base64, so unlike the macOS branch there is no
