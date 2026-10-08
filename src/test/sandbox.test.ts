@@ -668,3 +668,115 @@ test("without MXC, Windows fails closed under strict rather than running unconfi
     resetSandboxToolCache();
   }
 });
+
+// The refusal itself, end to end through the tool the agent actually calls.
+// This is the contract a user hits on Windows with no MXC installed, and it is
+// pure logic — no Windows host, no wxc-exec.exe, no MXC SDK — so unlike the
+// execution tests below it runs everywhere instead of skipping in CI.
+test("strict without a backend refuses the command and produces no side effect", async (t) => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const previous = process.env.KRITYA_MXC_EXEC;
+  t.mock.method(os, "platform", () => "win32");
+  delete process.env.KRITYA_MXC_EXEC;
+  resetSandboxToolCache();
+
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-refuse-test-"));
+  const ctx: ToolContext = { workspace, sandboxMode: "strict" };
+  try {
+    if (sandboxAvailable()) {
+      // An MXC that this host can actually reach: "strict" contains rather than
+      // refuses, which is the other branch's subject. Nothing to assert here.
+      t.skip("a real MXC backend is available on this host");
+      return;
+    }
+    const marker = path.join(workspace, "must-not-exist.txt");
+    const out = await shellTool.execute({ command: `echo bad > "${marker}"` }, ctx);
+
+    // The user-facing contract: a stable, greppable prefix the UI and the
+    // transcript both key off (see sandbox.test.ts's own COMMAND_NOTE_RE
+    // counterpart in shell.ts).
+    assert.match(out, /^\[command refused: /, "refusal must be reported, not silent");
+    assert.match(out, /sandboxExec is "strict"/);
+    assert.match(out, /wxc-exec\.exe/, "the reason must name the missing backend");
+    // And it must actually have refused: no fallback execution, no side effect.
+    await assert.rejects(fs.access(marker), "a refused command must not have run");
+  } finally {
+    if (previous === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// The counterpart: the non-strict modes must fall back *with a note*, not
+// refuse. Asserted together with the above so a change that makes "auto"
+// fail closed (or "strict" fail open) breaks one of the two.
+test("auto without a backend falls back with a note instead of refusing", async (t) => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const previous = process.env.KRITYA_MXC_EXEC;
+  t.mock.method(os, "platform", () => "win32");
+  delete process.env.KRITYA_MXC_EXEC;
+  resetSandboxToolCache();
+
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-fallback-test-"));
+  // A command classifyDanger flags, since on Windows "auto" without a backend
+  // only sandboxes the flagged ones — an unflagged command never reaches the
+  // sandbox branch at all and would test nothing.
+  const ctx: ToolContext = { workspace, sandboxMode: "auto" };
+  try {
+    if (sandboxAvailable()) {
+      t.skip("a real MXC backend is available on this host");
+      return;
+    }
+    const marker = path.join(workspace, "fallback-ran.txt");
+    const out = await shellTool.execute(
+      { command: `rm -rf scratch && echo ok > "${marker}"` },
+      ctx
+    );
+
+    assert.doesNotMatch(out, /command refused/, "auto must not refuse");
+    assert.match(out, /sandbox unavailable/);
+    assert.match(out, /ran without sandbox/);
+    // The fallback is a real run, so the side effect is expected this time.
+    assert.match(await fs.readFile(marker, "utf8"), /ok/);
+  } finally {
+    if (previous === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// Regression for the policy trap: the drive root / profile chain belongs in
+// readwritePaths (it satisfies the startup `stat`), never readonlyPaths — an
+// ancestor of the profile there aborts container creation, and the child exits
+// 1 with no output, so the command silently never runs. Pure policy shape, so
+// it needs no Windows host either.
+test("no MXC read grant can abort container creation", async (t) => {
+  const path = await import("node:path");
+  t.mock.method(os, "platform", () => "win32");
+  const workspace = os.tmpdir();
+  const policy = JSON.parse(mxcPolicyJson("echo hi", workspace, [workspace], []));
+
+  const readOnly: string[] = policy.filesystem.readonlyPaths ?? [];
+  const readWrite: string[] = policy.filesystem.readwritePaths ?? [];
+  const root = path.parse(workspace).root;
+  const home = os.homedir();
+
+  // The drive root is granted read-write: that is what lets the container stat
+  // `C:\` at startup without opening writes at the root.
+  assert.ok(
+    readWrite.includes(root) || readWrite.some((p) => p.toLowerCase() === root.toLowerCase()),
+    "the drive root must be a readwrite grant"
+  );
+  // Never read-only, and never an ancestor of the profile.
+  assert.ok(!readOnly.includes(root), "the drive root must not be in readonlyPaths");
+  for (const dir of [root, os.homedir(), path.dirname(home), path.join(home, "AppData")]) {
+    assert.ok(
+      !readOnly.some((p) => p.toLowerCase() === dir.toLowerCase()),
+      `${dir} must not be in readonlyPaths`
+    );
+  }
+});
