@@ -470,10 +470,13 @@ test("mxcPolicyJson builds a versioned ProcessContainer request", () => {
   assert.equal(policy.version, "1.0.0");
   assert.equal(policy.containment, "processcontainer");
   assert.deepEqual(policy.process, { commandLine: "echo hi", cwd: "/work/proj" });
-  assert.deepEqual(policy.filesystem.readwritePaths, ["/home/u/.npm", "/work/proj"]);
-  // Reads stay open (the `--ro-bind / /` analogue) and writes do not.
-  assert.equal(policy.filesystem.readonlyPaths.length, 1);
-  assert.match(policy.filesystem.readonlyPaths[0], /\\$/);
+  // The drive root is the read-everything entry, and it rides in the
+  // *readwrite* list — see mxcPolicyJson for why that is not a loosening.
+  assert.deepEqual(policy.filesystem.readwritePaths, ["/home/u/.npm", "/work/proj", "C:\\"]);
+  // `readonlyPaths` is deliberately absent: naming the drive root there makes
+  // wxc-exec create the process and then have it exit 1 with no output, so the
+  // command silently never runs.
+  assert.equal(policy.filesystem.readonlyPaths, undefined);
   // Left open on purpose, matching bwrap/sandbox-exec — see mxcPolicyJson.
   assert.equal(policy.network.egress.default, "allow");
   assert.equal(policy.network.ingress.default, "allow");
@@ -486,7 +489,21 @@ test("mxcPolicyJson builds a versioned ProcessContainer request", () => {
 
 test("mxcPolicyJson always makes the workspace writable, without duplicating it", () => {
   const policy = JSON.parse(mxcPolicyJson("true", "/work/proj", ["/work/proj", "/home/u/.npm"]));
-  assert.deepEqual(policy.filesystem.readwritePaths, ["/work/proj", "/home/u/.npm"]);
+  assert.deepEqual(policy.filesystem.readwritePaths, ["/work/proj", "/home/u/.npm", "C:\\"]);
+});
+
+test("mxcPolicyJson keeps the drive root out of readonlyPaths", () => {
+  // Regression: the drive root used to be emitted as `readonlyPaths: ["C:\\"]`,
+  // which is the spelling MXC's own getPowerShellPolicy uses. On Windows 11
+  // 24H2 wxc-exec accepts it, logs `process created (PID …)`, and then the
+  // child exits 1 with no output — every sandboxed command silently did
+  // nothing. Granting the same path through readwritePaths is harmless and
+  // restores the intended read access to `C:\`, so the two lists must stay the
+  // way round they are now.
+  const policy = JSON.parse(mxcPolicyJson("dir", "C:\\work\\proj", []));
+  assert.equal(policy.filesystem.readonlyPaths, undefined);
+  assert.ok(policy.filesystem.readwritePaths.includes("C:\\"));
+  assert.ok(policy.filesystem.readwritePaths.includes("C:\\work\\proj"));
 });
 
 test("mxcPolicyJson survives a workspace path that needs JSON escaping", () => {

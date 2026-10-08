@@ -458,7 +458,11 @@ ${readExtra}
 `;
 }
 
-/** Windows' system-drive root, e.g. `C:\` — the read-everything analogue of bwrap's `--ro-bind / /`. */
+/**
+ * Windows' system-drive root, e.g. `C:\` — the read-everything analogue of
+ * bwrap's `--ro-bind / /`. It is granted through MXC's *readwrite* list rather
+ * than its readonly one; see `mxcPolicyJson` for why that is not a loosening.
+ */
 function systemDriveRoot(): string {
   const drive = process.env.SystemDrive || "C:";
   return drive.endsWith("\\") ? drive : `${drive}\\`;
@@ -480,12 +484,40 @@ function systemDriveRoot(): string {
  *    a contained command that cannot reach the network cannot `npm install`,
  *    `git push`, or run a dev server. Tightening it is a cross-platform call.
  *  - The temp dir is not isolated. Windows has no tmpfs equivalent, so scratch
- *    state already persists across calls without a shared-dir bind.
+ *    state already persists across calls without a shared-dir bind. MXC hands
+ *    the container its own writable temp dir regardless (it rewrites `TEMP` to
+ *    `%LOCALAPPDATA%\Packages\sandbox.{…}\AC\Temp`), so nothing needs granting
+ *    here either.
  *  - UI access stays enabled. MXC's default blocks the Win32k subsystem, and a
  *    contained process that cannot reach it dies before running a line of its
  *    own code, with STATUS_DLL_INIT_FAILED (0xC0000142) — wxc-exec names this
  *    exact setting when it reports that. bwrap and sandbox-exec do not restrict
  *    the UI either, so this is the consistent posture rather than a loosening.
+ *  - The system drive root is granted as read-write, and `readonlyPaths` is
+ *    omitted entirely. Both spellings are meant to say "reads stay open over
+ *    the whole drive", and MXC's own `policy.filesystem.getPowerShellPolicy`
+ *    emits the readonly one — but on Windows 11 24H2 that spelling aborts
+ *    container creation. wxc-exec logs `process created (PID …)` and the child
+ *    then exits 1 with no output, so the command silently never runs; it is
+ *    reproducible with a bare `readonlyPaths: ["C:\\"]` and with the drive root
+ *    added to a policy that already works. Every ancestor of the profile chain
+ *    behaves the same way (`C:\Users`, `%USERPROFILE%`, `…\AppData`,
+ *    `…\AppData\Local`), which is consistent with the drive root needing to be
+ *    DACL-brokered for the contained token. Listing it under `readwritePaths`
+ *    instead is harmless and grants what was actually intended: the command can
+ *    stat `C:\` — which `node.exe`, `cmd.exe` and `pwsh.exe` all do at startup,
+ *    and without which they die with `EPERM: lstat 'C:\'` — while writes to the
+ *    root, to the profile and to `%USERPROFILE%` are still denied. Verified
+ *    against `wxc-exec.exe` 1.0.0 on Windows 11 24H2 with a policy of exactly
+ *    this shape: reads of `C:\`, `System32` and `Program Files` succeed, the
+ *    workspace and the container's own temp dir are writable, and the profile
+ *    root, the drive root and `C:\Windows\Temp` all stay unwritable.
+ *    `readonlyPaths` is not needed for tooling: MXC already gives the container
+ *    a baseline over the system directories and over anything whose ACL carries
+ *    an AppContainer capability SID, so tool executables and the DLLs beside
+ *    them stay readable without being named here. That makes them *readable*,
+ *    not reliably *resolvable*: `process.commandLine` gets no PATH search as
+ *    forgiving as a shell's, so a full path is the safe spelling.
  */
 export function mxcPolicyJson(command: string, workspace: string, writable: string[]): string {
   return JSON.stringify({
@@ -495,12 +527,10 @@ export function mxcPolicyJson(command: string, workspace: string, writable: stri
     filesystem: {
       // Existing paths only: the bwrap branch skips missing binds for the same
       // reason, and naming a path that is not there is a needless way to have
-      // the whole request rejected.
-      readwritePaths: [...new Set([...writable, workspace])],
-      // Read-only over the system drive, mirroring `--ro-bind / /`: dynamic
-      // linking, package caches and toolchains keep working while writes stay
-      // confined to the list above.
-      readonlyPaths: [systemDriveRoot()],
+      // the whole request rejected. The drive root closes the list because it
+      // is the read-everything entry — see the note above for why it belongs
+      // here rather than in `readonlyPaths`.
+      readwritePaths: [...new Set([...writable, workspace, systemDriveRoot()])],
     },
     network: { egress: { default: "allow" }, ingress: { default: "allow" } },
     ui: { disable: false },
