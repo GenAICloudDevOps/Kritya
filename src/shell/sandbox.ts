@@ -188,7 +188,7 @@ function windowsQuote(value: string): string {
 export function canaryProbes(escaped: boolean, wroteInside: boolean): SandboxCanaryProbe[] {
   return [
     {
-      what: "a write outside the workspace (system temp dir) was blocked",
+      what: "a write outside the workspace (system temp dir) did not reach the host",
       held: !escaped,
     },
     {

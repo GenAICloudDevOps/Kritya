@@ -33,11 +33,11 @@ export function fuzzyMatch(haystack: string, needle: string): boolean {
  * cleared by accident), `checkpoint:<name>` rewinds to that checkpoint.
  *
  * `recency` (command name → last-run epoch ms) floats recently *used*
- * commands above the rest. Only the unfiltered ordering is affected: once a
- * user is typing a fragment they are looking for that fragment, and reordering
- * under the cursor as matches arrive would be the opposite of helpful. Within
- * each group the sort is stable, so the declaration order stays the tiebreak
- * and the list is still predictable on a fresh install (`recency` omitted).
+ * commands above the rest, the way VS Code's quick open does — including
+ * within filtered results, so the command you reach for stays one Enter away
+ * even while typing. Within each group the sort is stable, so the declaration
+ * order stays the tiebreak and the list is still predictable on a fresh
+ * install (`recency` omitted).
  */
 export function buildPaletteItems(
   commands: CommandDef[],
@@ -46,12 +46,11 @@ export function buildPaletteItems(
   recency?: Record<string, number>
 ): PaletteItem[] {
   const items: PaletteItem[] = [];
-  // Sort first, filter second: filtering cannot change the relative order, and
-  // doing it once here avoids re-sorting an already-sorted list per item.
-  const ordered =
-    !recency || filter.trim()
-      ? commands
-      : [...commands].sort((a, b) => (recency[b.name] ?? 0) - (recency[a.name] ?? 0));
+  // Sort first, filter second: filtering only narrows the list, so typing
+  // more of a fragment never reorders what is already on screen.
+  const ordered = recency
+    ? [...commands].sort((a, b) => (recency[b.name] ?? 0) - (recency[a.name] ?? 0))
+    : commands;
 
   for (const c of ordered) {
     if (!fuzzyMatch(`${c.name} ${c.description}`, filter)) continue;

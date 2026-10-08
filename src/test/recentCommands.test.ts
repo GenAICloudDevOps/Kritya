@@ -106,20 +106,20 @@ test("buildPaletteItems keeps declaration order as the tiebreak", () => {
   );
 });
 
-test("buildPaletteItems does not reorder while the user is filtering", () => {
+test("buildPaletteItems keeps recency order while the user is filtering", () => {
   const commands = [
     { name: "/rename", description: "rename this session" },
     { name: "/rewind", description: "rewind to a checkpoint" },
     { name: "/clear", description: "start a fresh conversation" },
   ];
-  // Once a fragment is typed the user is hunting that fragment; reordering
-  // under the cursor as matches arrive would be actively unhelpful, so the
-  // recency sort is skipped entirely while a filter is present. "rn" is a
-  // subsequence of all three (r…n), so this asserts order, not matching.
+  // Recency still applies within filtered results (VS Code-style): the sort
+  // happens before the filter, so typing only narrows the list and never
+  // reorders it. "rn" is a subsequence of all three (r…n, via name+description),
+  // so this asserts order, not matching.
   const ordered = buildPaletteItems(commands, [], "rn", { "/clear": 9999 });
   assert.deepEqual(
     ordered.map((i) => i.value),
-    ["cmd:/rename", "cmd:/rewind", "cmd:/clear"],
-    "declaration order is preserved while filtering, even with recency present"
+    ["cmd:/clear", "cmd:/rename", "cmd:/rewind"],
+    "recency floats /clear to the top even while filtering"
   );
 });
