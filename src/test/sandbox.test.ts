@@ -755,22 +755,23 @@ test("auto without a backend falls back with a note instead of refusing", async 
 // 1 with no output, so the command silently never runs. Pure policy shape, so
 // it needs no Windows host either.
 test("no MXC read grant can abort container creation", async (t) => {
+  // `path.win32`, not `path`: the plain `path` module is bound to the host, so
+  // on Linux `path.parse("C:\\work\\proj").root` is "" (it sees a relative
+  // filename, not a drive) and `path.dirname`/`join` return POSIX-style
+  // separators. The policy is only ever built for Windows, so its path
+  // semantics have to be used explicitly to be host-independent.
   const path = await import("node:path");
+  const win = path.win32;
   t.mock.method(os, "platform", () => "win32");
-  // The workspace is deliberately a Windows path even when this test runs on
-  // Linux/macOS CI: the MXC policy is only ever built on Windows, and
-  // systemDriveRoot() always emits a drive-qualified "C:\" (from SystemDrive,
-  // defaulting to "C:"). Deriving the expected root from the *host* instead
-  // (path.parse(os.tmpdir()).root) yields "/" off Windows, which can never
-  // match — the exact POSIX-path-in-a-Windows-test bug this guards against.
   const workspace = "C:\\work\\proj";
   const policy = JSON.parse(mxcPolicyJson("echo hi", workspace, [workspace], []));
 
   const readOnly: string[] = policy.filesystem.readonlyPaths ?? [];
   const readWrite: string[] = policy.filesystem.readwritePaths ?? [];
-  const root = path.parse(workspace).root; // "C:\"
+  const root = win.parse(workspace).root; // "C:\" on every host
   const home = "C:\\Users\\tester";
 
+  assert.equal(root, "C:\\", "sanity: the Windows root must resolve to a drive");
   // The drive root is granted read-write: that is what lets the container stat
   // `C:\` at startup without opening writes at the root.
   assert.ok(
@@ -778,8 +779,11 @@ test("no MXC read grant can abort container creation", async (t) => {
     "the drive root must be a readwrite grant"
   );
   // Never read-only, and never an ancestor of the profile.
-  assert.ok(!readOnly.includes(root), "the drive root must not be in readonlyPaths");
-  for (const dir of [root, home, path.dirname(home), path.join(home, "AppData")]) {
+  assert.ok(
+    !readOnly.some((p) => p.toLowerCase() === root.toLowerCase()),
+    "the drive root must not be in readonlyPaths"
+  );
+  for (const dir of [root, home, win.dirname(home), win.join(home, "AppData")]) {
     assert.ok(
       !readOnly.some((p) => p.toLowerCase() === dir.toLowerCase()),
       `${dir} must not be in readonlyPaths`
