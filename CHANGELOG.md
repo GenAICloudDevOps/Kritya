@@ -4,6 +4,19 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.43-beta] — 2026-10-07
+
+### Fixed
+
+- The sandbox backend is now discovered on hosts that configure MXC through
+  `~/.kritya/.env` and nowhere else. The resolver reads `KRITYA_MXC_EXEC` and
+  `MXC_BIN_DIR` from the environment, but the tool executor reaches it without
+  loading that file — so a backend configured there was honoured only when some
+  other entry point happened to load it first, and the memoized result could not
+  self-correct for the rest of the session. On Windows a miss only refuses (the
+  default `strict` fails closed); under `auto` elsewhere it silently degraded to
+  an unconfined run. The file is now loaded once, before the backend is resolved.
+
 ## [0.8.42-beta] — 2026-10-07
 
 ### Fixed
