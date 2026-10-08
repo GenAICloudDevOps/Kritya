@@ -757,23 +757,29 @@ test("auto without a backend falls back with a note instead of refusing", async 
 test("no MXC read grant can abort container creation", async (t) => {
   const path = await import("node:path");
   t.mock.method(os, "platform", () => "win32");
-  const workspace = os.tmpdir();
+  // The workspace is deliberately a Windows path even when this test runs on
+  // Linux/macOS CI: the MXC policy is only ever built on Windows, and
+  // systemDriveRoot() always emits a drive-qualified "C:\" (from SystemDrive,
+  // defaulting to "C:"). Deriving the expected root from the *host* instead
+  // (path.parse(os.tmpdir()).root) yields "/" off Windows, which can never
+  // match — the exact POSIX-path-in-a-Windows-test bug this guards against.
+  const workspace = "C:\\work\\proj";
   const policy = JSON.parse(mxcPolicyJson("echo hi", workspace, [workspace], []));
 
   const readOnly: string[] = policy.filesystem.readonlyPaths ?? [];
   const readWrite: string[] = policy.filesystem.readwritePaths ?? [];
-  const root = path.parse(workspace).root;
-  const home = os.homedir();
+  const root = path.parse(workspace).root; // "C:\"
+  const home = "C:\\Users\\tester";
 
   // The drive root is granted read-write: that is what lets the container stat
   // `C:\` at startup without opening writes at the root.
   assert.ok(
-    readWrite.includes(root) || readWrite.some((p) => p.toLowerCase() === root.toLowerCase()),
+    readWrite.some((p) => p.toLowerCase() === root.toLowerCase()),
     "the drive root must be a readwrite grant"
   );
   // Never read-only, and never an ancestor of the profile.
   assert.ok(!readOnly.includes(root), "the drive root must not be in readonlyPaths");
-  for (const dir of [root, os.homedir(), path.dirname(home), path.join(home, "AppData")]) {
+  for (const dir of [root, home, path.dirname(home), path.join(home, "AppData")]) {
     assert.ok(
       !readOnly.some((p) => p.toLowerCase() === dir.toLowerCase()),
       `${dir} must not be in readonlyPaths`
