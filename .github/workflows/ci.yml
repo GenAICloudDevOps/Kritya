@@ -98,6 +98,67 @@ jobs:
         env:
           SOCKET_CLI_API_TOKEN: ${{ secrets.SOCKET_CLI_API_TOKEN }}
 
+  # Secret scanning: gitleaks over the full git history. A committed API key
+  # lives in history forever even after rotation, so this gates every PR and
+  # every push to main. The allowlist in .gitleaks.toml covers only the
+  # deliberately fake secrets used by the secret-redaction tests — a real
+  # leaked key would never equal those exact values.
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a key committed last month is still a leak today.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Pinned binary + SHA256 rather than the gitleaks-action: fewer moving
+      # parts, and the checksum pins the artifact — a replaced release fails
+      # loudly instead of running quietly different code.
+      - name: Install gitleaks
+        run: |
+          curl -sL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.27.2/gitleaks_8.27.2_linux_x64.tar.gz
+          echo "141c3b2dede46d8b3a53b47116da756bd223decc0374797559a6b50ecba5590c  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+
+      - name: Scan for leaked secrets
+        run: ./gitleaks detect --config .gitleaks.toml --no-banner --verbose --redact
+
+  # Workflow scanning: zizmor audits the CI YAML itself for supply-chain
+  # issues (template injection, credential persistence, cache poisoning).
+  # CodeQL covers the TypeScript source and Scorecard covers repo hygiene;
+  # neither reads workflow semantics the way zizmor does.
+  workflow-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned binary + SHA256: the checksum pins the artifact — a replaced
+      # release fails loudly instead of running quietly different code.
+      - name: Install zizmor
+        run: |
+          curl -sL -o zizmor.tar.gz https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  zizmor.tar.gz" | sha256sum -c -
+          tar xzf zizmor.tar.gz zizmor
+
+      # --offline: no network lookups for action SHAs; the audit is purely
+      # local. Exits non-zero on any finding, so the fixes in build.yml and
+      # publish.yml (and the adhoc-packages suppression) are load-bearing.
+      - name: Audit workflows
+        run: ./zizmor --offline --no-progress .github/workflows/
+
   # Verifies the artifact users actually download. Every other job here runs
   # against the checkout, so a broken `files` field, a `bin` entry pointing
   # outside the packed set, or a missing runtime asset would ship with every
