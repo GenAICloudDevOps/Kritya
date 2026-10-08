@@ -41,7 +41,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.x
-          cache: npm
+          # No npm cache here on purpose (zizmor cache-poisoning): this job
+          # publishes to the registry, so a poisoned cache would ship. v7
+          # auto-enables caching via package-manager-cache (default true), so
+          # it is disabled explicitly. Publish runs only on version tags, so
+          # the slower uncached `npm ci` is negligible.
+          package-manager-cache: false
 
       # Before anything expensive. A tag that disagrees with package.json, a
       # stale lock, or a missing/empty CHANGELOG section each produce a green
@@ -64,7 +69,7 @@ jobs:
       # 11.x line rather than @latest: npm 12 already requires Node ^22.22.2,
       # so an unbounded upgrade would break this job on an older Node 22.x
       # runner. 11.5.1 is all trusted publishing needs.
-      - run: npm install -g "npm@^11.5.1"
+      - run: npm install -g "npm@^11.5.1" # zizmor: ignore[adhoc-packages] npm itself has no lockfile; bounded to 11.x, not @latest, per the comment above
 
       # No token here on purpose: npm exchanges this job's OIDC identity
       # (registered as a trusted publisher on the kritya package) for a
