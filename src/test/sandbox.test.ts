@@ -3,10 +3,12 @@ import os from "node:os";
 import { test } from "node:test";
 import {
   buildSandboxedCommand,
+  canaryProbes,
   defaultSandboxMode,
   mxcPolicyJson,
   requiresSandbox,
   resetSandboxToolCache,
+  runSandboxCanary,
   sandboxAvailable,
   sandboxPathVariants,
   sandboxSharedTmpDir,
@@ -788,5 +790,103 @@ test("no MXC read grant can abort container creation", async (t) => {
       !readOnly.some((p) => p.toLowerCase() === dir.toLowerCase()),
       `${dir} must not be in readonlyPaths`
     );
+  }
+});
+
+// The doctor canary. Its *decision* is pure (see `canaryProbes`), so the whole
+// truth table is testable on any host with no backend — which is the point:
+// CI proves the logic, and a real run on the user's machine proves the backend.
+test("canaryProbes: a blocked escape with a successful inside write is containment", () => {
+  const probes = canaryProbes(false, true);
+  const escape = probes.find((p) => p.what.includes("outside the workspace"))!;
+  const inside = probes.find((p) => p.what.includes("inside the workspace"))!;
+  assert.equal(escape.held, true, "the escape write was blocked — containment held");
+  assert.equal(
+    inside.held,
+    true,
+    "the inside write succeeded — the sandbox is working, not refusing"
+  );
+});
+
+test("canaryProbes: an escape that succeeded is a containment failure", () => {
+  const probes = canaryProbes(true, true);
+  const escape = probes.find((p) => p.what.includes("outside the workspace"))!;
+  assert.equal(escape.held, false, "the escape write landed — that is a breach, not a pass");
+});
+
+test("canaryProbes: nothing written at all is not containment", () => {
+  // The subtle failure mode: if the container never starts, neither marker
+  // exists. Reading that as "the escape was blocked" would make a broken
+  // sandbox report as a healthy one, so the inside write is a real probe and
+  // its absence must fail the run.
+  const probes = canaryProbes(false, false);
+  const inside = probes.find((p) => p.what.includes("inside the workspace"))!;
+  assert.equal(inside.held, false, "no inside write means the command never ran — not a pass");
+  const failed = probes.filter((p) => !p.informational && !p.held);
+  assert.equal(failed.length, 1, "exactly the inside-write probe should fail");
+});
+
+test("canaryProbes: the read probe is informational, never a containment claim", () => {
+  // Reads outside the workspace are open by design, so reporting them as a
+  // failure would make every healthy machine look broken.
+  const reads = canaryProbes(false, true).filter((p) => p.informational);
+  assert.equal(reads.length, 1);
+  assert.match(reads[0].what, /by design/);
+  assert.equal(reads[0].held, false);
+});
+
+test("runSandboxCanary: skips honestly when no backend is available", async (t) => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const previous = process.env.KRITYA_MXC_EXEC;
+  t.mock.method(os, "platform", () => "win32");
+  delete process.env.KRITYA_MXC_EXEC;
+  resetSandboxToolCache();
+
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-canary-skip-"));
+  try {
+    if (sandboxAvailable()) {
+      t.skip("a real MXC backend is available on this host");
+      return;
+    }
+    const result = runSandboxCanary(workspace);
+    // "Did not run" must be distinguishable from "ran and failed", or doctor
+    // would report a refused environment as a breached one.
+    assert.equal(result.ran, false);
+    assert.match(result.reason ?? "", /wxc-exec\.exe/);
+    assert.deepEqual(result.probes, [], "no probes when nothing could be run");
+  } finally {
+    if (previous === undefined) delete process.env.KRITYA_MXC_EXEC;
+    else process.env.KRITYA_MXC_EXEC = previous;
+    resetSandboxToolCache();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// The live check: only runs where a backend actually exists (a developer
+// machine with MXC, or a future runner that has one). It runs everywhere else
+// without asserting, so it is never a flaky failure in stock CI.
+test("runSandboxCanary: containment holds on a host with a backend", async () => {
+  if (!sandboxAvailable()) {
+    // Not a skip-with-continue: `t.skip()` only marks the test, so a bare
+    // guard would fall through and assert against a null result.
+    return;
+  }
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-canary-live-"));
+  try {
+    const result = runSandboxCanary(workspace);
+    assert.equal(result.ran, true);
+    const claims = result.probes.filter((p) => !p.informational);
+    assert.ok(claims.length >= 2, "there must be at least the escape and inside probes");
+    for (const probe of claims) {
+      assert.equal(probe.held, true, `containment probe must hold: ${probe.what}`);
+    }
+    // No marker may survive the run, on either side of the boundary.
+    const leftovers = (await fs.readdir(workspace)).filter((f) => f.includes("kritya-canary"));
+    assert.deepEqual(leftovers, [], "the canary must clean up after itself");
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
   }
 });

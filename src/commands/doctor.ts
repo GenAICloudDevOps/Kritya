@@ -22,6 +22,7 @@ import { loadProjectMcpServers, missingVars } from "../mcp/servers.js";
 import { scanSkillsDetailed, skillsDir, userSkillsDir } from "../agent/skills.js";
 import {
   defaultSandboxMode,
+  runSandboxCanary,
   sandboxAvailable,
   sandboxUnavailableReason,
 } from "../shell/sandbox.js";
@@ -46,8 +47,10 @@ untrusted workspace).
 
 Checks: Node version against the package's engines, config file validity, the
 active provider and whether its key resolves and the endpoint answers, workspace
-trust and git state, MCP servers, sandbox availability, persistence/privacy
-settings, discovered skills and hooks, and whether a newer release exists.`;
+trust and git state, MCP servers, sandbox availability and a live containment
+canary (it tries to write outside the workspace and reports whether that was
+blocked), persistence/privacy settings, discovered skills and hooks, and whether
+a newer release exists.`;
 
 export type CheckLevel = "ok" | "warn" | "fail";
 
@@ -350,7 +353,7 @@ function workspaceSection(workspace: string, config: ReturnType<typeof loadConfi
   return { title: "Workspace", checks };
 }
 
-function safetySection(config: ReturnType<typeof loadConfig>): Section {
+function safetySection(config: ReturnType<typeof loadConfig>, workspace: string): Section {
   const checks: Check[] = [];
   const mode = config.sandboxExec ?? defaultSandboxMode();
   const available = sandboxAvailable();
@@ -375,6 +378,27 @@ function safetySection(config: ReturnType<typeof loadConfig>): Section {
           `fall back to unsandboxed execution with a warning`
       )
     );
+  }
+
+  // A live self-test, not a policy inspection: availability says the wrapper
+  // can be *built*, but only running a canary proves this machine actually
+  // contains it. Skipped (never failed) when there is no backend — that case
+  // is already reported by the check above.
+  if (available && mode !== "off") {
+    const canary = runSandboxCanary(workspace);
+    for (const probe of canary.probes) {
+      if (probe.informational) {
+        checks.push(ok(probe.what));
+      } else {
+        checks.push(
+          probe.held ? ok(`sandbox canary: ${probe.what}`) : fail(`sandbox canary: ${probe.what}`)
+        );
+      }
+    }
+  } else if (available) {
+    checks.push(ok("sandbox canary: skipped (sandboxExec is off)"));
+  } else {
+    checks.push(ok("sandbox canary: skipped (no sandbox backend available)"));
   }
 
   const privacy = privacyModeFor(config);
@@ -461,7 +485,7 @@ export async function collectDiagnostics(options: DoctorOptions = {}): Promise<S
   sections.push(provider);
 
   sections.push(workspaceSection(workspace, config));
-  sections.push(safetySection(config));
+  sections.push(safetySection(config, workspace));
   sections.push(extensionsSection(workspace, config));
 
   return sections;

@@ -32,6 +32,10 @@ import { ElicitationPrompt } from "./ElicitationPrompt.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { SelectList } from "./SelectList.js";
 import { buildPaletteItems } from "./palette.js";
+import { searchHistory } from "./historySearch.js";
+import { extractLastCodeBlock, type CodeBlock } from "./codeBlock.js";
+import { copyToClipboard } from "./clipboard.js";
+import { loadCommandRecency, type CommandRecency } from "./recentCommands.js";
 import { Spinner } from "./Spinner.js";
 import { StatusLine } from "./StatusLine.js";
 import { StreamViewport } from "./StreamViewport.js";
@@ -41,7 +45,7 @@ import { terminalColumns, terminalRows } from "./viewport.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
 import { mcpPrompts, mcpResources } from "../mcp/client.js";
-import { useAgent } from "./useAgent.js";
+import { useAgent, type Item } from "./useAgent.js";
 
 export type { UiBridge };
 
@@ -85,6 +89,25 @@ const MENTION_RE = /(^|\s)@([^\s@]*)$/;
 const MENTION_ALL_RE = /(?:^|\s)@([^\s@]+)/g;
 const MAX_MENTION_CHARS = 8000;
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+
+/**
+ * The most recent complete code block the *agent* wrote, newest first.
+ *
+ * Walks the transcript backwards so the newest block wins — the user asking
+ * "copy that" almost always means the one just shown — and reads only
+ * `assistant` items, because a block the user pasted is not the agent's.
+ * `extractLastCodeBlock` returns null for a still-open fence, so a block that
+ * is mid-stream is skipped rather than copied half-written.
+ */
+function findLastAssistantCodeBlock(items: Item[]): CodeBlock | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind !== "assistant") continue;
+    const block = extractLastCodeBlock(item.text);
+    if (block) return block;
+  }
+  return null;
+}
 
 export function App({
   agent,
@@ -162,6 +185,7 @@ export function App({
   const [steerInput, setSteerInput] = useState("");
   const [resumeFilter, setResumeFilter] = useState("");
   const [paletteFilter, setPaletteFilter] = useState("");
+  const [historyFilter, setHistoryFilter] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileList, setFileList] = useState<string[]>([]);
@@ -169,6 +193,15 @@ export function App({
   const [elapsed, setElapsed] = useState(0);
   const inputHistory = useRef<string[]>([]);
   const histIndex = useRef<number>(-1); // -1 means "current, not browsing history"
+  // The Ctrl+R cursor: an index into the *filtered* history list (0 = newest
+  // match). A ref, not `cmdIndex`, so the palette's suggestion cursor and the
+  // history cursor can never clobber each other.
+  const historyCursor = useRef<number>(0);
+  // Command recency for the palette's ordering. Read lazily when the palette
+  // opens rather than at mount: /doctor and a long session both run commands,
+  // and the file on disk is the source of truth. A ref (not state) because it
+  // only feeds the palette's sort — nothing else re-renders on it.
+  const commandRecency = useRef<CommandRecency>({});
 
   // Ctrl-chord bookkeeping used to live here: Ink delivers a keypress to every
   // `useInput` hook, and ink-text-input swallowed only Ctrl+C, so Ctrl+K and
@@ -383,6 +416,33 @@ export function App({
     }
   }, [suspendTerminal, undoStack, addItem]);
 
+  // Ctrl+B: copy the agent's most recent complete code block. Scans the
+  // transcript backwards so the newest block wins, and only assistant text is
+  // considered — a user's own pasted block is not "the agent's most recent".
+  const copyLastCodeBlock = useCallback(async () => {
+    const block = findLastAssistantCodeBlock(items);
+    if (!block) {
+      addItem({
+        kind: "info",
+        text: "Ctrl+B: no code block in this transcript yet.",
+      });
+      return;
+    }
+    const ok = await copyToClipboard(block.code);
+    const lines = block.code.split("\n").length;
+    if (ok) {
+      addItem({
+        kind: "info",
+        text: `Copied the last code block (${lines} line${lines === 1 ? "" : "s"}${block.lang ? `, ${block.lang}` : ""}) to the clipboard.`,
+      });
+    } else {
+      addItem({
+        kind: "info",
+        text: "Ctrl+B: no clipboard tool found (Linux needs wl-copy, xclip or xsel).",
+      });
+    }
+  }, [items, addItem]);
+
   useInput((_input, key) => {
     // Ctrl+K is the kill switch, and it comes before every other binding and
     // phase check on purpose: a panic button that only works from the idle
@@ -399,8 +459,26 @@ export function App({
     if (key.ctrl && _input === "p") {
       if (phase === "input") {
         setPaletteFilter("");
+        // Re-read on each open so a command run earlier in this session is
+        // reflected; a failed read degrades to the previous map, never throws.
+        commandRecency.current = loadCommandRecency();
         setPhase("palette");
       } else if (phase === "palette") {
+        setPhase("input");
+      }
+      return;
+    }
+    // Ctrl+R opens reverse history search — the whole in-memory history,
+    // filtered by fragment. ↑/↓ already walks history one entry at a time,
+    // which is no help for an entry forty back. Toggles closed like Ctrl+P.
+    // Idle prompt only, so it can't race a running turn.
+    if (key.ctrl && _input === "r") {
+      if (phase === "input") {
+        setHistoryFilter("");
+        histIndex.current = -1;
+        historyCursor.current = 0;
+        setPhase("history");
+      } else if (phase === "history") {
         setPhase("input");
       }
       return;
@@ -423,6 +501,14 @@ export function App({
         return;
       }
       void openInEditorFlow();
+      return;
+    }
+    // Ctrl+B copies the agent's most recent code block to the clipboard. Works
+    // from any phase: it reads the transcript, not the input line, so it is
+    // safe mid-turn (and useful exactly then — the block just appeared) and
+    // unlike Ctrl+E it cannot race the agent over a shared resource.
+    if (key.ctrl && _input === "b") {
+      void copyLastCodeBlock();
       return;
     }
     // Shift+Tab cycles normal → accept-edits → plan → normal. Only from the
@@ -476,6 +562,35 @@ export function App({
       else if (_input && !key.upArrow && !key.downArrow && !key.return && !key.escape && !key.tab) {
         setPaletteFilter((f) => f + _input);
       }
+    }
+    if (phase === "history") {
+      // Newest-first, so index 0 is the most recent match.
+      const matches = searchHistory([...inputHistory.current].reverse(), historyFilter);
+      if (key.backspace || key.delete) {
+        setHistoryFilter((f) => f.slice(0, -1));
+        historyCursor.current = 0; // a changed query invalidates the old selection
+      } else if (key.upArrow) {
+        historyCursor.current = Math.max(historyCursor.current - 1, 0);
+      } else if (key.downArrow) {
+        historyCursor.current = Math.min(
+          historyCursor.current + 1,
+          Math.max(matches.length - 1, 0)
+        );
+      } else if (key.return) {
+        const picked = matches[Math.min(historyCursor.current, matches.length - 1)];
+        if (picked) {
+          setInput(picked.text);
+          setInputKey((k) => k + 1);
+        }
+        histIndex.current = -1; // the ↑/↓ browser starts fresh from the input
+        setPhase("input");
+      } else if (key.escape) {
+        setPhase("input");
+      } else if (_input && !key.tab) {
+        setHistoryFilter((f) => f + _input);
+        historyCursor.current = 0;
+      }
+      return;
     }
     if (suggestions.length) {
       if (key.upArrow) setCmdIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
@@ -562,7 +677,18 @@ export function App({
     }
   };
 
-  const paletteItems = buildPaletteItems(allCommands, agent.listCheckpoints(), paletteFilter);
+  const paletteItems = buildPaletteItems(
+    allCommands,
+    agent.listCheckpoints(),
+    paletteFilter,
+    commandRecency.current
+  );
+
+  // Reverse history search rows. Built from the in-memory history (there is no
+  // disk history), newest first, which is why the list is reversed: the entry
+  // just typed is the one Ctrl+R should offer first.
+  const historyMatches = searchHistory([...inputHistory.current].reverse(), historyFilter);
+  const historySelected = Math.min(historyCursor.current, Math.max(historyMatches.length - 1, 0));
 
   const expandMentions = async (text: string): Promise<string> => {
     const mentions = [...new Set([...text.matchAll(MENTION_ALL_RE)].map((m) => m[1]))];
@@ -878,6 +1004,37 @@ export function App({
             onSelect={onPaletteSelect}
             onCancel={() => setPhase("input")}
           />
+        </Box>
+      )}
+
+      {phase === "history" && (
+        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+          <Text bold color="yellow">
+            History{" "}
+            <Text dimColor>
+              (type to search · ↑↓ navigate · Enter selects · Esc closes · Ctrl+R toggles)
+            </Text>
+          </Text>
+          <Text>
+            <Text dimColor>query: </Text>
+            {historyFilter || <Text dimColor>(all recent prompts)</Text>}
+          </Text>
+          {/* Rendered by hand rather than via SelectList: this list is driven
+              by the App-level cursor (a ref), and a second `useInput` inside
+              SelectList would double-handle the same arrows. */}
+          {historyMatches.length === 0 ? (
+            <Text dimColor> no matches</Text>
+          ) : (
+            historyMatches.slice(0, 10).map((m, i) => (
+              <Text
+                key={`${m.index}:${m.text}`}
+                color={i === historySelected ? "green" : undefined}
+              >
+                {i === historySelected ? "❯ " : "  "}
+                {m.text}
+              </Text>
+            ))
+          )}
         </Box>
       )}
 

@@ -4,6 +4,38 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.44-beta] — 2026-10-08
+
+### Added
+
+- `kritya doctor` now runs a live sandbox canary. Availability only proves the
+  wrapper can be _built_; the canary actually tries to escape — it writes a
+  marker outside the workspace from inside the container and checks whether the
+  write was blocked, then writes one inside to prove the sandbox is confining
+  rather than simply refusing everything. A canary that cannot run (no backend)
+  is reported as skipped, never as passed, and a container that fails to start
+  is reported as a failure rather than a vague "nothing happened".
+- The command palette floats recently _used_ slash commands to the top, the way
+  VS Code's recent list does. Usage is recorded when a command actually runs,
+  not when the palette inserts it — insertion only fills the input line, so
+  ranking on it would promote typed-and-abandoned commands. Ordering is
+  disabled while a fuzzy filter is active, and the store lives at
+  `~/.kritya/recent-commands.json`.
+- Ctrl+R opens reverse history search: the whole in-memory prompt history,
+  filtered fuzzy by fragment, most recent first. ↑/↓ still walks history one
+  entry at a time; Ctrl+R is for the entry forty back.
+- Ctrl+B copies the agent's most recent code block to the clipboard, scanning
+  the transcript backwards for the last _complete_ fenced block (a still-open
+  fence is skipped, so a mid-stream snippet is never copied half-written).
+
+### Fixed
+
+- `kritya --version` is now pinned by a smoke test asserting it prints exactly
+  the version on stdout and exits cleanly. This locks in the earlier fix for
+  the Windows libuv assertion (`!(handle->flags & UV_HANDLE_CLOSING)`): the
+  version was printed and the exit deferred, so the interactive path below it
+  ran anyway and was killed mid-frame when the update notice resolved.
+
 ## [0.8.43-beta] — 2026-10-07
 
 ### Fixed
