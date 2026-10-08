@@ -4,6 +4,29 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.41-beta] — 2026-10-07
+
+### Added
+
+- Sandboxed execution on Windows, backed by MXC (Microsoft Execution
+  Containers). `wxc-exec.exe` runs each command inside a ProcessContainer,
+  giving Windows the same "reads stay open, writes are confined to the
+  workspace" posture Linux and macOS get from bubblewrap and `sandbox-exec`.
+  MXC is an optional install, discovered through `KRITYA_MXC_EXEC`, then
+  `MXC_BIN_DIR`, then `PATH`, then an `@microsoft/mxc-sdk` install; without it
+  Windows behaves exactly as it did before. Commands are handed to `cmd.exe` so
+  pipes, `&&` and redirects keep working, and the `PATH` tool directories are
+  granted read-only so `cmd.exe` can still resolve a bare `git`, `npm` or
+  `node` inside the container.
+
+### Fixed
+
+- `kritya --version` no longer crashes on Windows. The update notice deferred
+  `process.exit(0)` into a promise callback, which let the interactive path
+  keep running underneath it and then killed the process mid-frame — tripping
+  a libuv assertion (`!(handle->flags & UV_HANDLE_CLOSING)`) just after the
+  version was printed.
+
 ## [0.8.40-beta] — 2026-10-07
 
 ### Added
