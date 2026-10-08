@@ -4,6 +4,17 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.42-beta] — 2026-10-07
+
+### Fixed
+
+- `kritya doctor` no longer reports a false "no API key" — and no longer exits 1
+  on a healthy install — when the key lives only in `~/.kritya/.env`. The check
+  reached keys solely through the provider resolver, which reads the process
+  environment and the literal config value, so the one file every other code
+  path loads was invisible to it. Since `doctor` is what CI wires up, a
+  correctly configured machine went red for no reason.
+
 ## [0.8.41-beta] — 2026-10-07
 
 ### Added
