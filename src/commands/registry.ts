@@ -18,6 +18,7 @@ import { listProviders, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
+import { recordCommandUse } from "../ui/recentCommands.js";
 import {
   artifactPath,
   clearProjectState,
@@ -200,8 +201,9 @@ Also: @path/to/file attaches a file to your message (with autocomplete).
 MCP servers can also contribute their own /server-prompt commands.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
 Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/dry-run
-mode · ↑/↓ recalls history · Ctrl+O toggles full tool output · Ctrl+K is the
-kill switch (stops everything until /kill off) · Ctrl+C exits`;
+mode · ↑/↓ recalls history · Ctrl+R searches history · Ctrl+P opens the command
+palette · Ctrl+B copies the last code block · Ctrl+O toggles full tool output ·
+Ctrl+K is the kill switch (stops everything until /kill off) · Ctrl+C exits`;
 
 /** Everything a command handler needs from the UI to do its work. */
 export interface CommandContext {
@@ -960,6 +962,17 @@ export async function runCommand(cmd: string, ctx: CommandContext): Promise<void
     });
     return;
   }
+
+  // Rank the palette by what a user actually runs. Recorded here rather than
+  // when the palette inserts the command: insertion only fills the input line
+  // (the user may edit or abandon it), so that signal would rank
+  // typed-and-abandoned commands above the ones really used. An unknown command
+  // is not recorded — it never ran. See ui/recentCommands.ts.
+  const known =
+    handlers[cmd] !== undefined ||
+    ctx.customCommands.some((c) => c.name === cmd) ||
+    mcpPrompts().some((p) => p.command === cmd);
+  if (known) recordCommandUse(cmd);
 
   const handler = handlers[cmd];
   if (handler) return handler(ctx);

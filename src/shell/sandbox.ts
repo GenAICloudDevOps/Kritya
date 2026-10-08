@@ -148,6 +148,143 @@ export function defaultSandboxMode(): SandboxMode {
   return os.platform() === "win32" ? "strict" : "auto";
 }
 
+/** Outcome of one canary probe (see `runSandboxCanary`). */
+export interface SandboxCanaryProbe {
+  /** What the probe tried to do, phrased for a human. */
+  what: string;
+  /** True when the probe did NOT achieve its goal — i.e. containment held. */
+  held: boolean;
+  /** True when this probe is not a containment claim (reads are open by design). */
+  informational?: boolean;
+}
+
+/** Result of a live containment self-test. */
+export interface SandboxCanaryResult {
+  /** False when no backend is available — the caller should say so, not "failed". */
+  ran: boolean;
+  /** Why the canary could not run, when `ran` is false. */
+  reason?: string;
+  probes: SandboxCanaryProbe[];
+}
+
+/** Quoted for `cmd.exe` (Windows), where the canary command runs. */
+function windowsQuote(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Turns the observed state of the canary's two marker files into probes.
+ *
+ * Split out from `runSandboxCanary` so the decision — the part that can be
+ * wrong — is testable without a backend to spawn. `escaped` is "the file
+ * outside the workspace exists", `wroteInside` is "the file inside does".
+ *
+ * The three-way logic matters: `escaped && wroteInside` is a breached sandbox;
+ * `!escaped && wroteInside` is a healthy one; and `!escaped && !wroteInside`
+ * means the command never reached the shell at all, which must NOT be read as
+ * containment — that is why the inside write is a probe rather than a
+ * throwaway control.
+ */
+export function canaryProbes(escaped: boolean, wroteInside: boolean): SandboxCanaryProbe[] {
+  return [
+    {
+      what: "a write outside the workspace (system temp dir) was blocked",
+      held: !escaped,
+    },
+    {
+      what: "a write inside the workspace succeeded (the sandbox is not simply refusing everything)",
+      held: wroteInside,
+    },
+    {
+      what: "reads outside the workspace (incl. ~/.kritya/.env) are open by design",
+      held: false,
+      informational: true,
+    },
+  ];
+}
+
+/**
+ * A live containment check: run a canary *inside* the sandbox that tries to
+ * write outside the workspace, then report whether the write was actually
+ * blocked.
+ *
+ * CI can only test the policy this module *builds*; it cannot prove the
+ * backend on the user's machine enforces it (an MXC too old for
+ * `processcontainer`, a stale `wxc-exec.exe`, or a host missing the one-time
+ * privilege prep all change the answer without changing a line of code here).
+ * This closes that gap the only honest way — by trying to escape and looking
+ * at the result. It writes at most one marker file, in the system temp dir,
+ * and removes it either way.
+ *
+ * Only the *write* probe is a containment claim: reads outside the workspace
+ * are open by design (see `buildSandboxedCommand`), so the read probe is
+ * reported but never counted as a failure.
+ */
+export function runSandboxCanary(workspace: string): SandboxCanaryResult {
+  const reason = sandboxUnavailableReason();
+  if (!sandboxAvailable()) {
+    return { ran: false, reason, probes: [] };
+  }
+
+  // The escape target: outside the workspace, guaranteed writable by the real
+  // user, so "the file is not there afterwards" can only mean the sandbox
+  // blocked it. A path *inside* the workspace would prove nothing.
+  const escapeTarget = path.join(os.tmpdir(), `kritya-canary-escape-${process.pid}.txt`);
+  const insideTarget = path.join(workspace, `.kritya-canary-inside-${process.pid}.txt`);
+  const cleanup = () => {
+    for (const f of [escapeTarget, insideTarget]) {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch {
+        /* best effort — a file that is not there is the expected case */
+      }
+    }
+  };
+  cleanup(); // in case a previous run left a marker behind
+
+  const isWindows = os.platform() === "win32";
+  const writeOutside = isWindows
+    ? `echo canary> ${windowsQuote(escapeTarget)}`
+    : `printf canary > ${JSON.stringify(escapeTarget)}`;
+  const writeInside = isWindows
+    ? `echo canary> ${windowsQuote(insideTarget)}`
+    : `printf canary > ${JSON.stringify(insideTarget)}`;
+  // The canary exits 0 regardless: reaching the shell at all is the point, and
+  // a nonzero exit from a *blocked* write is not something the caller needs.
+  const script = isWindows
+    ? `${writeOutside} & ${writeInside} & exit /b 0`
+    : `${writeOutside}; ${writeInside}; true`;
+
+  const wrapped = buildSandboxedCommand(script, workspace);
+  if (!wrapped) {
+    return { ran: false, reason, probes: [] };
+  }
+
+  const opts = wrapped.env && process.env ? { ...process.env, ...wrapped.env } : process.env;
+  try {
+    spawnSync(wrapped.cmd, wrapped.args, {
+      cwd: workspace,
+      env: opts,
+      timeout: 30_000,
+      windowsHide: true,
+      stdio: "ignore",
+    });
+  } catch {
+    // A backend that cannot even start the container means containment is not
+    // in force — report the escape as *not* held rather than crashing doctor.
+    cleanup();
+    wrapped.cleanup?.();
+    return { ran: true, probes: canaryProbes(true, false) };
+  }
+  wrapped.cleanup?.();
+
+  const escaped = fs.existsSync(escapeTarget);
+  const wroteInside = fs.existsSync(insideTarget);
+  cleanup();
+
+  return { ran: true, probes: canaryProbes(escaped, wroteInside) };
+}
+
 /** One-line reason sandboxing can't run here, for a fallback warning. */
 export function sandboxUnavailableReason(): string {
   const platform = os.platform();

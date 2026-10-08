@@ -31,6 +31,7 @@ export type Phase =
   | "model"
   | "resume"
   | "palette"
+  | "history"
   | "confirmMode"
   | "confirmBypassMode"
   | "elicitation";
