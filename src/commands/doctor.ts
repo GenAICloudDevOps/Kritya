@@ -8,6 +8,7 @@ import {
   CONFIG_FILE,
   legacyGlobalModel,
   loadConfig,
+  loadDotEnv,
   privacyModeFor,
   resolveProvider,
 } from "../config/config.js";
@@ -523,6 +524,14 @@ export async function runDoctorCli(argv: string[], options: DoctorOptions = {}):
   const offline = argv.includes("--offline");
   const dirArg = argv.find((a) => !a.startsWith("-"));
   const workspace = path.resolve(options.workspace ?? dirArg ?? ".");
+
+  // The user's own global .env is unconditionally trusted and is where the
+  // interactive and headless paths both pick up provider keys (see
+  // `runInteractive` in index.tsx and `runHeadless` in headless.ts). Without
+  // loading it here the provider check below sees only the ambient
+  // environment, so a key that lives solely in ~/.kritya/.env is reported as
+  // missing — a false "no API key" that also flips the exit code to 1.
+  loadDotEnv([path.join(CONFIG_DIR, ".env")]);
 
   const sections = await collectDiagnostics({ ...options, workspace, offline });
   const report = summarize(sections, workspace);
