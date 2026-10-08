@@ -1,0 +1,18 @@
+# Gitleaks config for kritya: the default rule set, plus an allowlist for the
+# deliberately fake secrets used by the secret-redaction test suite
+# (src/tools/secretScan.ts, src/test/secretScan.test.ts, src/test/safety.test.ts
+# and friends) and the design docs. A real leaked key would never equal these
+# exact values, so allowlisting them cannot hide a real leak — but without the
+# allowlist the redaction tests themselves would fail the scan.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake/example secrets used by the redaction tests and docs"
+regexes = [
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''sk-ant-abcdefghijklmnopqrstuvwx''',
+  '''Sup3rSecretPassw0rdXYZ''',
+  '''Zx9pQr2LmN8vTy4Wk1Bs''',
+  '''abcdEFGH12345678ijklMNOP''',
+]
