@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { CONFIG_DIR, loadDotEnv } from "../config/config.js";
 import { classifyDanger } from "../permissions/danger.js";
 
 export type SandboxMode = "auto" | "always" | "strict" | "off";
@@ -18,6 +19,25 @@ export interface SandboxedCommand {
 
 let cachedTool: "bwrap" | "sandbox-exec" | "mxc" | null | undefined;
 let cachedMxcExec: string | null | undefined;
+let dotEnvLoaded = false;
+
+/**
+ * Load `~/.kritya/.env` before the backend is resolved, once per process.
+ *
+ * `locateMxcExecutable` reads `KRITYA_MXC_EXEC` and `MXC_BIN_DIR` from the
+ * environment, but the sandbox module is callable from frontends that never
+ * load the global `.env` themselves (the tool executor reaches
+ * `sandboxAvailable()` directly). Without this, a user who configured the MXC
+ * path in `.env` would have it honoured only when some *other* entry point
+ * happened to load the file first — and because `sandboxTool()` memoizes its
+ * answer, a miss could not self-correct later in the session. Loading here
+ * makes discovery independent of who calls it first.
+ */
+function loadSandboxEnv(): void {
+  if (dotEnvLoaded) return;
+  dotEnvLoaded = true;
+  loadDotEnv([path.join(CONFIG_DIR, ".env")]);
+}
 
 function commandExists(bin: string): boolean {
   const finder = os.platform() === "win32" ? "where" : "which";
@@ -88,11 +108,13 @@ function mxcExecutable(): string | null {
 export function resetSandboxToolCache(): void {
   cachedTool = undefined;
   cachedMxcExec = undefined;
+  dotEnvLoaded = false;
 }
 
 /** Which sandbox backend (if any) is usable on this platform, cached after the first check. */
 function sandboxTool(): "bwrap" | "sandbox-exec" | "mxc" | null {
   if (cachedTool !== undefined) return cachedTool;
+  loadSandboxEnv();
   const platform = os.platform();
   if (platform === "linux") {
     cachedTool = commandExists("bwrap") ? "bwrap" : null;
