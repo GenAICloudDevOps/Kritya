@@ -474,13 +474,18 @@ function systemDriveRoot(): string {
  * `wxc-exec` validates natively and refuses a request it cannot serve, so a
  * policy that is wrong here fails the command rather than running it unconfined.
  *
- * Two deliberate omissions, both to keep Windows consistent with the other
- * platforms rather than stricter by accident:
+ * Deliberate choices, all to keep Windows consistent with the other platforms
+ * rather than stricter by accident:
  *  - The network is left open. Neither bwrap nor sandbox-exec restricts it, and
  *    a contained command that cannot reach the network cannot `npm install`,
  *    `git push`, or run a dev server. Tightening it is a cross-platform call.
  *  - The temp dir is not isolated. Windows has no tmpfs equivalent, so scratch
  *    state already persists across calls without a shared-dir bind.
+ *  - UI access stays enabled. MXC's default blocks the Win32k subsystem, and a
+ *    contained process that cannot reach it dies before running a line of its
+ *    own code, with STATUS_DLL_INIT_FAILED (0xC0000142) — wxc-exec names this
+ *    exact setting when it reports that. bwrap and sandbox-exec do not restrict
+ *    the UI either, so this is the consistent posture rather than a loosening.
  */
 export function mxcPolicyJson(command: string, workspace: string, writable: string[]): string {
   return JSON.stringify({
@@ -498,6 +503,7 @@ export function mxcPolicyJson(command: string, workspace: string, writable: stri
       readonlyPaths: [systemDriveRoot()],
     },
     network: { egress: { default: "allow" }, ingress: { default: "allow" } },
+    ui: { disable: false },
     // MXC telemetry is off unless the run opts in, the user consents, and
     // administrative policy permits it. Kritya opts out on the user's behalf.
     telemetry: { enabled: false },

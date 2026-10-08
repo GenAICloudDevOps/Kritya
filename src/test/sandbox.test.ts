@@ -477,6 +477,10 @@ test("mxcPolicyJson builds a versioned ProcessContainer request", () => {
   // Left open on purpose, matching bwrap/sandbox-exec — see mxcPolicyJson.
   assert.equal(policy.network.egress.default, "allow");
   assert.equal(policy.network.ingress.default, "allow");
+  // UI access stays on. MXC's default blocks Win32k, and a contained process
+  // that cannot reach it dies with STATUS_DLL_INIT_FAILED before running any of
+  // its own code — so omitting this section silently breaks every command.
+  assert.equal(policy.ui.disable, false);
   assert.equal(policy.telemetry.enabled, false);
 });
 
