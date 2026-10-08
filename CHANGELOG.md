@@ -4,6 +4,32 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.45-beta] — 2026-10-08
+
+### Changed
+
+- The command palette now keeps recent-command ordering while a filter is
+  active, not only when the list is unfiltered. Typing narrows the rows without
+  re-sorting them, so the command you reach for stays near the top the whole
+  time you are typing — matching how VS Code's quick open behaves.
+- The sandbox canary's escape probe is worded backend-neutrally ("did not reach
+  the host") instead of "was blocked". bwrap, `sandbox-exec` and MXC each phrase
+  a denial differently, and the check reports the same fact on all three.
+
+### Added
+
+- CI scans for leaked secrets with gitleaks over the **full git history** on
+  every push and PR — a key committed months ago is still a leak after
+  rotation. The binary is pinned and SHA-256 verified rather than run through
+  the gitleaks action, and `.gitleaks.toml` allowlists only the exact fake
+  secrets the redaction tests use, so it cannot mask a real one.
+- CI audits the workflow YAML itself with zizmor (template injection,
+  credential persistence, cache poisoning), which CodeQL on the TypeScript
+  source and Scorecard on repo hygiene do not cover. Baseline findings fixed:
+  the artifact-uploading build job now sets `persist-credentials: false`, and
+  publish disables npm caching (`package-manager-cache: false`) so a poisoned
+  cache cannot reach the registry.
+
 ## [0.8.44-beta] — 2026-10-08
 
 ### Added
