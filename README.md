@@ -44,7 +44,8 @@ autonomously looping until your request is done. Anything that mutates state
   confining writes to the workspace; falls back to unsandboxed (with a
   warning) if the sandbox binary isn't installed
 - **Staged project workflow** — `/flow-brainstorm → spec → plan → build →
-review → fix` for building something new end-to-end
+review → fix → ship` for building something new end-to-end, with parked
+  projects you can pick up again later
 - **MCP + Agent Plugins support** — extend with external tools/servers, each
   individually trust-gated
 - **Undo/redo/checkpoints** — revert or rewind file changes and conversation
@@ -166,8 +167,11 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | `/flow-build`             | project workflow: implement the plan, with tests                                                                                    |
 | `/flow-review`            | project workflow: spec-compliance and security review of the build                                                                  |
 | `/flow-fix`               | project workflow: fix the review's findings, each one re-verified                                                                   |
+| `/flow-ship`              | project workflow: hand over the finished project, with the test suite actually run                                                  |
+| `/flow`                   | continue the workflow from wherever the project stands                                                                              |
+| `/flow-back <phase>`      | rewind to a phase and re-run everything after it (bounded — see below)                                                              |
 | `/plan`                   | toggle plan mode: `/plan`, `/plan on`, `/plan off` (unrelated to `/flow-plan`)                                                      |
-| `/project`                | workflow status; `goto <phase>`, `rename <name>`, `clear` to end it                                                                 |
+| `/project`                | workflow status; `list`, `resume <name>`, `goto <phase>`, `rename <name>`, `clear`                                                  |
 | `/diff`                   | show the cumulative git diff of this session's changes                                                                              |
 | `/init`                   | scan the repo and generate a `KRITYA.md` project-memory file                                                                        |
 | `/commit`                 | have the agent review, stage, and commit the current git changes                                                                    |
@@ -202,9 +206,9 @@ checkpoints). `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 - **Staged new-project workflow** — ask kritya to build something new (a
   FastAPI backend, a Next.js frontend, a CLI) and it doesn't dive straight into
-  code. It runs six phases — **brainstorm → spec → plan → build → review → fix**
-  — writing a durable artifact for each under `docs/<name>/` and stopping for
-  your approval between phases:
+  code. It runs seven phases — **brainstorm → spec → plan → build → review →
+  fix → ship** — writing a durable artifact for each under `docs/<name>/` and
+  stopping for your approval between phases:
 
   | Phase        | Produces                                                                                                                                                                                        |
   | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -214,35 +218,63 @@ checkpoints). `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
   | `build`      | the code, with tests written before the code they test, plus negative/failure-path tests for security/reliability-tagged milestones, and a live milestone checklist                             |
   | `review`     | `review.md` — a one-line scorecard, then spec-compliance, security, and reliability findings                                                                                                    |
   | `fix`        | `fix.md` — the review's findings addressed and re-verified                                                                                                                                      |
+  | `ship`       | `ship.md` — a handover summary, the test suite actually run, and an optional commit                                                                                                             |
 
   Spec comes before plan on purpose: the spec settles _what_ (and pins the
   numbered acceptance criteria everything downstream is held to), the plan
   settles _how_ and sequences milestones against those criteria. Each phase
   reads only the artifact immediately before it, so nothing gets re-derived.
-  The current phase lives in `.kritya/project.json`, so the flow resumes across
-  sessions. While a workflow is active the statusline carries a `⚑ name:phase`
-  flag, and the spinner names the running phase; `/project` shows the full
-  picture — including a warning if an earlier artifact was edited after a
-  later one already depended on it — and `/project clear` ends it. A phase
-  refuses to run if the artifact it reads was never written (`--force`
-  overrides). The agent walks the phases on its own, or you drive them by hand
-  with `/flow-brainstorm <idea>`, `/flow-spec`, `/flow-plan`, `/flow-build`,
-  `/flow-review`, `/flow-fix` — and after each one kritya tells you which
-  command comes next, so the handoff doesn't depend on the model remembering
-  to say it. `/flow-fix` only fixes what review found; if anything is still
-  open afterward it tells you to run `/flow-review` again or `/flow-fix`
-  again once you've decided how to handle what's left.
+  The agent walks the phases on its own, or you drive them by hand with
+  `/flow-brainstorm <idea>`, `/flow-spec`, `/flow-plan`, `/flow-build`,
+  `/flow-review`, `/flow-fix`, `/flow-ship` — and after each one kritya tells
+  you which command comes next, so the handoff doesn't depend on the model
+  remembering to say it.
+
+  **Where it stops is a policy, not a property of the phase list.** It hands
+  back for approval after brainstorm, spec and plan — the phases where changing
+  course is still cheap — then runs build through ship as one stretch, because
+  by then the work is already done and "shall I now review what I just built?"
+  adds a round trip without adding a decision. `/flow` continues from wherever
+  the project stands; `--auto` runs the rest without stopping, `--until <phase>`
+  stops at a named phase, and `--fast` merges brainstorm and spec into one
+  stretch. A phase refuses to run if the artifact it reads was never written
+  (`--force` overrides). `/flow-fix` only fixes what review found; if anything
+  is still open afterward it tells you to run `/flow-review` again, `/flow-fix`
+  again, or `/flow-back <phase>` if the finding is really a problem with the
+  requirement — that rewinds to a phase and re-runs everything after it, bounded
+  at two passes so a disagreement the model can't resolve can't spend forever.
+
+  **Parking a project keeps its phase.** Starting a second project used to
+  overwrite the first's place in the flow, because `.kritya/project.json` only
+  ever holds the active one. A registry at `.kritya/projects.json` now keeps
+  every project the workspace has run, so `/project list` shows them all and
+  `/project resume <name>` picks one up exactly where it stopped — phase,
+  loop-back budget and all. `/project clear` ends the active workflow but parks
+  rather than forgets it, and a new `/flow-brainstorm` names the way back.
+
+  **A gate doesn't cost you a file read.** Each phase records a one-line
+  scorecard, so `/project` shows what every phase concluded ("6 ACs, 2 MUST")
+  instead of just a generic description — you can judge whether to approve
+  without opening anything. When a project is active, launch names its phase,
+  and after a gated phase `/flow` is prefilled into the input line: Enter
+  continues, Esc (or any edit) discards it. The gate still holds — nothing runs
+  until you submit.
+
+  While a workflow is active the statusline carries a `⚑ name N/7 phase` flag
+  and the spinner names the running phase. `/project` shows the full picture,
+  including a warning if an earlier artifact was edited after a later one
+  already depended on it.
 
   The project is named from your idea unless you name it yourself with a short
   prefix — `/flow-brainstorm reverser: a script that reverses a string` gives
   you `docs/reverser/`. `/project rename <name>` moves an existing one.
 
-  Cost matters here — six phases in one session adds up — so kritya compacts
+  Cost matters here — seven phases in one session adds up — so kritya compacts
   the conversation at each phase boundary (the artifact is on disk, so the
   transcript that produced it is redundant), caps artifact length, and in the
   build phase dispatches independent milestones to isolated write subagents
   rather than pulling every file into the main context. The review phase runs
-  its two reviewers as read-only subagents, so only their findings come back;
+  its three reviewers as read-only subagents, so only their findings come back;
   the fix phase does the same to re-verify only what it changed.
 
   In the plan phase, plan mode's read-only guard is relaxed just enough to let

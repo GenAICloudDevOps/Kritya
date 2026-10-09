@@ -90,11 +90,13 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
   by every subagent it spawns, so one stop halts the whole tree; the loop gates
   turns, tool calls, and compaction on it ahead of every other check.
 - **`src/agent/workflow.ts`** — the staged new-project workflow
-  (brainstorm → spec → plan → build → review). Owns `PHASE_ORDER`, the
-  `.kritya/project.json` state pointer, each phase's prompt and `docs/<name>/`
-  artifact, the prerequisite check that stops a phase whose input was never
-  written, and the scoped plan-mode exemption that lets the plan phase persist
-  its own doc without being able to touch anything else.
+  (brainstorm → spec → plan → build → review → fix → ship). Owns `PHASE_ORDER`
+  and the gate policy (`DEFAULT_GATES`, `planRun`), the `.kritya/project.json`
+  state pointer for the active project and the `.kritya/projects.json` registry
+  of every project the workspace has run, each phase's prompt and
+  `docs/<name>/` artifact, the prerequisite check that stops a phase whose
+  input was never written, and the scoped plan-mode exemption that lets the
+  plan phase persist its own doc without being able to touch anything else.
 - **`src/provider/client.ts`** — `ProviderClient`, a thin wrapper over the
   `openai` SDK for any OpenAI-compatible endpoint. Streams text, reasoning, and
   tool calls; retries transient errors with backoff.

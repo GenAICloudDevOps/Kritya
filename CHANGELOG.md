@@ -4,6 +4,37 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A registry of every project a workspace has run, so **parking a project keeps
+  its phase**. `.kritya/project.json` only ever held the active project, so
+  starting a second one silently overwrote the first's place in the flow.
+  `/project list` now shows them all, and `/project resume <name>` picks one up
+  exactly where it stopped — phase, loop-back budget and pending revisit
+  included. `/project clear` parks rather than forgets, and starting a new
+  project names the way back to the one it displaced.
+- Each phase records a one-line scorecard, so `/project` shows what every phase
+  concluded ("6 ACs, 2 MUST") instead of a generic description of what the phase
+  does — a gate can be judged without opening the artifact.
+- Launch names the active project's phase, and a phase that ends at a gate
+  prefills `/flow` into the input line: Enter continues, Esc (or any edit)
+  discards it.
+
+### Fixed
+
+- `--until <phase>` naming a phase at or behind the one the run starts from was
+  silently ignored — `shouldStopAfter` matches on equality, so an unsatisfiable
+  stop never fired and "stop at brainstorm" became "run the whole stretch". It
+  is now refused, and nothing runs.
+- A recorded revisit was consumed by any phase move, so a single-phase command
+  like `/flow-plan` cleared a note pointing at `spec` without ever surfacing it.
+  Only acting on the revisit clears it now.
+- Headless mode refused any prompt beginning with `/`, which also caught
+  plain-language input that starts with a path (`/home/me notes.txt summarize`).
+  The check now matches a command-shaped token only.
+
 ## [0.8.46-beta] — 2026-10-08
 
 ### Added
