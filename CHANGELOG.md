@@ -4,6 +4,60 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.46-beta] — 2026-10-08
+
+### Added
+
+- The workflow has a **ship** phase, so `brainstorm → spec → plan → build →
+review → fix → ship` ends by running the project's real test suite and writing
+  a handover summary, instead of stopping once the fixes are in.
+- `/flow` continues from wherever the project stands, and `/flow-back <phase>`
+  rewinds to a phase and re-runs everything after it — for a review finding that
+  turns out to be a problem with the requirement rather than the code. The `fix`
+  phase records where such a finding belongs, and the loop-back is bounded at
+  two passes, so a disagreement the model cannot resolve cannot become an
+  unbounded spend.
+- Workflow flags: `--auto` (run the remaining phases without stopping), `--until
+<phase>` (stop at a named phase), and `--fast` (merge brainstorm and spec into
+  one stretch), alongside the existing `--force`.
+
+### Changed
+
+- **Where the workflow stops is now a policy, not a property of the phase
+  list.** It hands back for approval after brainstorm, spec and plan — the
+  phases where changing course is still cheap — and runs build, review, fix and
+  ship as one stretch. Stopping to ask "shall I now review what I just built?"
+  adds a round trip without adding a decision, because by then the work is
+  already done. `/flow-build` therefore runs four phases, and a command running
+  several phases no longer announces the next one it is about to run itself.
+- The status line and `/project` show progress as `phase N/7`, and `/project`
+  ticks the artifacts that actually exist.
+
+### Fixed
+
+- A workflow phase that hit the step limit was treated as finished, so the chain
+  ran on and built the next phase on a half-written artifact. The agent already
+  flagged this for subagents; phases now act on it too, and anything short of a
+  completed phase stops the chain. A chain that stopped early also went quiet —
+  the blocker message explained one phase and said nothing about the phases that
+  never ran. It now names them.
+- `/flow-review` had no real prerequisite: `build` produces code rather than a
+  document, so the usual "did the previous phase leave its artifact behind"
+  check passed trivially, and a review could run against a project that was
+  never built. It now falls back to the recorded phase.
+- `/flow-back` passed its own argument on to the first phase, injecting the
+  phase name into the prompt as if it were user input. It also ran through to
+  ship; it now returns you to the phase the project had reached.
+- `/flow` walked past a revisit recorded by the `fix` phase, running the rest of
+  the workflow on top of a requirement already known to be wrong. It now
+  surfaces it before continuing.
+- A project rename reset the loop-back budget, which defeated the bound that
+  keeps a disagreement from spending indefinitely. Renames now carry the count.
+- Headless mode never dispatched slash commands — `--prompt` sent the text
+  straight to the model, so `/flow-brainstorm ...` made the model improvise the
+  workflow from the system prompt, with no gate stops, no per-phase modes and no
+  artifact bookkeeping. It looked like it worked. A leading `/` now fails fast.
+
 ## [0.8.45-beta] — 2026-10-08
 
 ### Changed
