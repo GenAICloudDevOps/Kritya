@@ -4,7 +4,7 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.47-beta] — 2026-10-09
 
 ### Added
 
@@ -24,6 +24,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The last phase of a chain went unannounced: no "done" line, and no prefilled
+  `/flow` after something like `/flow-brainstorm --fast`. A phase's own turn
+  teardown runs while the chain flag is still set, so it cannot tell "middle of
+  a chain" from "chain just ended at a gate" and stayed quiet for both; the
+  command that ran the chain now announces its end, and a chain that stopped
+  early keeps its silence because it has already named the phases that never ran.
 - `--until <phase>` naming a phase at or behind the one the run starts from was
   silently ignored — `shouldStopAfter` matches on equality, so an unsatisfiable
   stop never fired and "stop at brainstorm" became "run the whole stretch". It
@@ -34,6 +40,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Headless mode refused any prompt beginning with `/`, which also caught
   plain-language input that starts with a path (`/home/me notes.txt summarize`).
   The check now matches a command-shaped token only.
+- A phase's recorded scorecard was read back at whatever length the model wrote,
+  so a verbose one — or one containing a newline — would break the fixed-width
+  `/project` layout. It is now collapsed to a single line and cut to 120
+  characters.
 
 ## [0.8.46-beta] — 2026-10-08
 
