@@ -418,6 +418,23 @@ export function artifactExists(workspace: string, name: string, phase: WorkflowP
  * and it would improvise the requirements instead.
  */
 export function phaseBlocker(workspace: string, name: string, phase: WorkflowPhase): string | null {
+  // Build writes code rather than a document, so the "did the previous phase
+  // leave its artifact behind" test passes for review trivially — and always.
+  // That let `/flow-review` run against a project that had never been built,
+  // dispatching subagents to review nothing. There is no file to look for, so
+  // fall back to the one piece of evidence there is: the recorded phase. Only
+  // consulted when there *is* a recorded phase, so a bare workspace behaves as
+  // before.
+  if (phase === "review") {
+    const recorded = loadProjectState(workspace)?.phase;
+    if (recorded && PHASE_ORDER.indexOf(recorded) < PHASE_ORDER.indexOf("build")) {
+      return (
+        `The review phase checks what the build phase produced, and "${name}" has not ` +
+        `reached build yet (it is at ${recorded}). Run ${PHASE_COMMAND.build} first.`
+      );
+    }
+    return null;
+  }
   const prev = previousPhase(phase);
   if (!prev || artifactExists(workspace, name, prev)) return null;
   const rel = artifactPath(name, prev);

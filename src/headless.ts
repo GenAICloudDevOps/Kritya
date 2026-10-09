@@ -58,6 +58,21 @@ export interface HeadlessArgs {
   privacy?: boolean;
 }
 
+/**
+ * Whether a `--prompt` value looks like a slash command.
+ *
+ * Slash commands are dispatched by the interactive UI, which owns the command
+ * layer; headless mode has none, so a `/flow-brainstorm ...` prompt was handed
+ * to the model as literal text. The model then improvised the workflow from the
+ * system prompt — which looks like it worked and does not: no gate stops, no
+ * per-phase modes, no artifact bookkeeping, and it runs until it hits the step
+ * limit. Exported so the check itself is testable without spawning a process
+ * (the e2e suite that would otherwise cover it needs a real CLI run).
+ */
+export function isSlashCommandPrompt(prompt: string): boolean {
+  return prompt.trimStart().startsWith("/");
+}
+
 interface ToolCallRecord {
   name: string;
   summary: string;
@@ -132,6 +147,22 @@ function approveHeadlessMcp(
 export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const startedAt = Date.now();
   const workspace = path.resolve(args.dir);
+
+  // Refuse rather than silently do something else. See isSlashCommandPrompt.
+  if (isSlashCommandPrompt(args.prompt)) {
+    return finish(args, startedAt, {
+      success: false,
+      result: "",
+      error:
+        `--prompt starts with "/", which is a slash command. Headless mode does not run ` +
+        `slash commands — it sends the text to the model, which would improvise the task ` +
+        `instead of following the command. Run the command in the interactive UI, or ` +
+        `describe the task in plain language here.`,
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, estimated: false },
+      durationMs: 0,
+    });
+  }
 
   // Only the user's own global .env is unconditionally trusted; see below.
   loadDotEnv([path.join(CONFIG_DIR, ".env")]);

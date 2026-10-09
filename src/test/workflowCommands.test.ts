@@ -52,6 +52,8 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
     planMode: false,
     acceptEdits: false,
     bypassMode: false,
+    maxSteps: 40,
+    hitStepLimit: false,
     async compact() {
       counts.compactions++;
       // Snapshot what the user would be looking at right now.
@@ -166,6 +168,20 @@ test("a phase refuses to run when the artifact it reads was never written", asyn
   assert.equal(h.prompts.length, 0, "the phase must not run");
   assert.equal(loadProjectState(h.workspace)?.phase, "brainstorm", "and must not change the phase");
   assert.ok(h.said.some((s) => s.includes("spec.md") && s.includes("--force")));
+});
+
+test("/flow-review refuses to run before the project has been built", async () => {
+  // build writes code rather than a doc, so the usual "did the previous phase
+  // leave its artifact" check passes for review trivially — and always. That
+  // let a review run against a project that had never been built.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  h.ctx.raw = "/flow-review";
+  await runCommand("/flow-review", h.ctx);
+
+  assert.equal(h.prompts.length, 0, "there is nothing to review yet");
+  assert.equal(loadProjectState(h.workspace)?.phase, "plan");
+  assert.ok(h.said.some((s) => s.includes("has not reached build yet")));
 });
 
 test("--force runs a phase past a missing prerequisite, with a warning", async () => {
@@ -514,6 +530,43 @@ test("an ungated phase runs the rest of the stretch as one chain", async () => {
   assert.deepEqual(h.chained, [true, false], "bracketed as chained, then released");
 });
 
+test("a phase that hits the step limit stops the chain", async () => {
+  // The turn just ends when it runs out of steps, and the message it appends
+  // reads like model output. Treating that as a finished phase built the next
+  // one on a half-written artifact.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "plan");
+  h.ctx.agent.hitStepLimit = true;
+  h.ctx.raw = "/flow-build";
+  await runCommand("/flow-build", h.ctx);
+
+  assert.deepEqual(h.labels, ["build"], "nothing after the truncated phase ran");
+  assert.ok(h.said.some((s) => s.includes("40-step limit")));
+  assert.ok(h.said.some((s) => s.includes("review, fix, ship did not run")));
+  assert.ok(h.said.some((s) => s.includes("continue")));
+});
+
+test("a chain that stops early says which phases never ran", async () => {
+  // Otherwise the run just goes quiet after the blocker message, and the user
+  // has to work out for themselves that phases they were promised were skipped.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "plan");
+  h.ctx.raw = "/flow-build";
+  await runCommand("/flow-build", h.ctx);
+
+  assert.ok(
+    h.said.some((s) => s.includes("Chain stopped at fix")),
+    "names the phase it died on"
+  );
+  assert.ok(
+    h.said.some((s) => s.includes("ship did not run")),
+    "and what was abandoned"
+  );
+  assert.ok(h.said.some((s) => s.includes("/flow to carry on")));
+});
+
 test("a gated phase does not bracket itself as a chain", async () => {
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
@@ -586,6 +639,26 @@ test("/flow at the last phase says the workflow is complete", async () => {
   assert.ok(h.said.some((s) => s.includes("/flow-back")));
 });
 
+test("/flow warns when a recorded revisit is still outstanding", async () => {
+  // Carrying on forward would build the rest of the workflow on top of a
+  // requirement the fix phase already recorded as wrong.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  markRevisit(h.workspace, "spec", "AC3 is unmeasurable");
+  writeArtifact(h.workspace, "my-app", "fix");
+  h.ctx.raw = "/flow";
+  await runCommand("/flow", h.ctx);
+
+  assert.ok(h.said.some((s) => s.includes("still flagged as needing a change")));
+  assert.ok(h.said.some((s) => s.includes("AC3 is unmeasurable")));
+  assert.ok(
+    h.said.some((s) => s.includes("/flow-back")),
+    "and points at the way to act on it"
+  );
+  // It still runs — the warning is advice, not a block.
+  assert.deepEqual(h.labels, ["ship"]);
+});
+
 test("/flow --until runs through to the named phase and stops there", async () => {
   const h = harness();
   saveProjectState(h.workspace, "my-app", "brainstorm");
@@ -623,10 +696,41 @@ test("/flow-back rewinds and re-runs every phase downstream of the target", asyn
   h.ctx.raw = "/flow-back spec";
   await runCommand("/flow-back", h.ctx);
 
-  assert.deepEqual(h.labels, ["spec", "plan", "build", "review", "fix", "ship"]);
-  assert.equal(loadProjectState(h.workspace)?.phase, "ship");
+  // It stops at the phase the project had reached, so the rewind puts you back
+  // where you were rather than silently carrying on to ship.
+  assert.deepEqual(h.labels, ["spec", "plan", "build", "review", "fix"]);
+  assert.equal(loadProjectState(h.workspace)?.phase, "fix");
   assert.equal(loadProjectState(h.workspace)?.revisits, 1, "the loop-back is counted");
   assert.ok(h.said.some((s) => s.includes("Rewinding to spec")));
+});
+
+test("/flow-back does not inject the phase name into the prompt as user input", async () => {
+  // `req.arg` held the phase the user typed, and passing it through put the
+  // literal string "spec" in the prompt's "User input for this phase" block.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  for (const p of ["brainstorm", "spec", "plan", "review", "fix"] as const) {
+    writeArtifact(h.workspace, "my-app", p);
+  }
+  h.ctx.arg = "spec";
+  h.ctx.raw = "/flow-back spec";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.doesNotMatch(h.prompts[0], /User input for this phase/);
+});
+
+test("/flow-back --auto runs on past where the project was", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  for (const p of ["brainstorm", "spec", "plan", "review", "fix"] as const) {
+    writeArtifact(h.workspace, "my-app", p);
+  }
+  h.ctx.arg = "spec --auto";
+  h.ctx.raw = "/flow-back spec --auto";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec", "plan", "build", "review", "fix", "ship"]);
+  assert.equal(loadProjectState(h.workspace)?.phase, "ship");
 });
 
 test("bare /flow-back acts on whatever the fix phase recorded, and shows why", async () => {

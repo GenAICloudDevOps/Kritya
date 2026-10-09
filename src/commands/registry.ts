@@ -394,27 +394,35 @@ interface PhaseRun {
   stopAfter: boolean;
 }
 
+/** How a phase ended. Anything but `ok` stops the chain it was part of. */
+type PhaseOutcome =
+  | "ok"
+  /** A prerequisite artifact was missing, so the phase never started. */
+  | "blocked"
+  /** The phase ran but hit the step limit, leaving its artifact unfinished. */
+  | "incomplete";
+
 /**
  * Run one workflow phase: check its prerequisite artifact exists, set the mode
  * the phase needs, record the phase, compact, then hand the prompt to the
  * agent.
  *
- * Returns whether the phase actually ran. A blocked phase reports why and
- * returns false, which is what stops a chain — everything after it reads the
- * artifact it did not write.
+ * The outcome is what stops a chain. A blocked phase has written nothing, and
+ * an incomplete one has written something half-finished — either way everything
+ * after it reads an artifact that isn't there yet.
  */
 async function runPhase(
   ctx: CommandContext,
   phase: WorkflowPhase,
   run: PhaseRun
-): Promise<boolean> {
+): Promise<PhaseOutcome> {
   const project = loadProjectState(ctx.workspace);
   if (!project) {
     ctx.addItem({
       kind: "info",
       text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
     });
-    return false;
+    return "blocked";
   }
   const blocker = phaseBlocker(ctx.workspace, project.name, phase);
   if (blocker && !run.force) {
@@ -422,7 +430,7 @@ async function runPhase(
       kind: "info",
       text: `${blocker}\nTo run ${PHASE_COMMAND[phase]} anyway: ${PHASE_COMMAND[phase]} --force`,
     });
-    return false;
+    return "blocked";
   }
   // Warn (never block) if an earlier artifact was edited after this phase's
   // input was written from it — e.g. spec.md changed after plan.md already
@@ -461,7 +469,14 @@ async function runPhase(
   ctx.refreshWorkflow();
   await compactAtPhaseBoundary(ctx, phase);
   await ctx.runAgent(phasePrompt(project.name, phase, run.arg, { stopAfter: run.stopAfter }));
-  return true;
+  // A turn that runs out of steps just ends, and the message it appends reads
+  // like model output. The agent flags it, so a chain can tell "the phase
+  // finished" from "the phase gave up mid-sentence" — which matters because
+  // the next phase reads whatever it managed to write. Subagents already
+  // report this (`stoppedEarly: "max-steps"`); phases were treating a
+  // truncated run as a finished one.
+  if (ctx.agent.hitStepLimit) return "incomplete";
+  return "ok";
 }
 
 /**
@@ -484,12 +499,36 @@ async function runFlow(ctx: CommandContext, from: WorkflowPhase, req: FlowReques
   }
   try {
     for (const [i, phase] of phases.entries()) {
-      const ran = await runPhase(ctx, phase, {
+      const outcome = await runPhase(ctx, phase, {
         arg: i === 0 ? req.arg : "",
         force: req.force === true,
         stopAfter: shouldStopAfter(phase, req),
       });
-      if (!ran) break;
+      if (outcome === "ok") continue;
+      // A phase that did not finish stops the chain, because everything after
+      // it reads the artifact it did not (or only half) wrote. Say so: without
+      // this the run just goes quiet after the blocker message, and the user
+      // has to work out for themselves that phases they were promised never
+      // happened.
+      const abandoned = phases.slice(i + 1);
+      if (outcome === "incomplete") {
+        ctx.addItem({
+          kind: "info",
+          text:
+            `${phase} stopped at the ${ctx.agent.maxSteps}-step limit before it finished, so ` +
+            `whatever it wrote is incomplete — and the phases after it read that.` +
+            (abandoned.length ? ` ${abandoned.join(", ")} did not run.` : "") +
+            `\nSend "continue" to finish ${phase}, then /flow to carry on from there.`,
+        });
+      } else if (abandoned.length) {
+        ctx.addItem({
+          kind: "info",
+          text:
+            `Chain stopped at ${phase} — ${abandoned.join(", ")} did not run. ` +
+            `Clear the blocker above, then /flow to carry on from here.`,
+        });
+      }
+      break;
     }
   } finally {
     // Only a chain ever sets this, so only a chain releases it — a single-phase
@@ -961,6 +1000,20 @@ const handlers: Record<string, CommandHandler> = {
       });
       return;
     }
+    // A revisit the fix phase recorded means a finding was never really closed.
+    // Carrying on forward would run the rest of the workflow on top of a
+    // requirement that is known to be wrong, so name it here rather than let
+    // the user discover it by reading /project.
+    const revisit = project.revisit;
+    if (revisit && PHASE_ORDER.indexOf(revisit.to) < PHASE_ORDER.indexOf(from)) {
+      ctx.addItem({
+        kind: "info",
+        text:
+          `↩ ${revisit.to} is still flagged as needing a change — ${revisit.reason}\n` +
+          `Run ${BACK_COMMAND} to redo it and everything after, or carry on anyway with ` +
+          `${PHASE_COMMAND[from]}.`,
+      });
+    }
     return runFlow(ctx, from, req);
   },
   "/flow-back": async (ctx) => {
@@ -1021,9 +1074,17 @@ const handlers: Record<string, CommandHandler> = {
         `. Everything after it re-runs, because it all reads what ${target} writes.`,
     });
     ctx.refreshWorkflow();
-    // A loop back exists to regenerate the phases downstream of the one that
-    // was wrong, so it runs to the end unless the user names a stopping point.
-    return runFlow(ctx, target, { ...req, auto: true });
+    // Rewinding exists to regenerate what the wrong phase produced, and to put
+    // the user back where they were — not to carry on past it. So it stops at
+    // the phase the project had reached, unless the user asked for a longer or
+    // shorter run with --auto / --until.
+    //
+    // `arg` is blanked deliberately: it held the phase name the user typed
+    // (`/flow-back spec`), and passing it on would inject the literal string
+    // "spec" into the phase prompt as if it were user input.
+    const options: FlowRequest = { ...req, arg: "" };
+    if (!req.auto && !req.until) options.until = project.phase;
+    return runFlow(ctx, target, options);
   },
   // `/plan` (no `flow-` prefix) is pure plan-mode control — on/off or a bare
   // toggle — and never touches the project workflow. `/flow-plan` runs the

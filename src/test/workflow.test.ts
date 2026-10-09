@@ -365,7 +365,23 @@ test("phaseBlocker for build looks at the plan, and for review at the build", ()
   assert.match(phaseBlocker(ws, "my-app", "build") ?? "", /plan\.md/);
   writeArtifact(ws, "my-app", "plan");
   assert.equal(phaseBlocker(ws, "my-app", "build"), null);
-  // Build writes code rather than a doc, so review is never blocked on a file.
+  // Build writes code rather than a doc, so there is no file to look for. With
+  // no recorded phase there is nothing to go on, so review is not blocked.
+  assert.equal(phaseBlocker(ws, "my-app", "review"), null);
+});
+
+test("phaseBlocker falls back to the recorded phase for review", () => {
+  // The artifact check cannot see build's output, so a project that never
+  // reached build would otherwise sail into a review of nothing.
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "plan");
+  assert.match(phaseBlocker(ws, "my-app", "review") ?? "", /has not reached build yet/);
+
+  saveProjectState(ws, "my-app", "build");
+  assert.equal(phaseBlocker(ws, "my-app", "review"), null);
+
+  // Past build is fine too — that is the normal case for a re-review.
+  saveProjectState(ws, "my-app", "fix");
   assert.equal(phaseBlocker(ws, "my-app", "review"), null);
 });
 
