@@ -263,7 +263,7 @@ test("loadProjectState drops a malformed revisit rather than trusting it", () =>
   assert.equal(loadProjectState(ws)?.revisit, undefined);
 });
 
-test("moving to a phase consumes the revisit but keeps the loop-back count", () => {
+test("acting on a revisit clears it but keeps the loop-back count", () => {
   const ws = tmpWorkspace();
   saveProjectState(ws, "my-app", "fix");
   markRevisit(ws, "spec", "AC3 is wrong");
@@ -273,6 +273,32 @@ test("moving to a phase consumes the revisit but keeps the loop-back count", () 
   const state = loadProjectState(ws);
   assert.equal(state?.revisit, undefined, "acting on the revisit clears it");
   assert.equal(state?.revisits, 1, "but the count survives, because it bounds the loop");
+});
+
+test("a revisit survives a move to any other phase", () => {
+  // It is a standing note until acted on. Dropping it on every save meant any
+  // single-phase command silently ate a note pointing somewhere else.
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  markRevisit(ws, "spec", "AC3 is wrong");
+  saveProjectState(ws, "my-app", "plan");
+  assert.deepEqual(loadProjectState(ws)?.revisit, { to: "spec", reason: "AC3 is wrong" });
+});
+
+test("saving the phase a revisit names is what clears it", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  markRevisit(ws, "spec", "AC3 is wrong");
+  saveProjectState(ws, "my-app", "spec");
+  assert.equal(loadProjectState(ws)?.revisit, undefined);
+});
+
+test("a rename keeps an outstanding revisit", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  markRevisit(ws, "spec", "AC3 is wrong");
+  assert.deepEqual(renameProject(ws, "my-app", "renamed-app"), { ok: true, name: "renamed-app" });
+  assert.deepEqual(loadProjectState(ws)?.revisit, { to: "spec", reason: "AC3 is wrong" });
 });
 
 test("a rename keeps the loop-back count, so it cannot be used to reset the budget", () => {

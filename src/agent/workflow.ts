@@ -261,21 +261,28 @@ export function saveProjectState(
   workspace: string,
   name: string,
   phase: WorkflowPhase,
-  carry?: Pick<ProjectState, "revisits">
+  carry?: Pick<ProjectState, "revisits" | "revisit">
 ): ProjectState {
   const previous = loadProjectState(workspace);
+  const slug = slugify(name);
+  // A rename is the same project under a new slug, so it hands its own state in
+  // rather than looking like a fresh project and starting from zero.
+  const same = previous && previous.name === slug ? previous : undefined;
   const state: ProjectState = {
-    name: slugify(name),
+    name: slug,
     phase,
     updatedAt: new Date().toISOString(),
   };
-  // Moving to a phase consumes any recorded revisit: the whole point of looping
-  // back is to act on it, and leaving it set would make the same suggestion
-  // fire again on the next pass. The counter survives, because it is what
-  // bounds the loop. A different project starts fresh — unless the caller is a
-  // rename, which is the same project under a new slug and hands its count in.
-  const revisits = previous && previous.name === state.name ? previous.revisits : carry?.revisits;
+  const revisits = same?.revisits ?? carry?.revisits;
   if (revisits) state.revisits = revisits;
+  // A recorded revisit is a standing note until it is acted on — so it survives
+  // a move to any *other* phase. It used to be dropped by every save, which
+  // meant running any phase silently ate a note pointing somewhere else, and
+  // only /flow ever displayed it. Clearing it when the phase being saved is the
+  // one it names is what "acted on" means, whether that came from /flow-back or
+  // from the /project goto + /flow-<phase> escape hatch.
+  const revisit = same?.revisit ?? carry?.revisit;
+  if (revisit && revisit.to !== phase) state.revisit = revisit;
   fs.mkdirSync(path.dirname(stateFile(workspace)), { recursive: true });
   fs.writeFileSync(stateFile(workspace), JSON.stringify(state, null, 2) + "\n");
   return state;

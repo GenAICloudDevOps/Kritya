@@ -68,9 +68,15 @@ export interface HeadlessArgs {
  * per-phase modes, no artifact bookkeeping, and it runs until it hits the step
  * limit. Exported so the check itself is testable without spawning a process
  * (the e2e suite that would otherwise cover it needs a real CLI run).
+ *
+ * Deliberately narrow: `/` + a command word + end-or-whitespace. A plain-language
+ * prompt can legitimately begin with a path — "/home/me notes.txt summarize" —
+ * and refusing that is a false positive against exactly the input this check's
+ * own error message invites. The giveaway is the second `/`: a command name has
+ * no further slash, a path has several.
  */
 export function isSlashCommandPrompt(prompt: string): boolean {
-  return prompt.trimStart().startsWith("/");
+  return /^\/[a-z][a-z0-9-]*(\s|$)/.test(prompt.trimStart());
 }
 
 interface ToolCallRecord {

@@ -13,7 +13,19 @@ test("ordinary prompts are not mistaken for commands", () => {
   assert.equal(isSlashCommandPrompt("brainstorm a habit tracker"), false);
   assert.equal(isSlashCommandPrompt(""), false);
   assert.equal(isSlashCommandPrompt("   "), false);
-  // A path is not a command, even though it contains a slash.
+  // A path is not a command, even though it starts with a slash. Refusing these
+  // is a false positive against the plain-language input the error message asks
+  // for, and the second "/" is what gives them away.
+  assert.equal(isSlashCommandPrompt("/home/me notes.txt summarize"), false);
+  assert.equal(isSlashCommandPrompt("/tmp/report.md clean this up"), false);
+  assert.equal(isSlashCommandPrompt("/etc/hosts explain this file"), false);
   assert.equal(isSlashCommandPrompt("read src/ui/App.tsx and summarize it"), false);
   assert.equal(isSlashCommandPrompt("what does 1/2 + 1/3 equal?"), false);
+});
+
+test("a lone slash, or a slash then punctuation, is not a command", () => {
+  assert.equal(isSlashCommandPrompt("/"), false);
+  assert.equal(isSlashCommandPrompt("/ what does this mean"), false);
+  assert.equal(isSlashCommandPrompt("/2fast"), false);
+  assert.equal(isSlashCommandPrompt("/Flow"), false);
 });

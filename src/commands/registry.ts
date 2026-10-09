@@ -489,6 +489,21 @@ async function runPhase(
  * expensive to get wrong.
  */
 async function runFlow(ctx: CommandContext, from: WorkflowPhase, req: FlowRequest): Promise<void> {
+  // An `until` behind the start phase can never fire — shouldStopAfter matches
+  // on equality — so the run would quietly do the opposite of what was asked
+  // and execute every remaining phase. A *typo* is caught when the flag is
+  // parsed; a phase that is merely behind is not, and this is the one place
+  // that knows both ends, so it is checked here rather than in the parser.
+  if (req.until && PHASE_ORDER.indexOf(req.until) < PHASE_ORDER.indexOf(from)) {
+    ctx.addItem({
+      kind: "info",
+      text:
+        `--until ${req.until} is behind ${from}, the phase this run starts at, so it would ` +
+        `never stop and every remaining phase would run. Pick ${from} or a later phase, ` +
+        `or use --auto to say that you do want the whole stretch.`,
+    });
+    return;
+  }
   const phases = planRun(from, req);
   const chained = phases.length > 1;
   // One command, so one user line — not one per phase of the stretch.

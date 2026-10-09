@@ -684,6 +684,48 @@ test("--until rejects an unknown phase without running anything", async () => {
   assert.ok(h.said.some((s) => s.includes("Unknown phase")));
 });
 
+test("--until behind the start phase is refused, not silently widened to everything", async () => {
+  // shouldStopAfter matches on equality, so an unreachable stop never fires and
+  // an explicit "stop at brainstorm" became "run the whole stretch".
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  h.ctx.arg = "--until brainstorm";
+  h.ctx.raw = "/flow --until brainstorm";
+  await runCommand("/flow", h.ctx);
+
+  assert.equal(h.prompts.length, 0, "nothing runs");
+  assert.equal(loadProjectState(h.workspace)?.phase, "brainstorm", "and the phase does not move");
+  assert.ok(h.said.some((s) => s.includes("never stop")));
+});
+
+test("--until equal to the start phase is allowed", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  h.ctx.arg = "--until spec";
+  h.ctx.raw = "/flow --until spec";
+  await runCommand("/flow", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec"]);
+});
+
+test("a single-phase command does not silently eat a pending revisit", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  markRevisit(h.workspace, "spec", "AC3 is unmeasurable");
+  writeArtifact(h.workspace, "my-app", "spec");
+  h.ctx.raw = "/flow-plan";
+  await runCommand("/flow-plan", h.ctx);
+
+  assert.equal(loadProjectState(h.workspace)?.phase, "plan", "the phase did move");
+  assert.equal(
+    loadProjectState(h.workspace)?.revisit?.to,
+    "spec",
+    "but the note pointing at spec survives"
+  );
+});
+
 // --- /flow-back: the bounded loop -----------------------------------------
 
 test("/flow-back rewinds and re-runs every phase downstream of the target", async () => {
