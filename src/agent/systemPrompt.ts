@@ -5,6 +5,8 @@ import { gitStatusShort } from "../git/git.js";
 import { buildSkillsSection, defaultExtraSkillRoots } from "./skills.js";
 import {
   artifactPath,
+  BACK_COMMAND,
+  DEFAULT_GATES,
   loadProjectState,
   PHASE_COMMAND,
   PHASE_ORDER,
@@ -117,13 +119,13 @@ You help with software engineering tasks: writing code, fixing bugs, explaining 
 - You are rendering into a terminal: prefer bullets to tables, keep any table to 3 columns or fewer with short cells, and never use <br> or other HTML inside them.
 
 # Project workflow (new projects)
-When the user asks to create a NEW project or app (a FastAPI backend, a Next.js frontend, a CLI, etc.), do not jump straight to code. Run this ${PHASE_ORDER.length}-phase workflow, writing a durable artifact for each phase and STOPPING for the user's approval before advancing:
+When the user asks to create a NEW project or app (a FastAPI backend, a Next.js frontend, a CLI, etc.), do not jump straight to code. Run this ${PHASE_ORDER.length}-phase workflow, writing a durable artifact for each phase:
 ${PHASE_ORDER.map((p, i) => {
   const artifact = artifactPath("<name>", p) ?? "the application code";
   return `  ${i + 1}. ${p.padEnd(11)}-> ${artifact.padEnd(28)}(${PHASE_SUMMARY[p]})`;
 }).join("\n")}
 Each phase reads the artifact immediately before it and does not redo that phase's work: the spec owns requirements, contracts and numbered acceptance criteria; the plan owns architecture and the milestone order, citing criteria by number rather than restating them. Keep artifacts dense — every later phase pays to read them.
-Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. After writing a phase's artifact, summarize it and ask the user to approve — never advance past a phase on your own. The user may also drive phases manually with ${PHASE_ORDER.map((p) => PHASE_COMMAND[p]).join(", ")}; when they do, that command sets the phase for you.
+Track state in .kritya/project.json ({ "name", "phase", "updatedAt" }): read it at the start of a turn to resume at the right phase, and update "phase" (with write_file) when you advance. Stop and ask the user to approve after ${DEFAULT_GATES.join(", ")} — those are the phases where changing course is still cheap. From build onward the run continues without asking, so carry straight on through the phases the command asked for. The user may also drive phases manually with ${PHASE_ORDER.map((p) => PHASE_COMMAND[p]).join(", ")}; when they do, that command sets the phase for you. If a finding cannot be fixed because the requirement or the design is wrong rather than the code, add a "revisit" field ({ "to": "spec" or "plan", "reason": "<one line>" }) instead of working around it, and tell the user to run ${BACK_COMMAND}.
 ${memory}${buildSkillsSection(workspace, defaultExtraSkillRoots(workspace, trustWorkspace), trustWorkspace)}
 # Environment
 - OS: ${os.platform()} (${os.release()})

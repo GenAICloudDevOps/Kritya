@@ -5,7 +5,14 @@ import path from "node:path";
 import { test } from "node:test";
 import type { Agent } from "../agent/loop.js";
 import { runCommand, type CommandContext } from "../commands/registry.js";
-import { artifactPath, loadProjectState, saveProjectState } from "../agent/workflow.js";
+import {
+  artifactPath,
+  loadProjectState,
+  markRevisit,
+  MAX_REVISITS,
+  saveProjectState,
+  takeRevisit,
+} from "../agent/workflow.js";
 import type { ItemBody } from "../types.js";
 
 interface Harness {
@@ -21,6 +28,10 @@ interface Harness {
   duringCompaction: { phase: string | null; activity: string | null };
   /** Phases declared as running, in order. */
   labels: (string | null)[];
+  /** Every setChained() call, in order, so a test can see the chain bracket. */
+  chained: boolean[];
+  /** Every item shown, so a test can tell a user line from an info line. */
+  items: ItemBody[];
 }
 
 /**
@@ -33,6 +44,8 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
   const said: string[] = [];
   const counts = { compactions: 0 };
   const labels: (string | null)[] = [];
+  const chained: boolean[] = [];
+  const items: ItemBody[] = [];
   const ui = { phase: null as string | null, activity: null as string | null };
   const duringCompaction = { phase: null as string | null, activity: null as string | null };
   const agent = {
@@ -70,6 +83,7 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
       ctx.planMode = v;
     },
     addItem(item: ItemBody) {
+      items.push(item);
       said.push("text" in item && typeof item.text === "string" ? item.text : "");
     },
     setPhase(p: string) {
@@ -80,6 +94,9 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
     },
     setRunningPhase(p: string | null) {
       labels.push(p);
+    },
+    setChained(v: boolean) {
+      chained.push(v);
     },
     refreshWorkflow() {},
     setCtxPct() {},
@@ -94,7 +111,7 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
     ...overrides,
   } as unknown as CommandContext;
 
-  return { ctx, workspace, prompts, said, counts, duringCompaction, labels };
+  return { ctx, workspace, prompts, said, counts, duringCompaction, labels, chained, items };
 }
 
 /** Write a phase's artifact so the next phase's prerequisite check passes. */
@@ -207,7 +224,10 @@ test("the plan phase turns plan mode on and every other phase turns it off", asy
   h.ctx.raw = "/flow-build";
   await runCommand("/flow-build", h.ctx);
   assert.equal(h.ctx.planMode, false, "build must be able to write");
-  assert.equal(loadProjectState(h.workspace)?.phase, "build");
+  // build is not a gate, so the run continues into review — which is why the
+  // recorded phase is review, not build.
+  assert.match(h.prompts.at(-1) ?? "", /REVIEW phase/);
+  assert.ok(h.labels.includes("build"), "the build phase ran");
 });
 
 test("entering the plan phase clears accept-edits", async () => {
@@ -327,7 +347,16 @@ test("/project rename works before any artifact has been written", async () => {
 });
 
 test("phase commands report there is no project instead of starting one", async () => {
-  for (const cmd of ["/flow-spec", "/flow-plan", "/flow-build", "/flow-review", "/flow-fix"]) {
+  for (const cmd of [
+    "/flow-spec",
+    "/flow-plan",
+    "/flow-build",
+    "/flow-review",
+    "/flow-fix",
+    "/flow-ship",
+    "/flow",
+    "/flow-back",
+  ]) {
     const h = harness();
     h.ctx.raw = cmd;
     await runCommand(cmd, h.ctx);
@@ -404,6 +433,9 @@ test("workflow commands are refused while the kill switch is engaged", async () 
     "/flow-build",
     "/flow-review",
     "/flow-fix",
+    "/flow-ship",
+    "/flow",
+    "/flow-back",
     "/project",
   ]) {
     const h = harness({ killed: true });
@@ -461,4 +493,221 @@ test("/project status surfaces stale artifacts too", async () => {
   await runCommand("/project", h.ctx);
 
   assert.ok(h.said.some((s) => s.includes("stale")));
+});
+
+// --- chaining: one command, several phases -------------------------------
+
+test("an ungated phase runs the rest of the stretch as one chain", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "plan");
+  h.ctx.raw = "/flow-build";
+  await runCommand("/flow-build", h.ctx);
+
+  // build and review both run; fix stops the chain because review.md was never
+  // written (the stub agent doesn't write artifacts).
+  assert.deepEqual(h.labels, ["build", "review"]);
+  assert.ok(
+    h.said.some((s) => s.includes("Running 4 phases: build → review → fix → ship")),
+    "the chain announces how far it will go"
+  );
+  assert.deepEqual(h.chained, [true, false], "bracketed as chained, then released");
+});
+
+test("a gated phase does not bracket itself as a chain", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  h.ctx.raw = "/flow-spec";
+  await runCommand("/flow-spec", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec"]);
+  assert.deepEqual(h.chained, [], "one phase is not a chain, so the flag is never touched");
+  assert.ok(!h.said.some((s) => s.includes("Running")));
+});
+
+test("a chain records one user line for the whole stretch, not one per phase", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "plan");
+  h.ctx.raw = "/flow-build";
+  await runCommand("/flow-build", h.ctx);
+
+  const userLines = h.items.filter((i) => i.kind === "user");
+  assert.equal(userLines.length, 1, "the transcript shows the command once");
+});
+
+test("--auto runs the whole remaining workflow as one chain", async () => {
+  const h = harness();
+  h.ctx.arg = "a habit tracker --auto";
+  h.ctx.raw = "/flow-brainstorm a habit tracker --auto";
+  await runCommand("/flow-brainstorm", h.ctx);
+
+  assert.ok(
+    h.said.some((s) =>
+      s.includes("Running 7 phases: brainstorm → spec → plan → build → review → fix → ship")
+    )
+  );
+});
+
+test("--fast drops the brainstorm gate, merging it into the spec stretch", async () => {
+  const h = harness();
+  h.ctx.arg = "a habit tracker --fast";
+  h.ctx.raw = "/flow-brainstorm a habit tracker --fast";
+  await runCommand("/flow-brainstorm", h.ctx);
+
+  assert.ok(h.said.some((s) => s.includes("Running 2 phases: brainstorm → spec")));
+  // The flag is an instruction to the command, not part of the idea.
+  assert.match(h.prompts[0], /a habit tracker/);
+  assert.doesNotMatch(h.prompts[0], /--fast/);
+});
+
+// --- /flow: continue from where the project stands ------------------------
+
+test("/flow continues from the phase after the one that last ran", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  h.ctx.raw = "/flow";
+  await runCommand("/flow", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec"]);
+  assert.equal(loadProjectState(h.workspace)?.phase, "spec");
+});
+
+test("/flow at the last phase says the workflow is complete", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "ship");
+  h.ctx.raw = "/flow";
+  await runCommand("/flow", h.ctx);
+
+  assert.equal(h.prompts.length, 0);
+  assert.ok(h.said.some((s) => s.includes("run every phase")));
+  assert.ok(h.said.some((s) => s.includes("/flow-back")));
+});
+
+test("/flow --until runs through to the named phase and stops there", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "spec");
+  h.ctx.arg = "--until plan";
+  h.ctx.raw = "/flow --until plan";
+  await runCommand("/flow", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec", "plan"]);
+  assert.equal(loadProjectState(h.workspace)?.phase, "plan");
+});
+
+test("--until rejects an unknown phase without running anything", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  h.ctx.arg = "--until design";
+  h.ctx.raw = "/flow --until design";
+  await runCommand("/flow", h.ctx);
+
+  assert.equal(h.prompts.length, 0);
+  assert.equal(loadProjectState(h.workspace)?.phase, "brainstorm");
+  assert.ok(h.said.some((s) => s.includes("Unknown phase")));
+});
+
+// --- /flow-back: the bounded loop -----------------------------------------
+
+test("/flow-back rewinds and re-runs every phase downstream of the target", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  for (const p of ["brainstorm", "spec", "plan", "review", "fix"] as const) {
+    writeArtifact(h.workspace, "my-app", p);
+  }
+  h.ctx.arg = "spec";
+  h.ctx.raw = "/flow-back spec";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec", "plan", "build", "review", "fix", "ship"]);
+  assert.equal(loadProjectState(h.workspace)?.phase, "ship");
+  assert.equal(loadProjectState(h.workspace)?.revisits, 1, "the loop-back is counted");
+  assert.ok(h.said.some((s) => s.includes("Rewinding to spec")));
+});
+
+test("bare /flow-back acts on whatever the fix phase recorded, and shows why", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  markRevisit(h.workspace, "plan", "M2 assumed an API that doesn't exist");
+  for (const p of ["brainstorm", "spec", "plan", "review", "fix"] as const) {
+    writeArtifact(h.workspace, "my-app", p);
+  }
+  h.ctx.raw = "/flow-back";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.equal(h.labels[0], "plan", "it rewinds to the recorded phase");
+  assert.ok(h.said.some((s) => s.includes("M2 assumed an API that doesn't exist")));
+  assert.equal(loadProjectState(h.workspace)?.revisits, 1);
+});
+
+test("/flow-back refuses a target that is not before the current phase", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  h.ctx.arg = "build";
+  h.ctx.raw = "/flow-back build";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.equal(h.prompts.length, 0);
+  assert.equal(loadProjectState(h.workspace)?.revisits, undefined, "and spends no loop-back");
+  assert.ok(h.said.some((s) => s.includes("rewinds")));
+});
+
+test("/flow-back refuses once the loop-back budget is spent", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  for (let i = 0; i < MAX_REVISITS; i++) {
+    takeRevisit(h.workspace, "spec");
+    saveProjectState(h.workspace, "my-app", "fix");
+  }
+  h.ctx.arg = "spec";
+  h.ctx.raw = "/flow-back spec";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.equal(h.prompts.length, 0, "the limit bounds the spend");
+  assert.ok(h.said.some((s) => s.includes("limit")));
+  assert.ok(
+    h.said.some((s) => s.includes("/project goto")),
+    "and says how to proceed by hand"
+  );
+});
+
+test("/flow-back with no target and nothing recorded explains itself", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  h.ctx.raw = "/flow-back";
+  await runCommand("/flow-back", h.ctx);
+
+  assert.equal(h.prompts.length, 0);
+  assert.ok(h.said.some((s) => s.includes("Usage: /flow-back")));
+});
+
+// --- ship -----------------------------------------------------------------
+
+test("/flow-ship runs the handover once the fix writeup exists", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  writeArtifact(h.workspace, "my-app", "fix");
+  h.ctx.raw = "/flow-ship";
+  await runCommand("/flow-ship", h.ctx);
+
+  assert.equal(loadProjectState(h.workspace)?.phase, "ship");
+  assert.equal(h.prompts.length, 1);
+  assert.match(h.prompts[0], /SHIP phase/);
+});
+
+test("/project status numbers the phases and flags the revisit", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "fix");
+  markRevisit(h.workspace, "spec", "AC3 is unmeasurable");
+  h.ctx.raw = "/project";
+  await runCommand("/project", h.ctx);
+
+  const report = h.said.join("\n");
+  assert.match(report, /fix phase \(6\/7\)/, "progress is shown as N/7");
+  assert.match(report, /ship/, "the new phase is listed");
+  assert.match(report, /AC3 is unmeasurable/, "the recorded revisit is surfaced");
 });

@@ -20,20 +20,31 @@ import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
 import { recordCommandUse } from "../ui/recentCommands.js";
 import {
+  artifactExists,
   artifactPath,
+  BACK_COMMAND,
   clearProjectState,
+  DEFAULT_GATES,
   loadProjectState,
+  MAX_REVISITS,
+  nextPhase,
   parseIdea,
   parsePhase,
   phaseBlocker,
+  phaseIndex,
   phasePrompt,
+  planRun,
   renameProject,
+  revisitsRemaining,
+  saveProjectState,
+  shouldStopAfter,
   staleArtifacts,
+  takeRevisit,
   PHASE_COMMAND,
   PHASE_ORDER,
   PHASE_SUMMARY,
-  saveProjectState,
   slugify,
+  type FlowRunOptions,
   type WorkflowPhase,
 } from "../agent/workflow.js";
 
@@ -51,9 +62,15 @@ const INFO = "Info";
 
 export const BUILTIN_COMMANDS: CommandDef[] = [
   {
+    name: "/flow",
+    description:
+      "run the next workflow phase, or a stretch of them: /flow [--until <phase>|--auto]",
+    category: WORKFLOW,
+  },
+  {
     name: "/flow-brainstorm",
     description:
-      "start a new-project workflow: /flow-brainstorm <idea> (brainstorm→spec→plan→build→review→fix)",
+      "start a new-project workflow: /flow-brainstorm <idea> (brainstorm→spec→plan→build→review→fix→ship)",
     category: WORKFLOW,
   },
   {
@@ -68,7 +85,7 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   },
   {
     name: "/flow-build",
-    description: "project workflow: implement the plan, with tests",
+    description: "project workflow: implement the plan, then review and fix it",
     category: WORKFLOW,
   },
   {
@@ -79,6 +96,17 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/flow-fix",
     description: "project workflow: fix the review's findings, re-verified",
+    category: WORKFLOW,
+  },
+  {
+    name: "/flow-ship",
+    description: "project workflow: run the tests and write the handover summary",
+    category: WORKFLOW,
+  },
+  {
+    name: "/flow-back",
+    description:
+      "rewind to a phase and re-run everything after it, when a finding belongs upstream",
     category: WORKFLOW,
   },
   {
@@ -200,6 +228,10 @@ Also: @path/to/file attaches a file to your message (with autocomplete).
 @mcp:server/name attaches a document an MCP server offers.
 MCP servers can also contribute their own /server-prompt commands.
 Project memory: put standing instructions in KRITYA.md at your workspace root.
+Project workflow: /flow-brainstorm <idea> starts one; /flow runs the next phase.
+It stops for your approval after ${DEFAULT_GATES.join(", ")}, then runs the rest
+through to ship. --auto for no stops · --until <phase> to stop early · --fast to
+merge brainstorm and spec · ${BACK_COMMAND} <phase> when a finding belongs upstream.
 Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/dry-run
 mode · ↑/↓ recalls history · Ctrl+R searches history · Ctrl+P opens the command
 palette · Ctrl+B copies the last code block · Ctrl+O toggles full tool output ·
@@ -235,6 +267,11 @@ export interface CommandContext {
   /** The workflow phase driving the current turn: labels the spinner, and tells
    *  the turn's teardown which phase to announce the follow-up command for. */
   setRunningPhase(phase: WorkflowPhase | null): void;
+  /** True while one command is running several workflow phases back to back.
+   *  The turn's teardown stays quiet then: announcing "next: /flow-review" for a
+   *  phase the chain is about to run itself is noise, and the chain prints its
+   *  own progress. */
+  setChained(chained: boolean): void;
   /** Re-read the workflow pointer so the statusline reflects a phase change. */
   refreshWorkflow(): void;
   setCtxPct(pct: number): void;
@@ -266,7 +303,7 @@ export type CommandHandler = (ctx: CommandContext) => void | Promise<void>;
  * A phase boundary is the one place compaction is unambiguously safe: the
  * phase that just ended wrote its conclusions to a durable artifact on disk,
  * so the transcript that produced them is redundant. Compacting here is what
- * keeps a five-phase project from dragging every phase's exploration into the
+ * keeps a seven-phase project from dragging every phase's exploration into the
  * next phase's context window.
  */
 async function compactAtPhaseBoundary(ctx: CommandContext, phase: WorkflowPhase): Promise<void> {
@@ -290,10 +327,57 @@ async function compactAtPhaseBoundary(ctx: CommandContext, phase: WorkflowPhase)
   }
 }
 
-/** Strip a trailing/leading `--force` from a command argument. */
-function takeForce(arg: string): { arg: string; force: boolean } {
-  const force = /(^|\s)--force(\s|$)/.test(arg);
-  return { arg: arg.replace(/(^|\s)--force(\s|$)/, " ").trim(), force };
+/** A workflow command's parsed request: the leftover argument plus the run policy. */
+interface FlowRequest extends FlowRunOptions {
+  /** Text handed to the first phase as its user input. */
+  arg: string;
+  /** Set when a flag was given something it cannot accept. */
+  error?: string;
+}
+
+/**
+ * Pull the workflow flags out of a command argument, leaving the user's own
+ * text behind. `--force` was the only one of these once, and it is still
+ * stripped before the prompt is built: it is an instruction to the command,
+ * not to the model, and leaving it in reads as part of the idea.
+ */
+function takeFlowFlags(arg: string): FlowRequest {
+  let rest = arg;
+  const take = (flag: string): boolean => {
+    const re = new RegExp(`(^|\\s)${flag}(\\s|$)`);
+    if (!re.test(rest)) return false;
+    rest = rest.replace(re, " ");
+    return true;
+  };
+
+  const force = take("--force");
+  const auto = take("--auto");
+  // --fast merges brainstorm and spec into one stretch. They answer nearly the
+  // same question, and for a small project the second round trip buys nothing.
+  const fast = take("--fast");
+
+  const untilMatch = /(^|\s)--until[= ](\S+)/.exec(rest);
+  if (untilMatch) {
+    rest = rest.replace(/(^|\s)--until[= ]\S+/, " ");
+    const phase = parsePhase(untilMatch[2]);
+    if (!phase) {
+      return {
+        arg: rest.trim(),
+        force,
+        error: `Unknown phase "${untilMatch[2]}" for --until. Use one of: ${PHASE_ORDER.join(", ")}.`,
+      };
+    }
+    return { arg: rest.trim(), force, until: phase };
+  }
+  if (/(^|\s)--until(\s|$)/.test(rest)) {
+    return { arg: rest.trim(), force, error: "Usage: --until <phase>" };
+  }
+
+  if (auto) return { arg: rest.trim(), force, auto: true };
+  if (fast) {
+    return { arg: rest.trim(), force, gates: DEFAULT_GATES.filter((p) => p !== "brainstorm") };
+  }
+  return { arg: rest.trim(), force };
 }
 
 /** Strip a trailing/leading `--default` from a command argument. */
@@ -302,27 +386,43 @@ function takeDefault(arg: string): { arg: string; makeDefault: boolean } {
   return { arg: arg.replace(/(^|\s)--default(\s|$)/, " ").trim(), makeDefault };
 }
 
+/** What one phase of a run needs to know. */
+interface PhaseRun {
+  /** User text for this phase. Empty for every phase after the first. */
+  arg: string;
+  force: boolean;
+  stopAfter: boolean;
+}
+
 /**
  * Run one workflow phase: check its prerequisite artifact exists, set the mode
- * the phase needs, record the phase, compact, then hand the prompt to the agent.
+ * the phase needs, record the phase, compact, then hand the prompt to the
+ * agent.
+ *
+ * Returns whether the phase actually ran. A blocked phase reports why and
+ * returns false, which is what stops a chain — everything after it reads the
+ * artifact it did not write.
  */
-async function runPhase(ctx: CommandContext, phase: WorkflowPhase): Promise<void> {
+async function runPhase(
+  ctx: CommandContext,
+  phase: WorkflowPhase,
+  run: PhaseRun
+): Promise<boolean> {
   const project = loadProjectState(ctx.workspace);
   if (!project) {
     ctx.addItem({
       kind: "info",
       text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
     });
-    return;
+    return false;
   }
-  const { arg, force } = takeForce(ctx.arg);
   const blocker = phaseBlocker(ctx.workspace, project.name, phase);
-  if (blocker && !force) {
+  if (blocker && !run.force) {
     ctx.addItem({
       kind: "info",
       text: `${blocker}\nTo run ${PHASE_COMMAND[phase]} anyway: ${PHASE_COMMAND[phase]} --force`,
     });
-    return;
+    return false;
   }
   // Warn (never block) if an earlier artifact was edited after this phase's
   // input was written from it — e.g. spec.md changed after plan.md already
@@ -355,13 +455,59 @@ async function runPhase(ctx: CommandContext, phase: WorkflowPhase): Promise<void
       `${phase} phase for "${project.name}" — ${PHASE_SUMMARY[phase]}` +
       (artifact ? ` → ${artifact}` : "") +
       (wantPlanMode ? " (plan mode ON: read-only apart from that doc)" : "") +
-      (blocker && force ? "\n⚠ Forced past a missing prerequisite." : ""),
+      (blocker && run.force ? "\n⚠ Forced past a missing prerequisite." : ""),
   });
-  ctx.addItem({ kind: "user", text: ctx.raw.trim() });
   ctx.setRunningPhase(phase);
   ctx.refreshWorkflow();
   await compactAtPhaseBoundary(ctx, phase);
-  return ctx.runAgent(phasePrompt(project.name, phase, arg));
+  await ctx.runAgent(phasePrompt(project.name, phase, run.arg, { stopAfter: run.stopAfter }));
+  return true;
+}
+
+/**
+ * Run a stretch of phases back to back from one command.
+ *
+ * `planRun` decides how far the stretch goes. Stopping between build, review
+ * and fix would ask "shall I now review what I just built?" — a round trip
+ * that buys no decision, because by then the work is already done. Stopping
+ * after brainstorm, spec and plan does buy one: those are cheap to redo and
+ * expensive to get wrong.
+ */
+async function runFlow(ctx: CommandContext, from: WorkflowPhase, req: FlowRequest): Promise<void> {
+  const phases = planRun(from, req);
+  const chained = phases.length > 1;
+  // One command, so one user line — not one per phase of the stretch.
+  ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+  if (chained) {
+    ctx.addItem({ kind: "info", text: `Running ${phases.length} phases: ${phases.join(" → ")}` });
+    ctx.setChained(true);
+  }
+  try {
+    for (const [i, phase] of phases.entries()) {
+      const ran = await runPhase(ctx, phase, {
+        arg: i === 0 ? req.arg : "",
+        force: req.force === true,
+        stopAfter: shouldStopAfter(phase, req),
+      });
+      if (!ran) break;
+    }
+  } finally {
+    // Only a chain ever sets this, so only a chain releases it — a single-phase
+    // command has nothing to suppress and should not touch the flag at all.
+    if (chained) ctx.setChained(false);
+  }
+}
+
+/** The standard handler for a single phase command: /flow-spec, /flow-build, … */
+function phaseCommand(phase: WorkflowPhase): CommandHandler {
+  return async (ctx) => {
+    const req = takeFlowFlags(ctx.arg);
+    if (req.error) {
+      ctx.addItem({ kind: "info", text: req.error });
+      return;
+    }
+    return runFlow(ctx, phase, req);
+  };
 }
 
 const handlers: Record<string, CommandHandler> = {
@@ -745,14 +891,21 @@ const handlers: Record<string, CommandHandler> = {
     );
   },
   "/flow-brainstorm": async (ctx) => {
-    const input = ctx.arg.trim();
+    const req = takeFlowFlags(ctx.arg);
+    if (req.error) {
+      ctx.addItem({ kind: "info", text: req.error });
+      return;
+    }
+    const input = req.arg;
     const existing = loadProjectState(ctx.workspace);
     if (!existing && !input) {
       ctx.addItem({
         kind: "info",
         text:
           `Usage: /flow-brainstorm <your project idea>. Starts the ${PHASE_ORDER.join(" → ")} workflow.\n` +
-          `Name it yourself with a short prefix: /flow-brainstorm reverser: a script that reverses a string`,
+          `Name it yourself with a short prefix: /flow-brainstorm reverser: a script that reverses a string\n` +
+          `Flags: --fast (run brainstorm and spec as one stretch) · --auto (no stops) · ` +
+          `--until <phase> · --force`,
       });
       return;
     }
@@ -777,13 +930,100 @@ const handlers: Record<string, CommandHandler> = {
       ctx.agent.planMode = false;
       ctx.setPlanMode(false);
     }
-    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
-    ctx.setRunningPhase("brainstorm");
     ctx.refreshWorkflow();
-    // A no-op at the start of a session; earns its keep when a second project
-    // is started in a session that already ran one.
-    await compactAtPhaseBoundary(ctx, "brainstorm");
-    return ctx.runAgent(phasePrompt(name, "brainstorm", idea));
+    // The idea belongs to the brainstorm phase; later phases in a --fast stretch
+    // read its artifact rather than the raw idea again.
+    return runFlow(ctx, "brainstorm", { ...req, arg: idea });
+  },
+  "/flow": async (ctx) => {
+    const project = loadProjectState(ctx.workspace);
+    if (!project) {
+      ctx.addItem({
+        kind: "info",
+        text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
+      });
+      return;
+    }
+    const req = takeFlowFlags(ctx.arg);
+    if (req.error) {
+      ctx.addItem({ kind: "info", text: req.error });
+      return;
+    }
+    // The stored phase is the one that last ran, so continuing means the next
+    // one — re-running what just finished is never what "continue" means.
+    const from = nextPhase(project.phase);
+    if (!from) {
+      ctx.addItem({
+        kind: "info",
+        text:
+          `"${project.name}" has run every phase (last: ${project.phase}). ` +
+          `Run /project clear to end the workflow, or ${BACK_COMMAND} <phase> to redo one.`,
+      });
+      return;
+    }
+    return runFlow(ctx, from, req);
+  },
+  "/flow-back": async (ctx) => {
+    const project = loadProjectState(ctx.workspace);
+    if (!project) {
+      ctx.addItem({
+        kind: "info",
+        text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
+      });
+      return;
+    }
+    const req = takeFlowFlags(ctx.arg);
+    if (req.error) {
+      ctx.addItem({ kind: "info", text: req.error });
+      return;
+    }
+    // Bare /flow-back acts on whatever the fix phase recorded; naming a phase
+    // works whether or not anything was recorded.
+    const recorded = project.revisit;
+    const target = parsePhase(req.arg) ?? recorded?.to ?? null;
+    if (!target) {
+      ctx.addItem({
+        kind: "info",
+        text:
+          `Usage: ${BACK_COMMAND} <${PHASE_ORDER.join("|")}> — rewind to a phase and re-run everything after it.\n` +
+          `Nothing upstream was recorded either, so name the phase you want to redo.`,
+      });
+      return;
+    }
+    if (PHASE_ORDER.indexOf(target) >= PHASE_ORDER.indexOf(project.phase)) {
+      ctx.addItem({
+        kind: "info",
+        text:
+          `${BACK_COMMAND} rewinds, and ${target} is not before the current phase ` +
+          `(${project.phase}). Use ${PHASE_COMMAND[target]} to move forward.`,
+      });
+      return;
+    }
+    if (revisitsRemaining(ctx.workspace) <= 0) {
+      ctx.addItem({
+        kind: "info",
+        text:
+          `"${project.name}" has already looped back ${MAX_REVISITS} time(s), which is the limit — ` +
+          `another automatic pass would be guessing at what you want. Fix what you can by hand, ` +
+          `then /project goto ${target} and ${PHASE_COMMAND[target]} if you still want to redo it.`,
+      });
+      return;
+    }
+    if (!takeRevisit(ctx.workspace, target)) {
+      ctx.addItem({ kind: "info", text: `Could not rewind "${project.name}".` });
+      return;
+    }
+    ctx.addItem({
+      kind: "info",
+      text:
+        `↩ Rewinding to ${target}` +
+        (recorded && recorded.to === target ? ` — ${recorded.reason}` : "") +
+        `. Everything after it re-runs, because it all reads what ${target} writes.`,
+    });
+    ctx.refreshWorkflow();
+    // A loop back exists to regenerate the phases downstream of the one that
+    // was wrong, so it runs to the end unless the user names a stopping point.
+    return runFlow(ctx, target, { ...req, auto: true });
   },
   // `/plan` (no `flow-` prefix) is pure plan-mode control — on/off or a bare
   // toggle — and never touches the project workflow. `/flow-plan` runs the
@@ -808,11 +1048,12 @@ const handlers: Record<string, CommandHandler> = {
         : "Plan mode OFF — the agent can make changes again.",
     });
   },
-  "/flow-spec": (ctx) => runPhase(ctx, "spec"),
-  "/flow-plan": (ctx) => runPhase(ctx, "plan"),
-  "/flow-build": (ctx) => runPhase(ctx, "build"),
-  "/flow-review": (ctx) => runPhase(ctx, "review"),
-  "/flow-fix": (ctx) => runPhase(ctx, "fix"),
+  "/flow-spec": phaseCommand("spec"),
+  "/flow-plan": phaseCommand("plan"),
+  "/flow-build": phaseCommand("build"),
+  "/flow-review": phaseCommand("review"),
+  "/flow-fix": phaseCommand("fix"),
+  "/flow-ship": phaseCommand("ship"),
   "/project": (ctx) => {
     const [sub = "", ...rest] = ctx.arg.trim().split(/\s+/);
     const project = loadProjectState(ctx.workspace);
@@ -859,26 +1100,37 @@ const handlers: Record<string, CommandHandler> = {
       ctx.refreshWorkflow();
       ctx.addItem({
         kind: "info",
-        text: `"${project.name}" set to the ${target} phase. Run ${PHASE_COMMAND[target]} to start it.`,
+        text: `"${project.name}" set to the ${target} phase. Run ${PHASE_COMMAND[target]} to start it, or /flow to continue from here.`,
       });
       return;
     }
-    const lines = PHASE_ORDER.map((p) => {
+    const lines = PHASE_ORDER.map((p, i) => {
       const marker = p === project.phase ? "*" : " ";
       const artifact = artifactPath(project.name, p);
-      return `  ${marker} ${p.padEnd(11)}${PHASE_SUMMARY[p]}\n      ${artifact ?? "(application code)"}`;
+      // build has no document of its own, so there is nothing to look for.
+      const written = artifact !== null && artifactExists(ctx.workspace, project.name, p);
+      return (
+        `  ${marker} ${String(i + 1).padStart(2)}. ${p.padEnd(11)}${PHASE_SUMMARY[p]}` +
+        `\n         ${artifact ?? "(application code)"}${written ? "  ✓" : ""}`
+      );
     });
     const stale = staleArtifacts(ctx.workspace, project.name, project.phase);
     const staleBlock = stale.length ? `\n\n${stale.join("\n")}` : "";
+    const revisitBlock = project.revisit
+      ? `\n\n↩ ${project.revisit.to} was flagged as needing a change: ${project.revisit.reason}` +
+        `\n   ${BACK_COMMAND} redoes it and everything after it.`
+      : "";
     ctx.addItem({
       kind: "info",
       text:
-        `Project "${project.name}" — ${project.phase} phase` +
+        `Project "${project.name}" — ${project.phase} phase ` +
+        `(${phaseIndex(project.phase)}/${PHASE_ORDER.length})` +
         (project.updatedAt ? ` (since ${project.updatedAt.slice(0, 10)})` : "") +
         `\n\n${lines.join("\n")}` +
         staleBlock +
-        `\n\nRun ${PHASE_COMMAND[project.phase]} to continue · /project goto <phase> to move · ` +
-        `/project rename <name> · /project clear to end the workflow.`,
+        revisitBlock +
+        `\n\n/flow continues · ${PHASE_COMMAND[project.phase]} re-runs this phase · ` +
+        `/project goto <phase> to move · /project rename <name> · /project clear to end the workflow.`,
     });
   },
   "/diff": (ctx) => {

@@ -6,20 +6,29 @@ import { test } from "node:test";
 import {
   artifactExists,
   artifactPath,
+  BACK_COMMAND,
   clearProjectState,
+  DEFAULT_GATES,
   isPlanningDocWrite,
   loadProjectState,
+  markRevisit,
+  MAX_REVISITS,
   nextPhase,
   parseIdea,
   parsePhase,
   phaseBlocker,
+  phaseIndex,
   phasePrompt,
+  planRun,
   previousPhase,
   PHASE_ORDER,
   renameProject,
+  revisitsRemaining,
   saveProjectState,
+  shouldStopAfter,
   slugify,
   staleArtifacts,
+  takeRevisit,
   type WorkflowPhase,
 } from "../agent/workflow.js";
 
@@ -111,8 +120,8 @@ test("renameProject rejects an empty name and is a no-op for the same name", () 
   assert.deepEqual(renameProject(ws, "my-app", "My App"), { ok: true, name: "my-app" });
 });
 
-test("phases run brainstorm -> spec -> plan -> build -> review -> fix", () => {
-  assert.deepEqual(PHASE_ORDER, ["brainstorm", "spec", "plan", "build", "review", "fix"]);
+test("phases run brainstorm -> spec -> plan -> build -> review -> fix -> ship", () => {
+  assert.deepEqual(PHASE_ORDER, ["brainstorm", "spec", "plan", "build", "review", "fix", "ship"]);
 });
 
 test("previousPhase and nextPhase walk the order and stop at the ends", () => {
@@ -122,9 +131,76 @@ test("previousPhase and nextPhase walk the order and stop at the ends", () => {
   assert.equal(previousPhase("build"), "plan");
   assert.equal(previousPhase("review"), "build");
   assert.equal(previousPhase("fix"), "review");
+  assert.equal(previousPhase("ship"), "fix");
   assert.equal(nextPhase("brainstorm"), "spec");
   assert.equal(nextPhase("review"), "fix");
-  assert.equal(nextPhase("fix"), null);
+  assert.equal(nextPhase("fix"), "ship");
+  assert.equal(nextPhase("ship"), null);
+});
+
+test("phaseIndex numbers the phases from 1, for progress display", () => {
+  assert.equal(phaseIndex("brainstorm"), 1);
+  assert.equal(phaseIndex("plan"), 3);
+  assert.equal(phaseIndex("build"), 4);
+  assert.equal(phaseIndex("ship"), PHASE_ORDER.length);
+});
+
+test("the workflow stops after brainstorm, spec and plan, and runs the rest through", () => {
+  // Where it stops is a policy, not a property of the phase list: up to plan a
+  // wrong turn costs a document, from build on it costs the code.
+  assert.deepEqual(DEFAULT_GATES, ["brainstorm", "spec", "plan"]);
+  assert.equal(shouldStopAfter("brainstorm"), true);
+  assert.equal(shouldStopAfter("spec"), true);
+  assert.equal(shouldStopAfter("plan"), true);
+  assert.equal(shouldStopAfter("build"), false);
+  assert.equal(shouldStopAfter("review"), false);
+  assert.equal(shouldStopAfter("fix"), false);
+  assert.equal(shouldStopAfter("ship"), false);
+});
+
+test("--auto runs every remaining phase without stopping", () => {
+  for (const phase of PHASE_ORDER) assert.equal(shouldStopAfter(phase, { auto: true }), false);
+});
+
+test("--until stops at the named phase and nowhere else", () => {
+  assert.equal(shouldStopAfter("spec", { until: "spec" }), true);
+  assert.equal(shouldStopAfter("brainstorm", { until: "spec" }), false);
+  assert.equal(shouldStopAfter("build", { until: "spec" }), false);
+  // until wins over the gates it would otherwise stop after.
+  assert.equal(shouldStopAfter("plan", { until: "spec" }), false);
+});
+
+test("--fast drops brainstorm from the gates, merging it into the spec stretch", () => {
+  const gates: WorkflowPhase[] = DEFAULT_GATES.filter((p) => p !== "brainstorm");
+  assert.equal(shouldStopAfter("brainstorm", { gates }), false);
+  assert.equal(shouldStopAfter("spec", { gates }), true);
+});
+
+test("planRun from brainstorm stops at the first gate by default", () => {
+  assert.deepEqual(planRun("brainstorm"), ["brainstorm"]);
+});
+
+test("planRun from build runs build through ship, because none of them is a gate", () => {
+  assert.deepEqual(planRun("build"), ["build", "review", "fix", "ship"]);
+});
+
+test("planRun honours until, auto and the gate override", () => {
+  assert.deepEqual(planRun("brainstorm", { until: "plan" }), ["brainstorm", "spec", "plan"]);
+  assert.deepEqual(planRun("fix", { auto: true }), ["fix", "ship"]);
+  assert.deepEqual(planRun("brainstorm", { gates: [] }), [
+    "brainstorm",
+    "spec",
+    "plan",
+    "build",
+    "review",
+    "fix",
+    "ship",
+  ]);
+});
+
+test("planRun always includes the starting phase, and never runs off the end", () => {
+  assert.deepEqual(planRun("ship"), ["ship"]);
+  assert.deepEqual(planRun("ship", { auto: true }), ["ship"]);
 });
 
 test("parsePhase accepts known phases and rejects anything else", () => {
@@ -154,6 +230,91 @@ test("loadProjectState returns null for an invalid phase", () => {
     JSON.stringify({ name: "x", phase: "nope" })
   );
   assert.equal(loadProjectState(ws), null);
+});
+
+test("markRevisit records where a finding belongs, and the status reads it back", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  assert.equal(markRevisit(ws, "spec", "AC3 contradicts AC5"), true);
+  const state = loadProjectState(ws);
+  assert.deepEqual(state?.revisit, { to: "spec", reason: "AC3 contradicts AC5" });
+  assert.equal(state?.phase, "fix", "recording a revisit must not move the phase");
+});
+
+test("markRevisit is a no-op with no active project", () => {
+  assert.equal(markRevisit(tmpWorkspace(), "spec", "why"), false);
+});
+
+test("loadProjectState drops a malformed revisit rather than trusting it", () => {
+  // The agent writes this file itself during an autonomous run, so anything
+  // malformed has to be treated as absent.
+  const ws = tmpWorkspace();
+  fs.mkdirSync(path.join(ws, ".kritya"), { recursive: true });
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({ name: "x", phase: "fix", revisit: { to: "design", reason: "nope" } })
+  );
+  assert.equal(loadProjectState(ws)?.revisit, undefined);
+
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({ name: "x", phase: "fix", revisit: "just a string" })
+  );
+  assert.equal(loadProjectState(ws)?.revisit, undefined);
+});
+
+test("moving to a phase consumes the revisit but keeps the loop-back count", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  markRevisit(ws, "spec", "AC3 is wrong");
+  takeRevisit(ws, "spec");
+  // saveProjectState runs when the spec phase actually starts.
+  saveProjectState(ws, "my-app", "spec");
+  const state = loadProjectState(ws);
+  assert.equal(state?.revisit, undefined, "acting on the revisit clears it");
+  assert.equal(state?.revisits, 1, "but the count survives, because it bounds the loop");
+});
+
+test("a rename keeps the loop-back count, so it cannot be used to reset the budget", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  takeRevisit(ws, "spec");
+  saveProjectState(ws, "my-app", "fix");
+  assert.equal(loadProjectState(ws)?.revisits, 1);
+
+  assert.deepEqual(renameProject(ws, "my-app", "renamed-app"), { ok: true, name: "renamed-app" });
+  assert.equal(
+    loadProjectState(ws)?.revisits,
+    1,
+    "the same project under a new name keeps its count"
+  );
+});
+
+test("a genuinely new project starts with a fresh loop-back budget", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  takeRevisit(ws, "spec");
+  saveProjectState(ws, "other-app", "brainstorm");
+  assert.equal(loadProjectState(ws)?.revisits, undefined);
+  assert.equal(revisitsRemaining(ws), MAX_REVISITS);
+});
+
+test("takeRevisit spends the budget and then refuses", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "my-app", "fix");
+  assert.equal(revisitsRemaining(ws), MAX_REVISITS);
+  for (let i = 0; i < MAX_REVISITS; i++) {
+    assert.equal(takeRevisit(ws, "spec"), true, `loop-back ${i + 1} should be allowed`);
+    assert.equal(loadProjectState(ws)?.phase, "spec", "takeRevisit rewinds the phase");
+    saveProjectState(ws, "my-app", "fix");
+  }
+  assert.equal(revisitsRemaining(ws), 0);
+  assert.equal(takeRevisit(ws, "spec"), false, "past the limit the workflow refuses");
+  assert.equal(loadProjectState(ws)?.phase, "fix", "and leaves the phase alone");
+});
+
+test("takeRevisit is a no-op with no active project", () => {
+  assert.equal(takeRevisit(tmpWorkspace(), "spec"), false);
 });
 
 test("clearProjectState ends the workflow but keeps the artifacts", () => {
@@ -295,13 +456,41 @@ test("the plan phase is told its own write will succeed under plan mode", () => 
   assert.match(prompt, /do not ask the user to turn plan mode off/i);
 });
 
-test("phase prompts hand off to the next phase's command, and fix ends the chain", () => {
+test("a gated phase hands off to the next command; an ungated one carries straight on", () => {
+  // Gated: the run stops here, so the prompt names the command the user runs next.
   assert.match(phasePrompt("app", "brainstorm", ""), /\/flow-spec/);
   assert.match(phasePrompt("app", "spec", ""), /\/flow-plan/);
   assert.match(phasePrompt("app", "plan", ""), /\/flow-build/);
-  assert.match(phasePrompt("app", "build", ""), /\/flow-review/);
-  assert.match(phasePrompt("app", "review", ""), /\/flow-fix/);
-  assert.doesNotMatch(phasePrompt("app", "fix", ""), /they will run/);
+  // Ungated: the chain runs the next phase itself, so asking for approval here
+  // would stall a stretch the user asked to run through.
+  assert.doesNotMatch(phasePrompt("app", "build", ""), /they will run/);
+  assert.match(phasePrompt("app", "build", ""), /carry straight on into the review phase/);
+  assert.doesNotMatch(phasePrompt("app", "review", ""), /they will run/);
+  assert.match(phasePrompt("app", "review", ""), /carry straight on into the fix phase/);
+});
+
+test("stopAfter can be forced either way, overriding the gate policy", () => {
+  // --until plan: build is not a gate, but the run still ends at plan, so the
+  // plan prompt asks for approval even though its own policy would not.
+  assert.match(phasePrompt("app", "build", "", { stopAfter: true }), /they will run/);
+  // --auto: spec is a gate, but the run was told not to stop.
+  assert.match(phasePrompt("app", "spec", "", { stopAfter: false }), /Do not stop for approval/);
+});
+
+test("the fix phase offers the loop-back when a finding belongs upstream", () => {
+  const prompt = phasePrompt("app", "fix", "");
+  assert.match(prompt, /revisit/);
+  assert.match(prompt, new RegExp(BACK_COMMAND.replace("/", "\\/")));
+  assert.match(prompt, /belongs upstream|requirement itself is wrong/);
+});
+
+test("the ship phase runs the real test suite and asks before committing", () => {
+  const prompt = phasePrompt("app", "ship", "");
+  assert.match(prompt, /actually run the project's test suite/i);
+  assert.match(prompt, /docs\/app\/ship\.md/);
+  assert.match(prompt, /Do NOT commit/);
+  // A handover that claims success without running anything is worse than none.
+  assert.match(prompt, /worse than no handover/i);
 });
 
 test("the build phase treats tests as part of the deliverable", () => {

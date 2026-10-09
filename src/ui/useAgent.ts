@@ -181,6 +181,15 @@ export function useAgent({
     runningPhaseRef.current = p;
     setRunningPhaseState(p);
   }, []);
+  /**
+   * True while one command is running several phases back to back. A ref, not
+   * state: the teardown reads it in the same tick the command is still inside,
+   * and nothing renders from it.
+   */
+  const chainedRef = useRef(false);
+  const setChained = useCallback((chained: boolean) => {
+    chainedRef.current = chained;
+  }, []);
   /** The active project workflow, for the statusline. Persists between turns. */
   const [workflow, setWorkflow] = useState<ProjectState | null>(() => loadProjectState(workspace));
   const [permission, setPermission] = useState<PendingPermission | null>(null);
@@ -533,6 +542,9 @@ export function useAgent({
     const ran = runningPhaseRef.current;
     setRunningPhase(null);
     if (!ran) return;
+    // A chain runs the next phase itself, so naming the command to type would
+    // point at work that is already starting. The chain prints its own plan.
+    if (chainedRef.current) return;
     // Prefer the phase on disk: an autonomous turn may have advanced it past
     // whatever the command started.
     const current = loadProjectState(workspace)?.phase ?? ran;
@@ -540,7 +552,7 @@ export function useAgent({
     addItem({
       kind: "info",
       text: next
-        ? `✓ ${current} phase done — next: ${PHASE_COMMAND[next]} (or /project to review where you are)`
+        ? `✓ ${current} phase done — next: ${PHASE_COMMAND[next]} or /flow (or /project to review where you are)`
         : `✓ ${current} phase done — the workflow is complete. /project clear ends it.`,
     });
   }, [workspace, addItem, setRunningPhase]);
@@ -746,6 +758,7 @@ export function useAgent({
     setActivity,
     runningPhase,
     setRunningPhase,
+    setChained,
     workflow,
     refreshWorkflow,
     permission,

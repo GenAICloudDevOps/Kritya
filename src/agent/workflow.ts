@@ -2,22 +2,31 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * Staged new-project workflow: brainstorm -> spec -> plan -> build -> review.
+ * Staged new-project workflow: brainstorm -> spec -> plan -> build -> review -> fix -> ship.
  *
  * The order is deliberate. Brainstorm settles direction, spec pins down *what*
  * (contracts, data schema, acceptance criteria), plan works out *how*
  * (architecture and an ordered milestone sequence keyed to those criteria),
- * build implements it, and review checks the result against the spec that
- * authorized it. Each phase reads only the artifact immediately before it, so
- * a phase never re-derives something an earlier one already decided.
+ * build implements it, review checks the result against the spec that
+ * authorized it, fix closes the findings, and ship hands the finished project
+ * over with the test suite actually run.
+ *
+ * Each phase reads only the artifact immediately before it, so a phase never
+ * re-derives something an earlier one already decided.
  *
  * Each phase produces a durable Markdown artifact under docs/<name>/ so the
- * flow survives across sessions, and the agent hard-stops for the user's
- * approval between phases. The current phase is tracked in .kritya/project.json
- * at the workspace root; both the slash commands (deterministically) and the
- * agent (via write_file, when running autonomously) keep it up to date.
+ * flow survives across sessions. The current phase is tracked in
+ * .kritya/project.json at the workspace root; both the slash commands
+ * (deterministically) and the agent (via write_file, when running
+ * autonomously) keep it up to date.
+ *
+ * **Where it stops is a policy, not a property of the phase list** — see
+ * `DEFAULT_GATES` and `planRun`. A gate is only worth a round trip while
+ * changing course is still cheap: after brainstorm a wrong turn costs one
+ * document, after build it costs the code. So the workflow stops after
+ * brainstorm, spec and plan, then runs build -> review -> fix as one stretch.
  */
-export type WorkflowPhase = "brainstorm" | "spec" | "plan" | "build" | "review" | "fix";
+export type WorkflowPhase = "brainstorm" | "spec" | "plan" | "build" | "review" | "fix" | "ship";
 
 export const PHASE_ORDER: WorkflowPhase[] = [
   "brainstorm",
@@ -26,7 +35,57 @@ export const PHASE_ORDER: WorkflowPhase[] = [
   "build",
   "review",
   "fix",
+  "ship",
 ];
+
+/**
+ * Phases the workflow stops after, unless the user overrides it.
+ *
+ * Everything up to `plan` is cheap to redo and expensive to get wrong, so each
+ * one hands back to the user. From `build` on the money is already spent —
+ * stopping to ask "shall I now review what I just built?" adds a round trip
+ * without adding a decision, so those run through.
+ */
+export const DEFAULT_GATES: WorkflowPhase[] = ["brainstorm", "spec", "plan"];
+
+/** 1-based position of `phase` in the workflow, for progress display. */
+export function phaseIndex(phase: WorkflowPhase): number {
+  return PHASE_ORDER.indexOf(phase) + 1;
+}
+
+/** How a run should decide where to stop. */
+export interface FlowRunOptions {
+  /** Phases to stop after. Defaults to DEFAULT_GATES. Ignored when `until` is set. */
+  gates?: WorkflowPhase[];
+  /** Run through to this phase, then stop. */
+  until?: WorkflowPhase;
+  /** Run every remaining phase without stopping. */
+  auto?: boolean;
+  /** Run a phase past a missing prerequisite artifact. */
+  force?: boolean;
+}
+
+/** Whether a run should hand back to the user after `phase`. */
+export function shouldStopAfter(phase: WorkflowPhase, opts: FlowRunOptions = {}): boolean {
+  if (opts.until) return phase === opts.until;
+  if (opts.auto) return false;
+  return (opts.gates ?? DEFAULT_GATES).includes(phase);
+}
+
+/**
+ * The phases a run starting at `from` will actually execute, in order.
+ *
+ * Pure, so the gate policy is testable without running anything: this is the
+ * list the command layer walks.
+ */
+export function planRun(from: WorkflowPhase, opts: FlowRunOptions = {}): WorkflowPhase[] {
+  const run: WorkflowPhase[] = [];
+  for (let phase: WorkflowPhase | null = from; phase; phase = nextPhase(phase)) {
+    run.push(phase);
+    if (shouldStopAfter(phase, opts)) break;
+  }
+  return run;
+}
 
 /** The slash command that runs each phase, for user-facing guidance. */
 export const PHASE_COMMAND: Record<WorkflowPhase, string> = {
@@ -36,7 +95,15 @@ export const PHASE_COMMAND: Record<WorkflowPhase, string> = {
   build: "/flow-build",
   review: "/flow-review",
   fix: "/flow-fix",
+  ship: "/flow-ship",
 };
+
+/**
+ * Rewind to a phase and re-run everything after it, for when a later phase
+ * turns out to be fixing the wrong requirement. Not a phase, so it is not in
+ * PHASE_ORDER — it is the loop back over it.
+ */
+export const BACK_COMMAND = "/flow-back";
 
 /** One-line summary of what each phase produces, for help text and the system prompt. */
 export const PHASE_SUMMARY: Record<WorkflowPhase, string> = {
@@ -46,6 +113,7 @@ export const PHASE_SUMMARY: Record<WorkflowPhase, string> = {
   build: "the application code, with tests per acceptance criterion, written test-first",
   review: "spec-compliance, security, and reliability findings, with a scorecard up top",
   fix: "fixes for the review's findings, each re-verified",
+  ship: "a handover summary, the test suite actually run, and an optional commit",
 };
 
 /**
@@ -59,7 +127,20 @@ const PHASE_WORD_CAP: Partial<Record<WorkflowPhase, number>> = {
   plan: 1000,
   review: 800,
   fix: 600,
+  ship: 500,
 };
+
+/**
+ * One finding a phase could not resolve in place. Recorded by `fix` when a
+ * finding turns out to be a problem with the requirement or the design rather
+ * than the code — the one case where the honest fix is to go back.
+ */
+export interface Revisit {
+  /** The phase that has to change for the finding to be fixable. */
+  to: WorkflowPhase;
+  /** One line on why, so the user can judge whether to take the trip. */
+  reason: string;
+}
 
 export interface ProjectState {
   /** Slug used for the docs/<name>/ artifact folder. */
@@ -67,7 +148,20 @@ export interface ProjectState {
   phase: WorkflowPhase;
   /** ISO timestamp of the last phase change. */
   updatedAt: string;
+  /** Set by `fix` when a finding belongs upstream. Cleared once acted on. */
+  revisit?: Revisit;
+  /** How many times this project has already looped back. Bounded, see MAX_REVISITS. */
+  revisits?: number;
 }
+
+/**
+ * How many times a project may loop back before the workflow refuses.
+ *
+ * A loop is fix -> spec -> plan -> build -> review -> fix, so it is not free,
+ * and without a bound a disagreement the model cannot resolve on its own
+ * becomes an unbounded spend. Past this the user drives it by hand.
+ */
+export const MAX_REVISITS = 2;
 
 const STATE_REL = path.join(".kritya", "project.json");
 
@@ -142,7 +236,22 @@ export function loadProjectState(workspace: string): ProjectState | null {
       fs.readFileSync(stateFile(workspace), "utf8")
     ) as Partial<ProjectState>;
     if (!parsed || typeof parsed.name !== "string" || !isPhase(parsed.phase)) return null;
-    return { name: parsed.name, phase: parsed.phase, updatedAt: parsed.updatedAt ?? "" };
+    const state: ProjectState = {
+      name: parsed.name,
+      phase: parsed.phase,
+      updatedAt: parsed.updatedAt ?? "",
+    };
+    // The agent writes this file itself when it runs autonomously, so anything
+    // malformed is treated as absent rather than allowed into the UI.
+    const raw = (parsed as { revisit?: unknown }).revisit;
+    if (raw && typeof raw === "object") {
+      const { to, reason } = raw as { to?: unknown; reason?: unknown };
+      if (isPhase(to) && typeof reason === "string") state.revisit = { to, reason };
+    }
+    if (typeof parsed.revisits === "number" && Number.isFinite(parsed.revisits)) {
+      state.revisits = Math.max(0, Math.floor(parsed.revisits));
+    }
+    return state;
   } catch {
     return null;
   }
@@ -151,16 +260,70 @@ export function loadProjectState(workspace: string): ProjectState | null {
 export function saveProjectState(
   workspace: string,
   name: string,
-  phase: WorkflowPhase
+  phase: WorkflowPhase,
+  carry?: Pick<ProjectState, "revisits">
 ): ProjectState {
+  const previous = loadProjectState(workspace);
   const state: ProjectState = {
     name: slugify(name),
     phase,
     updatedAt: new Date().toISOString(),
   };
+  // Moving to a phase consumes any recorded revisit: the whole point of looping
+  // back is to act on it, and leaving it set would make the same suggestion
+  // fire again on the next pass. The counter survives, because it is what
+  // bounds the loop. A different project starts fresh — unless the caller is a
+  // rename, which is the same project under a new slug and hands its count in.
+  const revisits = previous && previous.name === state.name ? previous.revisits : carry?.revisits;
+  if (revisits) state.revisits = revisits;
   fs.mkdirSync(path.dirname(stateFile(workspace)), { recursive: true });
   fs.writeFileSync(stateFile(workspace), JSON.stringify(state, null, 2) + "\n");
   return state;
+}
+
+/**
+ * Record that `phase` has to change before a finding can be fixed — the
+ * programmatic counterpart to the agent writing the same field with
+ * `write_file` during an autonomous run. Returns false when there is no
+ * active project, since there is nothing to attach the note to.
+ */
+export function markRevisit(workspace: string, to: WorkflowPhase, reason: string): boolean {
+  const state = loadProjectState(workspace);
+  if (!state) return false;
+  const next: ProjectState = {
+    ...state,
+    revisit: { to, reason },
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(stateFile(workspace), JSON.stringify(next, null, 2) + "\n");
+  return true;
+}
+
+/** How many loop-backs this project has left before MAX_REVISITS is reached. */
+export function revisitsRemaining(workspace: string): number {
+  return Math.max(0, MAX_REVISITS - (loadProjectState(workspace)?.revisits ?? 0));
+}
+
+/**
+ * Rewind to `to` and spend one of the project's loop-backs.
+ *
+ * Returns false when there is no project or the budget is spent — the caller
+ * reports that rather than looping anyway, which is what bounds the cycle.
+ * The recorded `revisit` is consumed here: acting on it is what it was for.
+ */
+export function takeRevisit(workspace: string, to: WorkflowPhase): boolean {
+  const state = loadProjectState(workspace);
+  if (!state) return false;
+  const used = state.revisits ?? 0;
+  if (used >= MAX_REVISITS) return false;
+  const next: ProjectState = {
+    name: state.name,
+    phase: to,
+    updatedAt: new Date().toISOString(),
+    revisits: used + 1,
+  };
+  fs.writeFileSync(stateFile(workspace), JSON.stringify(next, null, 2) + "\n");
+  return true;
 }
 
 /**
@@ -212,7 +375,7 @@ export function renameProject(
   } catch (err) {
     return { ok: false, error: `Could not move docs/${current}/: ${(err as Error).message}` };
   }
-  saveProjectState(workspace, next, state.phase);
+  saveProjectState(workspace, next, state.phase, state);
   return { ok: true, name: next };
 }
 
@@ -371,13 +534,22 @@ function capLine(phase: WorkflowPhase): string {
  * the plan phase the belated write lands after plan mode has already been
  * turned off by the next command.
  */
-function approvalLine(phase: WorkflowPhase, artifact: string | null): string {
+function approvalLine(phase: WorkflowPhase, artifact: string | null, stopAfter: boolean): string {
   const next = nextPhase(phase);
   const write = artifact
     ? `Write ${artifact} BEFORE you ask for anything. Approval comes after the file exists — ` +
       `never show the document in chat and ask whether to save it. `
     : "";
   if (!next) return `${write}Finish by summarizing the findings for the user.`;
+  // An ungated phase is followed immediately by the next one in the same run,
+  // so asking for approval here would stall a stretch the user asked to run
+  // through — and the question would arrive after the next phase had started.
+  if (!stopAfter) {
+    return (
+      `${write}Then summarize what you produced in a few lines and carry straight on into the ` +
+      `${next} phase (${PHASE_SUMMARY[next]}). Do not stop for approval.`
+    );
+  }
   return (
     `${write}Then summarize what you produced in a few lines and ask the user to approve ` +
     `before the ${next} phase (they will run ${PHASE_COMMAND[next]}). Do not advance on your own.`
@@ -385,11 +557,20 @@ function approvalLine(phase: WorkflowPhase, artifact: string | null): string {
 }
 
 /** The instruction sent to the agent to carry out a given phase. */
-export function phasePrompt(name: string, phase: WorkflowPhase, userInput: string): string {
+export function phasePrompt(
+  name: string,
+  phase: WorkflowPhase,
+  userInput: string,
+  opts: { stopAfter?: boolean } = {}
+): string {
   const slug = slugify(name);
   const extra = userInput.trim() ? `\n\nUser input for this phase:\n${userInput.trim()}` : "";
   const cap = capLine(phase);
-  const approve = approvalLine(phase, artifactPath(name, phase));
+  const approve = approvalLine(
+    phase,
+    artifactPath(name, phase),
+    opts.stopAfter ?? shouldStopAfter(phase)
+  );
   switch (phase) {
     case "brainstorm":
       return (
@@ -554,12 +735,43 @@ export function phasePrompt(name: string, phase: WorkflowPhase, userInput: strin
         `verdict per finding — fixed, still open, or newly broken — in docs/${slug}/fix.md.\n` +
         `If anything is still open after the subagent's check, say so plainly; do not report success ` +
         `on a finding that didn't actually verify as fixed.\n` +
+        `If a finding cannot be fixed in code because the requirement itself is wrong — an ` +
+        `acceptance criterion that is ambiguous or contradicts another, a plan milestone that ` +
+        `does not survive contact with the code — do NOT work around it. Leave it open, say so ` +
+        `plainly, and record where it belongs by writing .kritya/project.json with a "revisit" ` +
+        `field alongside the existing keys: { "name": "${slug}", "phase": "fix", ` +
+        `"revisit": { "to": "spec", "reason": "<one line>" } }. Use "spec" when the ` +
+        `requirement is wrong and "plan" when the design is. That is what lets the user run ` +
+        `${BACK_COMMAND} to redo the phases that depend on it. Reserve this for findings that ` +
+        `genuinely belong upstream — everything else gets fixed here.\n` +
         cap +
         `Write docs/${slug}/fix.md BEFORE you ask for anything. Approval comes after the file ` +
         `exists — never show the writeup in chat and ask whether to save it. Then summarize the ` +
-        `outcome in a few lines. If anything is still open, tell the user they can run ` +
-        `${PHASE_COMMAND.review} to re-check the whole build, or run ${PHASE_COMMAND.fix} again ` +
-        `once they've decided how to handle what's left.\n` +
+        `outcome in a few lines. If anything is still open, say so, and tell the user they can ` +
+        `run ${PHASE_COMMAND.review} to re-check the whole build, ${PHASE_COMMAND.fix} again ` +
+        `once they've decided how to handle what's left, or ${BACK_COMMAND} <phase> if the ` +
+        `finding belongs upstream. Otherwise they can run ${PHASE_COMMAND.ship} to finish.\n` +
+        extra
+      );
+    case "ship":
+      return (
+        `PROJECT WORKFLOW — SHIP phase for project "${slug}". Plan mode is OFF.\n` +
+        `Read docs/${slug}/spec.md, plan.md, review.md and fix.md. This is the handover, so it ` +
+        `has to be trustworthy rather than encouraging.\n` +
+        `First, actually run the project's test suite and report the real result — the exact ` +
+        `command you ran and what it printed. If there is no test suite, say that plainly ` +
+        `instead of implying one passed. A handover that claims success without running ` +
+        `anything is worse than no handover at all.\n` +
+        `Then write docs/${slug}/ship.md BEFORE you ask anything — approval comes after the ` +
+        `file exists, so never show the handover in chat and ask whether to save it. It should ` +
+        `cover: what was built and where the code lives, how to run ` +
+        `it and how to run its tests, which acceptance criteria from spec.md are met and which ` +
+        `are not, and every finding review.md raised that fix.md left open. Cite the AC, SEC ` +
+        `and REL labels rather than restating the requirements.\n` +
+        cap +
+        `Then summarize in a few lines and ask whether to commit. Do NOT commit, push or tag ` +
+        `anything until the user says yes — and when they do, use a conventional-commit message ` +
+        `describing the project, not the individual edits.\n` +
         extra
       );
   }

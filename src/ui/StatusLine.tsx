@@ -1,5 +1,5 @@
 import { Text } from "ink";
-import type { ProjectState } from "../agent/workflow.js";
+import { PHASE_ORDER, phaseIndex, type ProjectState } from "../agent/workflow.js";
 import { displayModelId } from "../config/models.js";
 
 export interface StatusLineProps {
@@ -82,7 +82,7 @@ export function StatusLine({
       {workflow ? (
         <Text color="magenta">
           {" "}
-          · ⚑ {workflow.name}:{workflow.phase}
+          · ⚑ {workflow.name} {phaseIndex(workflow.phase)}/{PHASE_ORDER.length} {workflow.phase}
         </Text>
       ) : (
         ""
