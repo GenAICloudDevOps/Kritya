@@ -8,6 +8,7 @@ import {
   artifactPath,
   BACK_COMMAND,
   clearProjectState,
+  CONTINUE_COMMAND,
   DEFAULT_GATES,
   isPlanningDocWrite,
   listProjects,
@@ -19,9 +20,11 @@ import {
   parseIdea,
   parsePhase,
   phaseBlocker,
+  phaseDoneMessage,
   phaseIndex,
   phasePrompt,
   planRun,
+  prefillAfter,
   previousPhase,
   PHASE_ORDER,
   registryFile,
@@ -927,5 +930,50 @@ test("every phase prompt asks for a one-line scorecard in project.json", () => {
     assert.match(prompt, /summaries/, `${phase} prompt should mention summaries`);
     assert.match(prompt, /\.kritya\/project\.json/, phase);
     assert.match(prompt, new RegExp(`summaries"?\\.?"?${phase}`), phase);
+  }
+});
+
+test("loadProjectState clamps a runaway scorecard to one line", () => {
+  // The prompt asks for ~100 characters. A model that ignores it would wreck
+  // the fixed-width column /project lays these out in.
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  writeSummaries(ws, { spec: `${"x".repeat(400)}\nsecond line`, plan: "short" });
+  const summaries = loadProjectState(ws)?.summaries;
+  const spec = summaries?.spec;
+  assert.ok(spec, "the summary should survive the read");
+  assert.ok(spec.length <= 120, `got ${spec.length} chars`);
+  assert.ok(spec.endsWith("…"), "a cut line is marked as cut");
+  assert.doesNotMatch(spec, /\n/, "an embedded newline would break the row");
+  assert.equal(summaries?.plan, "short", "a normal line is left alone");
+});
+
+test("a scorecard exactly at the cap is kept whole", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  const atCap = "y".repeat(120);
+  writeSummaries(ws, { spec: atCap });
+  assert.equal(loadProjectState(ws)?.summaries?.spec, atCap);
+});
+
+test("phaseDoneMessage names the next command, and prefillAfter offers /flow", () => {
+  // One source of truth for the handoff line: the turn teardown prints it for a
+  // single-phase command, runFlow prints it for the last phase of a chain.
+  assert.match(phaseDoneMessage("spec"), /✓ spec phase done/);
+  assert.match(phaseDoneMessage("spec"), /\/flow-plan/);
+  assert.match(phaseDoneMessage("spec"), new RegExp(CONTINUE_COMMAND));
+  assert.equal(prefillAfter("spec"), CONTINUE_COMMAND);
+  // Nothing to continue with at the end of the workflow.
+  assert.match(phaseDoneMessage("ship"), /workflow is complete/);
+  assert.equal(prefillAfter("ship"), null);
+});
+
+test("every phase but the last offers a continuation", () => {
+  for (const phase of PHASE_ORDER) {
+    assert.equal(
+      prefillAfter(phase) === null,
+      nextPhase(phase) === null,
+      `${phase} should offer a continuation exactly when a next phase exists`
+    );
   }
 });

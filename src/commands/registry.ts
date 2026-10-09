@@ -32,9 +32,11 @@ import {
   parseIdea,
   parsePhase,
   phaseBlocker,
+  phaseDoneMessage,
   phaseIndex,
   phasePrompt,
   planRun,
+  prefillAfter,
   renameProject,
   resumeProject,
   revisitsRemaining,
@@ -275,6 +277,10 @@ export interface CommandContext {
    *  phase the chain is about to run itself is noise, and the chain prints its
    *  own progress. */
   setChained(chained: boolean): void;
+  /** Drop a command into the input line once the turn ends, so Enter continues
+   *  instead of the user retyping it. A chain uses this to announce its last
+   *  phase, whose own turn teardown ran while the chain was still going. */
+  setPrefill(text: string | null): void;
   /** Re-read the workflow pointer so the statusline reflects a phase change. */
   refreshWorkflow(): void;
   setCtxPct(pct: number): void;
@@ -515,6 +521,10 @@ async function runFlow(ctx: CommandContext, from: WorkflowPhase, req: FlowReques
     ctx.addItem({ kind: "info", text: `Running ${phases.length} phases: ${phases.join(" → ")}` });
     ctx.setChained(true);
   }
+  // The last phase that ran, and whether the chain was cut short. A chain that
+  // reaches its end still has to say so — see the announcement after the loop.
+  let lastRan: WorkflowPhase | null = null;
+  let stoppedEarly = false;
   try {
     for (const [i, phase] of phases.entries()) {
       const outcome = await runPhase(ctx, phase, {
@@ -522,12 +532,16 @@ async function runFlow(ctx: CommandContext, from: WorkflowPhase, req: FlowReques
         force: req.force === true,
         stopAfter: shouldStopAfter(phase, req),
       });
-      if (outcome === "ok") continue;
+      if (outcome === "ok") {
+        lastRan = phase;
+        continue;
+      }
       // A phase that did not finish stops the chain, because everything after
       // it reads the artifact it did not (or only half) wrote. Say so: without
       // this the run just goes quiet after the blocker message, and the user
       // has to work out for themselves that phases they were promised never
       // happened.
+      stoppedEarly = true;
       const abandoned = phases.slice(i + 1);
       if (outcome === "incomplete") {
         ctx.addItem({
@@ -552,6 +566,18 @@ async function runFlow(ctx: CommandContext, from: WorkflowPhase, req: FlowReques
     // Only a chain ever sets this, so only a chain releases it — a single-phase
     // command has nothing to suppress and should not touch the flag at all.
     if (chained) ctx.setChained(false);
+  }
+  // Announce the end of a chain here, because nothing else can. Each phase's
+  // own turn teardown runs *while* the chain flag is still set — it cannot tell
+  // "middle of a chain" from "chain just ended at a gate", so it stays quiet for
+  // both. This is the only place that knows the loop is over, and a chain is
+  // exactly where the handoff matters most: the user has just watched two
+  // phases run, so the next step should be one keypress, not a retyped command.
+  // A chain that stopped early has already explained itself above.
+  if (chained && !stoppedEarly && lastRan) {
+    ctx.addItem({ kind: "info", text: phaseDoneMessage(lastRan) });
+    const prefill = prefillAfter(lastRan);
+    if (prefill) ctx.setPrefill(prefill);
   }
 }
 

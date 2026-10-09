@@ -23,9 +23,10 @@ import { defaultSandboxMode, sandboxAvailable } from "../shell/sandbox.js";
 import {
   loadProjectState,
   nextPhase,
-  PHASE_COMMAND,
   PHASE_ORDER,
+  phaseDoneMessage,
   phaseIndex,
+  prefillAfter,
   type ProjectState,
   type WorkflowPhase,
 } from "../agent/workflow.js";
@@ -220,7 +221,6 @@ export function useAgent({
    * One-shot; the UI clears it as soon as it is applied.
    */
   const [prefill, setPrefill] = useState<string | null>(null);
-  const clearPrefill = useCallback(() => setPrefill(null), []);
   const [permission, setPermission] = useState<PendingPermission | null>(null);
   const [elicitation, setElicitation] = useState<PendingElicitation | null>(null);
   const [model, setModel] = useState(modelRef.current);
@@ -566,6 +566,12 @@ export function useAgent({
    * paraphrasing its instructions drops it often enough that the handoff can't
    * depend on that — the user is left at a prompt with no idea what comes next.
    * Printing it here makes it deterministic.
+   *
+   * This covers a single-phase command only. The last phase of a *chain* is
+   * announced by `runFlow` instead: this runs at the end of every turn, which
+   * for a chain is while the chain is still going, so it has no way to tell
+   * "middle of a chain" from "chain just ended at a gate" — and staying quiet
+   * for both is the safe half of that. `runFlow` knows which it is.
    */
   const announceNextPhase = useCallback(() => {
     const ran = runningPhaseRef.current;
@@ -577,17 +583,9 @@ export function useAgent({
     // Prefer the phase on disk: an autonomous turn may have advanced it past
     // whatever the command started.
     const current = loadProjectState(workspace)?.phase ?? ran;
-    const next = nextPhase(current);
-    addItem({
-      kind: "info",
-      text: next
-        ? `✓ ${current} phase done — next: ${PHASE_COMMAND[next]} or /flow (or /project to review where you are)`
-        : `✓ ${current} phase done — the workflow is complete. /project clear ends it.`,
-    });
-    // A non-chained run only ever stops at a gate, so there is always a next
-    // phase to offer — and /flow is what resumes from the recorded phase,
-    // whatever the user did in between.
-    if (next) setPrefill("/flow");
+    addItem({ kind: "info", text: phaseDoneMessage(current) });
+    const prefill = prefillAfter(current);
+    if (prefill) setPrefill(prefill);
   }, [workspace, addItem, setRunningPhase]);
 
   const runWebSearch = async (query: string) => {
@@ -795,7 +793,7 @@ export function useAgent({
     workflow,
     refreshWorkflow,
     prefill,
-    clearPrefill,
+    setPrefill,
     permission,
     elicitation,
     inFlight,

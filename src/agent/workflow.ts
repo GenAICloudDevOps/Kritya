@@ -105,6 +105,35 @@ export const PHASE_COMMAND: Record<WorkflowPhase, string> = {
  */
 export const BACK_COMMAND = "/flow-back";
 
+/** Runs whatever phase comes next, wherever the project stands. */
+export const CONTINUE_COMMAND = "/flow";
+
+/**
+ * The line that ends a phase, and the command that carries on from it.
+ *
+ * Two callers print this, and they must not disagree: the turn's own teardown,
+ * which covers a single-phase command, and `runFlow`, which has to cover the
+ * last phase of a chain — a chain's teardown runs while the chain flag is still
+ * set, so it deliberately stays quiet, and without the second caller the last
+ * phase of every chain went unannounced.
+ */
+export function phaseDoneMessage(phase: WorkflowPhase): string {
+  const next = nextPhase(phase);
+  return next
+    ? `✓ ${phase} phase done — next: ${PHASE_COMMAND[next]} or ${CONTINUE_COMMAND} ` +
+        `(or /project to review where you are)`
+    : `✓ ${phase} phase done — the workflow is complete. /project clear ends it.`;
+}
+
+/**
+ * What to drop into the input line once a phase ends, or null when the workflow
+ * is finished. Prefilling the continuation is what makes a gate one keypress
+ * instead of a retyped command; nothing runs until it is submitted.
+ */
+export function prefillAfter(phase: WorkflowPhase): string | null {
+  return nextPhase(phase) ? CONTINUE_COMMAND : null;
+}
+
 /** One-line summary of what each phase produces, for help text and the system prompt. */
 export const PHASE_SUMMARY: Record<WorkflowPhase, string> = {
   brainstorm: "problem, users, MVP features, recommended stack",
@@ -215,12 +244,33 @@ function parseRevisit(raw: unknown): Revisit | undefined {
   return isPhase(to) && typeof reason === "string" ? { to, reason } : undefined;
 }
 
+/**
+ * Cap on a recorded scorecard, in characters. The prompt asks for ~100; this is
+ * the backstop for a model that ignores it. `/project` lays these out in a
+ * fixed-width column next to the phase name, so one paragraph — or one embedded
+ * newline — would push the rest of the list off the screen.
+ */
+const SUMMARY_MAX = 120;
+
+/**
+ * Reduce a recorded scorecard to one displayable line. Truncates rather than
+ * drops: a cut-off line still tells the user more than a missing one, and this
+ * is the only thing standing between a chatty model and the `/project` layout.
+ */
+function clampSummary(v: string): string {
+  const oneLine = v.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= SUMMARY_MAX) return oneLine;
+  return oneLine.slice(0, SUMMARY_MAX - 1).trimEnd() + "…";
+}
+
 /** Keep only the well-formed, non-empty one-liners; drop everything else. */
 function parseSummaries(raw: unknown): Partial<Record<WorkflowPhase, string>> | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const out: Partial<Record<WorkflowPhase, string>> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (isPhase(k) && typeof v === "string" && v.trim()) out[k] = v.trim();
+    if (!isPhase(k) || typeof v !== "string") continue;
+    const line = clampSummary(v);
+    if (line) out[k] = line;
   }
   return Object.keys(out).length ? out : undefined;
 }

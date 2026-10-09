@@ -241,7 +241,7 @@ export function App({
     workflow,
     refreshWorkflow,
     prefill,
-    clearPrefill,
+    setPrefill,
     permission,
     elicitation,
     inFlight,
@@ -320,8 +320,8 @@ export function App({
     if (prefill === null || phase !== "input") return;
     setInput(prefill);
     setInputKey((k) => k + 1);
-    clearPrefill();
-  }, [prefill, phase, clearPrefill]);
+    setPrefill(null);
+  }, [prefill, phase, setPrefill]);
 
   // Tick an elapsed-seconds counter while the agent is working.
   useEffect(() => {
@@ -701,6 +701,7 @@ export function App({
       setRunningPhase,
       setChained,
       refreshWorkflow,
+      setPrefill,
       setCtxPct,
       setTasks,
       setPlanMode,

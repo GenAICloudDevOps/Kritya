@@ -30,6 +30,8 @@ interface Harness {
   labels: (string | null)[];
   /** Every setChained() call, in order, so a test can see the chain bracket. */
   chained: boolean[];
+  /** Every setPrefill() call, in order — null included, so a test can see a clear. */
+  prefills: (string | null)[];
   /** Every item shown, so a test can tell a user line from an info line. */
   items: ItemBody[];
 }
@@ -45,6 +47,7 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
   const counts = { compactions: 0 };
   const labels: (string | null)[] = [];
   const chained: boolean[] = [];
+  const prefills: (string | null)[] = [];
   const items: ItemBody[] = [];
   const ui = { phase: null as string | null, activity: null as string | null };
   const duringCompaction = { phase: null as string | null, activity: null as string | null };
@@ -100,6 +103,9 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
     setChained(v: boolean) {
       chained.push(v);
     },
+    setPrefill(v: string | null) {
+      prefills.push(v);
+    },
     refreshWorkflow() {},
     setCtxPct() {},
     setTasks() {},
@@ -113,7 +119,18 @@ function harness(overrides: Partial<CommandContext> = {}): Harness {
     ...overrides,
   } as unknown as CommandContext;
 
-  return { ctx, workspace, prompts, said, counts, duringCompaction, labels, chained, items };
+  return {
+    ctx,
+    workspace,
+    prompts,
+    said,
+    counts,
+    duringCompaction,
+    labels,
+    chained,
+    prefills,
+    items,
+  };
 }
 
 /** Write a phase's artifact so the next phase's prerequisite check passes. */
@@ -980,4 +997,74 @@ test("/project shows a phase's recorded scorecard instead of the generic blurb",
   assert.match(report, /3 MVP features, FastAPI \+ SQLite/);
   // The phases without a scorecard keep the generic description.
   assert.match(report, /goals, non-goals, contracts/);
+});
+
+// --- the end of a chain ----------------------------------------------------
+
+test("a chain that ends at a gate announces its last phase and prefills /flow", async () => {
+  // The regression: a phase's own turn teardown runs while the chain flag is
+  // still set, so it stays quiet — and that meant the *last* phase of every
+  // chain said nothing at all. No "✓ done" line, and no /flow waiting for
+  // Enter, on exactly the path where one keypress is most welcome.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "spec");
+  h.ctx.arg = "--until plan";
+  h.ctx.raw = "/flow --until plan";
+  await runCommand("/flow", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec", "plan"], "both phases ran");
+  assert.ok(
+    h.said.some((s) => s.includes("✓ plan phase done")),
+    "the last phase of a chain has to announce itself"
+  );
+  assert.ok(
+    h.said.some((s) => s.includes("/flow-build")),
+    "naming the next command"
+  );
+  assert.deepEqual(h.prefills, ["/flow"], "so Enter continues");
+});
+
+test("a single-phase command leaves the announcement to the turn teardown", async () => {
+  // runFlow must not print it too: the teardown fires for every non-chained
+  // phase, so a duplicate here would show the user the line twice.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "brainstorm");
+  writeArtifact(h.workspace, "my-app", "brainstorm");
+  h.ctx.raw = "/flow-spec";
+  await runCommand("/flow-spec", h.ctx);
+
+  assert.deepEqual(h.labels, ["spec"]);
+  assert.ok(!h.said.some((s) => s.includes("✓")), "no duplicate done line");
+  assert.deepEqual(h.prefills, [], "and no duplicate prefill");
+});
+
+test("a chain that stopped early explains itself instead of announcing a next step", async () => {
+  // It already said which phases never ran; adding "next: /flow-build" on top
+  // would point at a phase that cannot run until the blocker is cleared.
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  writeArtifact(h.workspace, "my-app", "plan");
+  h.ctx.raw = "/flow-build";
+  await runCommand("/flow-build", h.ctx);
+
+  assert.ok(h.said.some((s) => s.includes("Chain stopped at fix")));
+  assert.ok(!h.said.some((s) => s.includes("✓")), "a broken chain offers no next step");
+  assert.deepEqual(h.prefills, []);
+});
+
+test("a chain that runs all the way to ship reports completion, with nothing to prefill", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "review");
+  for (const p of ["brainstorm", "spec", "plan", "review", "fix"] as const) {
+    writeArtifact(h.workspace, "my-app", p);
+  }
+  h.ctx.arg = "--auto";
+  h.ctx.raw = "/flow --auto";
+  await runCommand("/flow", h.ctx);
+
+  assert.deepEqual(h.labels, ["fix", "ship"]);
+  assert.ok(h.said.some((s) => s.includes("the workflow is complete")));
+  assert.deepEqual(h.prefills, [], "there is nowhere left to go");
 });
