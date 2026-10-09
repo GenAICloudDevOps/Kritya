@@ -240,6 +240,8 @@ export function App({
     setChained,
     workflow,
     refreshWorkflow,
+    prefill,
+    clearPrefill,
     permission,
     elicitation,
     inFlight,
@@ -308,6 +310,18 @@ export function App({
   useEffect(() => {
     onRequestElicitationReady?.(requestElicitation);
   }, [onRequestElicitationReady, requestElicitation]);
+
+  // Drop a prefilled command into the input line when a phase ends at a gate,
+  // so Enter continues the workflow instead of the user retyping `/flow`. The
+  // gate still holds: nothing runs until it is submitted, and any edit — or
+  // Esc — discards the suggestion. Applied only from the idle prompt, since a
+  // prefill arriving while a picker was open would clobber what was typed there.
+  useEffect(() => {
+    if (prefill === null || phase !== "input") return;
+    setInput(prefill);
+    setInputKey((k) => k + 1);
+    clearPrefill();
+  }, [prefill, phase, clearPrefill]);
 
   // Tick an elapsed-seconds counter while the agent is working.
   useEffect(() => {
@@ -528,6 +542,14 @@ export function App({
     if (key.escape && phase === "working") {
       setActivity("cancelling…");
       abortRef.current?.abort();
+    }
+    // Esc clears the idle input line. This is the documented way to decline a
+    // command prefilled at a workflow gate; it also just empties a half-typed
+    // prompt, which is what a bare Esc on an idle prompt is expected to do.
+    if (key.escape && phase === "input" && input) {
+      setInput("");
+      setInputKey((k) => k + 1);
+      return;
     }
     // Ctrl+O toggles showing full tool output.
     if (key.ctrl && _input === "o") {

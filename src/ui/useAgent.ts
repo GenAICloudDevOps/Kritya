@@ -24,6 +24,8 @@ import {
   loadProjectState,
   nextPhase,
   PHASE_COMMAND,
+  PHASE_ORDER,
+  phaseIndex,
   type ProjectState,
   type WorkflowPhase,
 } from "../agent/workflow.js";
@@ -142,6 +144,22 @@ export function useAgent({
           : `Resumed previous session (${resumedCount} messages)${taskNote}.`,
       });
     }
+    // A project parked mid-flow is the single most useful thing to say at
+    // launch: without it the user has to remember which phase they were in,
+    // and `/flow` on its own does not say where it will resume from.
+    const active = loadProjectState(workspace);
+    if (active) {
+      const next = nextPhase(active.phase);
+      initial.push({
+        id: nextId.current++,
+        kind: "info",
+        text:
+          `Project "${active.name}" is at the ${active.phase} phase ` +
+          `(${phaseIndex(active.phase)}/${PHASE_ORDER.length}). ` +
+          (next ? `/flow continues with ${next} · ` : `every phase has run · `) +
+          `/project for status.`,
+      });
+    }
     return initial;
   });
   const [phase, setPhase] = useState<Phase>(resumeSessions?.length ? "resume" : "input");
@@ -192,6 +210,17 @@ export function useAgent({
   }, []);
   /** The active project workflow, for the statusline. Persists between turns. */
   const [workflow, setWorkflow] = useState<ProjectState | null>(() => loadProjectState(workspace));
+  /**
+   * Text to drop into the input line once the turn ends.
+   *
+   * Stopping at a gate costs two steps — read the result, then type the next
+   * command — and the second one is pure retyping of something the app already
+   * knows. Prefilling it means Enter continues and Esc (or any edit) discards
+   * it, without taking the decision away: nothing runs until the user submits.
+   * One-shot; the UI clears it as soon as it is applied.
+   */
+  const [prefill, setPrefill] = useState<string | null>(null);
+  const clearPrefill = useCallback(() => setPrefill(null), []);
   const [permission, setPermission] = useState<PendingPermission | null>(null);
   const [elicitation, setElicitation] = useState<PendingElicitation | null>(null);
   const [model, setModel] = useState(modelRef.current);
@@ -555,6 +584,10 @@ export function useAgent({
         ? `✓ ${current} phase done — next: ${PHASE_COMMAND[next]} or /flow (or /project to review where you are)`
         : `✓ ${current} phase done — the workflow is complete. /project clear ends it.`,
     });
+    // A non-chained run only ever stops at a gate, so there is always a next
+    // phase to offer — and /flow is what resumes from the recorded phase,
+    // whatever the user did in between.
+    if (next) setPrefill("/flow");
   }, [workspace, addItem, setRunningPhase]);
 
   const runWebSearch = async (query: string) => {
@@ -761,6 +794,8 @@ export function useAgent({
     setChained,
     workflow,
     refreshWorkflow,
+    prefill,
+    clearPrefill,
     permission,
     elicitation,
     inFlight,

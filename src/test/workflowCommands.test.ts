@@ -857,3 +857,127 @@ test("/project status numbers the phases and flags the revisit", async () => {
   assert.match(report, /ship/, "the new phase is listed");
   assert.match(report, /AC3 is unmeasurable/, "the recorded revisit is surfaced");
 });
+
+// --- parking and resuming projects ----------------------------------------
+
+/** Write a project.json with per-phase scorecards, as the agent would. */
+function writeSummaries(ws: string, summaries: Record<string, string>): void {
+  const state = loadProjectState(ws);
+  assert.ok(state, "writeSummaries needs an active project");
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({ ...state, summaries }, null, 2) + "\n"
+  );
+}
+
+test("/project list says so when there is nothing saved", async () => {
+  const h = harness();
+  h.ctx.arg = "list";
+  h.ctx.raw = "/project list";
+  await runCommand("/project", h.ctx);
+  assert.ok(h.said.some((s) => s.includes("No projects yet")));
+});
+
+test("/project list works with no active project and stars the active one", async () => {
+  // The state this exists for: everything parked, nothing active. It must not
+  // fall into the "No active project workflow" branch.
+  const h = harness();
+  saveProjectState(h.workspace, "first-app", "plan");
+  saveProjectState(h.workspace, "second-app", "brainstorm");
+  h.ctx.arg = "list";
+  h.ctx.raw = "/project list";
+  await runCommand("/project", h.ctx);
+
+  const report = h.said.join("\n");
+  assert.match(report, /first-app/);
+  assert.match(report, /second-app/);
+  assert.match(report, /\*\s+second-app/, "the active project is starred");
+  assert.doesNotMatch(report, /No active project workflow/);
+});
+
+test("/project list still works after the active project is cleared", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "build");
+  h.ctx.arg = "clear";
+  h.ctx.raw = "/project clear";
+  await runCommand("/project", h.ctx);
+
+  h.ctx.arg = "list";
+  h.ctx.raw = "/project list";
+  await runCommand("/project", h.ctx);
+  assert.match(h.said.join("\n"), /my-app/);
+});
+
+test("/project resume switches to a parked project at its saved phase", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "first-app", "plan");
+  saveProjectState(h.workspace, "second-app", "brainstorm");
+  h.ctx.arg = "resume first-app";
+  h.ctx.raw = "/project resume first-app";
+  await runCommand("/project", h.ctx);
+
+  assert.equal(loadProjectState(h.workspace)?.name, "first-app");
+  assert.equal(loadProjectState(h.workspace)?.phase, "plan");
+  assert.ok(h.said.some((s) => s.includes('Resumed "first-app"') && s.includes("plan")));
+});
+
+test("/project resume with no name prints usage", async () => {
+  const h = harness();
+  h.ctx.arg = "resume";
+  h.ctx.raw = "/project resume";
+  await runCommand("/project", h.ctx);
+  assert.ok(h.said.some((s) => s.includes("Usage: /project resume")));
+});
+
+test("/project resume names an unknown project as unknown", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "plan");
+  h.ctx.arg = "resume nope";
+  h.ctx.raw = "/project resume nope";
+  await runCommand("/project", h.ctx);
+
+  assert.equal(loadProjectState(h.workspace)?.name, "my-app", "the active project is untouched");
+  assert.ok(h.said.some((s) => s.includes('No project named "nope"')));
+});
+
+test("/flow-brainstorm starting a new idea parks the old project, not loses it", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "old-project", "build");
+  h.ctx.arg = "a totally different thing";
+  h.ctx.raw = "/flow-brainstorm a totally different thing";
+  await runCommand("/flow-brainstorm", h.ctx);
+
+  // The message has to name the way back, since the phase is no longer on screen.
+  assert.ok(h.said.some((s) => s.includes("/project resume old-project")));
+
+  // And the way back has to actually work.
+  h.ctx.arg = "resume old-project";
+  h.ctx.raw = "/project resume old-project";
+  await runCommand("/project", h.ctx);
+  assert.equal(loadProjectState(h.workspace)?.name, "old-project");
+  assert.equal(loadProjectState(h.workspace)?.phase, "build");
+});
+
+test("/project clear tells the user the project can be resumed", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "build");
+  h.ctx.arg = "clear";
+  h.ctx.raw = "/project clear";
+  await runCommand("/project", h.ctx);
+
+  assert.equal(loadProjectState(h.workspace), null);
+  assert.ok(h.said.some((s) => s.includes("/project resume my-app")));
+});
+
+test("/project shows a phase's recorded scorecard instead of the generic blurb", async () => {
+  const h = harness();
+  saveProjectState(h.workspace, "my-app", "spec");
+  writeSummaries(h.workspace, { brainstorm: "3 MVP features, FastAPI + SQLite" });
+  h.ctx.raw = "/project";
+  await runCommand("/project", h.ctx);
+
+  const report = h.said.join("\n");
+  assert.match(report, /3 MVP features, FastAPI \+ SQLite/);
+  // The phases without a scorecard keep the generic description.
+  assert.match(report, /goals, non-goals, contracts/);
+});

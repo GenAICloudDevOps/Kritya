@@ -152,6 +152,14 @@ export interface ProjectState {
   revisit?: Revisit;
   /** How many times this project has already looped back. Bounded, see MAX_REVISITS. */
   revisits?: number;
+  /**
+   * One line per completed phase on what it produced — the scorecard a gate
+   * shows in chat, kept so `/project` can show the whole chain without the
+   * user opening seven files. Written by the agent (it is the only thing that
+   * knows what it produced); everything here is defensive on read, since a
+   * model wrote it.
+   */
+  summaries?: Partial<Record<WorkflowPhase, string>>;
 }
 
 /**
@@ -164,13 +172,217 @@ export interface ProjectState {
 export const MAX_REVISITS = 2;
 
 const STATE_REL = path.join(".kritya", "project.json");
+const REGISTRY_REL = path.join(".kritya", "projects.json");
 
 export function stateFile(workspace: string): string {
   return path.join(workspace, STATE_REL);
 }
 
+/**
+ * Path of the registry of every project this workspace has run the workflow
+ * for.
+ *
+ * `project.json` holds only the *active* project, which is why starting a
+ * second project used to look like losing the first: the phase pointer was
+ * overwritten and the old project's place in the flow went with it. The
+ * registry is the durable index that fixes that — one entry per slug, written
+ * on every phase change, so a parked project can be picked up again exactly
+ * where it stopped.
+ */
+export function registryFile(workspace: string): string {
+  return path.join(workspace, REGISTRY_REL);
+}
+
 function isPhase(v: unknown): v is WorkflowPhase {
   return typeof v === "string" && (PHASE_ORDER as string[]).includes(v);
+}
+
+/** One project's durable record in the registry — everything resume needs. */
+export interface RegistryEntry {
+  phase: WorkflowPhase;
+  /** ISO timestamp of the last phase change. */
+  updatedAt: string;
+  revisits?: number;
+  revisit?: Revisit;
+  summaries?: Partial<Record<WorkflowPhase, string>>;
+}
+
+export type ProjectRegistry = Record<string, RegistryEntry>;
+
+function parseRevisit(raw: unknown): Revisit | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { to, reason } = raw as { to?: unknown; reason?: unknown };
+  return isPhase(to) && typeof reason === "string" ? { to, reason } : undefined;
+}
+
+/** Keep only the well-formed, non-empty one-liners; drop everything else. */
+function parseSummaries(raw: unknown): Partial<Record<WorkflowPhase, string>> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Partial<Record<WorkflowPhase, string>> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (isPhase(k) && typeof v === "string" && v.trim()) out[k] = v.trim();
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function parseRegistryEntry(raw: unknown): RegistryEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { phase, updatedAt, revisits, revisit, summaries } = raw as Record<string, unknown>;
+  if (!isPhase(phase)) return null;
+  const entry: RegistryEntry = {
+    phase,
+    updatedAt: typeof updatedAt === "string" ? updatedAt : "",
+  };
+  if (typeof revisits === "number" && Number.isFinite(revisits)) {
+    entry.revisits = Math.max(0, Math.floor(revisits));
+  }
+  const r = parseRevisit(revisit);
+  if (r) entry.revisit = r;
+  const s = parseSummaries(summaries);
+  if (s) entry.summaries = s;
+  return entry;
+}
+
+/**
+ * Read the registry, discarding anything malformed.
+ *
+ * Same defensiveness as `loadProjectState`: a hand-edited or half-written file
+ * degrades to "no saved projects" rather than throwing into the UI, and one bad
+ * entry never takes the others down with it.
+ */
+export function loadRegistry(workspace: string): ProjectRegistry {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(registryFile(workspace), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: ProjectRegistry = {};
+    for (const [slug, raw] of Object.entries(parsed as Record<string, unknown>)) {
+      const entry = parseRegistryEntry(raw);
+      if (entry) out[slug] = entry;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveRegistry(workspace: string, registry: ProjectRegistry): void {
+  const file = registryFile(workspace);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(registry, null, 2) + "\n");
+}
+
+/** The registry entry that mirrors a project's live pointer, exactly. */
+function entryFrom(state: ProjectState): RegistryEntry {
+  const entry: RegistryEntry = { phase: state.phase, updatedAt: state.updatedAt };
+  if (state.revisits) entry.revisits = state.revisits;
+  if (state.revisit) entry.revisit = state.revisit;
+  if (state.summaries && Object.keys(state.summaries).length) entry.summaries = state.summaries;
+  return entry;
+}
+
+/**
+ * Write the active pointer *and* mirror it into the registry.
+ *
+ * Every writer of `project.json` goes through here so the two can never drift:
+ * the registry is derived state, and a save that updated one but not the other
+ * would leave `/project list` showing a phase the active project had already
+ * left. The entry is replaced wholesale rather than merged — the pointer is the
+ * authority for whichever project is active, and merging would resurrect a
+ * value that was deleted on purpose (a summary cleared by re-entering a phase,
+ * a revisit cleared by acting on it).
+ *
+ * The registry is read *before* the pointer moves, and the project being
+ * displaced is captured on the way past. The agent edits `project.json` itself
+ * when it records a scorecard, so the outgoing project's pointer is routinely
+ * fresher than its registry entry — and this is the only moment that is still
+ * visible, since the pointer is about to be overwritten.
+ */
+function writeProjectState(workspace: string, state: ProjectState): void {
+  const registry = loadRegistry(workspace);
+  const previous = loadProjectState(workspace);
+  if (previous && previous.name !== state.name) registry[previous.name] = entryFrom(previous);
+  fs.mkdirSync(path.dirname(stateFile(workspace)), { recursive: true });
+  fs.writeFileSync(stateFile(workspace), JSON.stringify(state, null, 2) + "\n");
+  registry[state.name] = entryFrom(state);
+  saveRegistry(workspace, registry);
+}
+
+/** A project the workspace knows about, for `/project list`. */
+export interface ProjectListing {
+  name: string;
+  phase: WorkflowPhase;
+  updatedAt: string;
+  revisits?: number;
+  /** Whether this is the project `project.json` currently points at. */
+  active: boolean;
+}
+
+/**
+ * Every known project, most recently touched first.
+ *
+ * The active project is always included even if the registry has no entry for
+ * it (a workspace whose `project.json` predates the registry), so `/project
+ * list` can never omit the one project the user is actually in.
+ */
+export function listProjects(workspace: string): ProjectListing[] {
+  const registry = loadRegistry(workspace);
+  const active = loadProjectState(workspace);
+  const names = new Set(Object.keys(registry));
+  if (active) names.add(active.name);
+  const rows: ProjectListing[] = [];
+  for (const name of names) {
+    const isActive = active?.name === name;
+    const phase = isActive ? active!.phase : registry[name]?.phase;
+    if (!phase) continue;
+    rows.push({
+      name,
+      phase,
+      updatedAt: (isActive ? active!.updatedAt : registry[name]?.updatedAt) ?? "",
+      revisits: isActive ? active!.revisits : registry[name]?.revisits,
+      active: isActive,
+    });
+  }
+  return rows.sort(
+    (a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "") || a.name.localeCompare(b.name)
+  );
+}
+
+/**
+ * Make a saved project active again, restoring its phase, loop-back budget,
+ * pending revisit and per-phase summaries.
+ *
+ * Returns an error message rather than throwing, since the only caller is a
+ * slash command reporting back to the user. Resuming the already-active project
+ * is a no-op success, so a stray `/project resume <current>` does not look like
+ * a failure.
+ */
+export function resumeProject(
+  workspace: string,
+  name: string
+): { ok: true; name: string } | { ok: false; error: string } {
+  const slug = slugify(name);
+  const active = loadProjectState(workspace);
+  if (active?.name === slug) return { ok: true, name: slug };
+  const entry = loadRegistry(workspace)[slug];
+  if (!entry) {
+    const known = Object.keys(loadRegistry(workspace));
+    return {
+      ok: false,
+      error: known.length
+        ? `No project named "${slug}". Known: ${known.join(", ")}.`
+        : `No saved projects yet. Start one with /flow-brainstorm <idea>.`,
+    };
+  }
+  const state: ProjectState = {
+    name: slug,
+    phase: entry.phase,
+    updatedAt: new Date().toISOString(),
+  };
+  if (entry.revisits) state.revisits = entry.revisits;
+  if (entry.revisit) state.revisit = entry.revisit;
+  if (entry.summaries) state.summaries = entry.summaries;
+  writeProjectState(workspace, state);
+  return { ok: true, name: slug };
 }
 
 /** Parse a phase name from user input (e.g. `/project goto spec`). */
@@ -243,14 +455,13 @@ export function loadProjectState(workspace: string): ProjectState | null {
     };
     // The agent writes this file itself when it runs autonomously, so anything
     // malformed is treated as absent rather than allowed into the UI.
-    const raw = (parsed as { revisit?: unknown }).revisit;
-    if (raw && typeof raw === "object") {
-      const { to, reason } = raw as { to?: unknown; reason?: unknown };
-      if (isPhase(to) && typeof reason === "string") state.revisit = { to, reason };
-    }
+    const revisit = parseRevisit((parsed as { revisit?: unknown }).revisit);
+    if (revisit) state.revisit = revisit;
     if (typeof parsed.revisits === "number" && Number.isFinite(parsed.revisits)) {
       state.revisits = Math.max(0, Math.floor(parsed.revisits));
     }
+    const summaries = parseSummaries((parsed as { summaries?: unknown }).summaries);
+    if (summaries) state.summaries = summaries;
     return state;
   } catch {
     return null;
@@ -261,7 +472,7 @@ export function saveProjectState(
   workspace: string,
   name: string,
   phase: WorkflowPhase,
-  carry?: Pick<ProjectState, "revisits" | "revisit">
+  carry?: Pick<ProjectState, "revisits" | "revisit" | "summaries">
 ): ProjectState {
   const previous = loadProjectState(workspace);
   const slug = slugify(name);
@@ -283,8 +494,14 @@ export function saveProjectState(
   // from the /project goto + /flow-<phase> escape hatch.
   const revisit = same?.revisit ?? carry?.revisit;
   if (revisit && revisit.to !== phase) state.revisit = revisit;
-  fs.mkdirSync(path.dirname(stateFile(workspace)), { recursive: true });
-  fs.writeFileSync(stateFile(workspace), JSON.stringify(state, null, 2) + "\n");
+  // Summaries accumulate, so they are never dropped by a save — but the save
+  // that moves a project *into* a phase must not carry that phase's old
+  // summary forward, or `/project` would show last run's scorecard as if it
+  // described the run about to happen. Everything else is kept.
+  const summaries = { ...(same?.summaries ?? carry?.summaries) };
+  delete summaries[phase];
+  if (Object.keys(summaries).length) state.summaries = summaries;
+  writeProjectState(workspace, state);
   return state;
 }
 
@@ -297,12 +514,11 @@ export function saveProjectState(
 export function markRevisit(workspace: string, to: WorkflowPhase, reason: string): boolean {
   const state = loadProjectState(workspace);
   if (!state) return false;
-  const next: ProjectState = {
+  writeProjectState(workspace, {
     ...state,
     revisit: { to, reason },
     updatedAt: new Date().toISOString(),
-  };
-  fs.writeFileSync(stateFile(workspace), JSON.stringify(next, null, 2) + "\n");
+  });
   return true;
 }
 
@@ -329,7 +545,12 @@ export function takeRevisit(workspace: string, to: WorkflowPhase): boolean {
     updatedAt: new Date().toISOString(),
     revisits: used + 1,
   };
-  fs.writeFileSync(stateFile(workspace), JSON.stringify(next, null, 2) + "\n");
+  // The phase being re-entered loses its summary: it is about to be produced
+  // again, and the old one would be stale by the time the user reads it.
+  const summaries = { ...state.summaries };
+  delete summaries[to];
+  if (Object.keys(summaries).length) next.summaries = summaries;
+  writeProjectState(workspace, next);
   return true;
 }
 
@@ -337,8 +558,20 @@ export function takeRevisit(workspace: string, to: WorkflowPhase): boolean {
  * End the active workflow. The docs/<name>/ artifacts are left alone — only the
  * pointer goes, so the agent stops being told to resume a project the user has
  * moved on from.
+ *
+ * The registry entry is deliberately *kept*: ending the active workflow parks
+ * the project rather than forgetting it, which is what makes `/project resume`
+ * able to bring it back later. Forgetting would need an explicit delete, and
+ * nothing in the UI asks for one. The live pointer is mirrored one last time on
+ * the way out, so a scorecard the agent wrote since the last save is not lost
+ * with the file.
  */
 export function clearProjectState(workspace: string): boolean {
+  const state = loadProjectState(workspace);
+  if (!state) return false;
+  const registry = loadRegistry(workspace);
+  registry[state.name] = entryFrom(state);
+  saveRegistry(workspace, registry);
   try {
     fs.rmSync(stateFile(workspace));
     return true;
@@ -382,7 +615,17 @@ export function renameProject(
   } catch (err) {
     return { ok: false, error: `Could not move docs/${current}/: ${(err as Error).message}` };
   }
+  // The registry is keyed by slug, so the rename is a move of the entry rather
+  // than a new one — otherwise the old slug lingers as a project that no longer
+  // exists and `/project list` offers to resume it into an empty folder. The
+  // delete has to come *after* the save: the save re-mirrors the pointer it is
+  // replacing, which still carries the old name.
   saveProjectState(workspace, next, state.phase, state);
+  const registry = loadRegistry(workspace);
+  if (registry[current]) {
+    delete registry[current];
+    saveRegistry(workspace, registry);
+  }
   return { ok: true, name: next };
 }
 
@@ -580,6 +823,29 @@ function approvalLine(phase: WorkflowPhase, artifact: string | null, stopAfter: 
   );
 }
 
+/**
+ * Ask the agent to record a one-line scorecard for the phase it just finished.
+ *
+ * A gate hands back to the user with the artifact on disk and a few lines in
+ * chat, and the chat scrolls away — so `/project` had no way to say what a
+ * phase actually concluded without the user opening seven files. The line is
+ * written into `project.json` (not a file of its own) because that is the one
+ * record already mirrored into the registry, so it survives parking a project.
+ *
+ * The wording is deliberately literal about read-modify-write: the model is
+ * editing a file it does not own, and the keys it must not disturb are the ones
+ * that carry the workflow's own state.
+ */
+function summaryLine(phase: WorkflowPhase): string {
+  return (
+    `Last, record a one-line scorecard so /project can show what this phase concluded ` +
+    `without the user opening the file: read .kritya/project.json, set "summaries"."${phase}" ` +
+    `to a single line under ~100 characters (a headline, e.g. "3 MVP features, FastAPI + SQLite" ` +
+    `or "5/6 acceptance criteria met, 1 high finding"), and write the whole file back with ` +
+    `every other key left exactly as it was.\n`
+  );
+}
+
 /** The instruction sent to the agent to carry out a given phase. */
 export function phasePrompt(
   name: string,
@@ -589,6 +855,7 @@ export function phasePrompt(
 ): string {
   const slug = slugify(name);
   const extra = userInput.trim() ? `\n\nUser input for this phase:\n${userInput.trim()}` : "";
+  const summary = summaryLine(phase);
   const cap = capLine(phase);
   const approve = approvalLine(
     phase,
@@ -613,6 +880,7 @@ export function phasePrompt(
         cap +
         `Do NOT write application code, do NOT design the architecture, and do NOT specify ` +
         `interfaces yet — this phase settles direction only.\n` +
+        summary +
         approve +
         extra
       );
@@ -640,6 +908,7 @@ export function phasePrompt(
         cap +
         `Do NOT design the architecture, choose a folder layout, or sequence the work — that is ` +
         `the plan phase's job. Do NOT write application code.\n` +
+        summary +
         approve +
         extra
       );
@@ -672,6 +941,7 @@ export function phasePrompt(
         cap +
         `Do NOT restate the spec's requirements, contracts, or data schema — reference them by ` +
         `number instead. Duplicated requirements drift.\n` +
+        summary +
         approve +
         extra
       );
@@ -707,6 +977,7 @@ export function phasePrompt(
         `and its own branch, which keeps this conversation from accumulating the full text of ` +
         `every file you touch. Give each one the milestone's criteria verbatim; never a summary ` +
         `of them. Build sequentially otherwise.\n` +
+        summary +
         approve +
         extra
       );
@@ -739,6 +1010,7 @@ export function phasePrompt(
         `build satisfies the spec. Do not fix anything in this phase — reviewing and fixing in one ` +
         `pass produces neither a trustworthy review nor a reviewed fix.\n` +
         cap +
+        summary +
         approve +
         extra
       );
@@ -769,6 +1041,7 @@ export function phasePrompt(
         `${BACK_COMMAND} to redo the phases that depend on it. Reserve this for findings that ` +
         `genuinely belong upstream — everything else gets fixed here.\n` +
         cap +
+        summary +
         `Write docs/${slug}/fix.md BEFORE you ask for anything. Approval comes after the file ` +
         `exists — never show the writeup in chat and ask whether to save it. Then summarize the ` +
         `outcome in a few lines. If anything is still open, say so, and tell the user they can ` +
@@ -793,6 +1066,7 @@ export function phasePrompt(
         `are not, and every finding review.md raised that fix.md left open. Cite the AC, SEC ` +
         `and REL labels rather than restating the requirements.\n` +
         cap +
+        summary +
         `Then summarize in a few lines and ask whether to commit. Do NOT commit, push or tag ` +
         `anything until the user says yes — and when they do, use a conventional-commit message ` +
         `describing the project, not the individual edits.\n` +

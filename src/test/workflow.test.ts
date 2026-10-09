@@ -10,7 +10,9 @@ import {
   clearProjectState,
   DEFAULT_GATES,
   isPlanningDocWrite,
+  listProjects,
   loadProjectState,
+  loadRegistry,
   markRevisit,
   MAX_REVISITS,
   nextPhase,
@@ -22,7 +24,9 @@ import {
   planRun,
   previousPhase,
   PHASE_ORDER,
+  registryFile,
   renameProject,
+  resumeProject,
   revisitsRemaining,
   saveProjectState,
   shouldStopAfter,
@@ -42,6 +46,16 @@ function writeArtifact(ws: string, name: string, phase: WorkflowPhase, body = "c
   assert.ok(rel, `${phase} has no artifact`);
   fs.mkdirSync(path.join(ws, path.dirname(rel)), { recursive: true });
   fs.writeFileSync(path.join(ws, rel), body);
+}
+
+/** Add per-phase scorecards to project.json the way the agent is told to. */
+function writeSummaries(ws: string, summaries: Record<string, string>): void {
+  const state = loadProjectState(ws);
+  assert.ok(state, "writeSummaries needs an active project");
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({ ...state, summaries }, null, 2) + "\n"
+  );
 }
 
 test("slugify makes a filesystem-safe slug and caps length", () => {
@@ -664,4 +678,254 @@ test("staleArtifacts warns about the build itself once a stale plan has been bui
   assert.ok(!staleArtifacts(ws, "app", "plan").some((w) => /code/.test(w)));
   // Once the project has reached build (or beyond), the code is called out too.
   assert.ok(staleArtifacts(ws, "app", "build").some((w) => /code/.test(w)));
+});
+
+// --- Project registry: parking a project keeps its phase ---------------------
+
+test("saveProjectState mirrors the project into the registry", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "My App", "plan");
+  const registry = loadRegistry(ws);
+  assert.deepEqual(Object.keys(registry), ["my-app"]);
+  assert.equal(registry["my-app"].phase, "plan");
+  assert.ok(registry["my-app"].updatedAt);
+  assert.ok(fs.existsSync(registryFile(ws)));
+});
+
+test("loadRegistry returns an empty map when there is no file or it is junk", () => {
+  assert.deepEqual(loadRegistry(tmpWorkspace()), {});
+  const ws = tmpWorkspace();
+  fs.mkdirSync(path.join(ws, ".kritya"), { recursive: true });
+  fs.writeFileSync(registryFile(ws), "{not json");
+  assert.deepEqual(loadRegistry(ws), {});
+  fs.writeFileSync(registryFile(ws), JSON.stringify(["an", "array"]));
+  assert.deepEqual(loadRegistry(ws), {});
+});
+
+test("loadRegistry drops a malformed entry but keeps its well-formed siblings", () => {
+  const ws = tmpWorkspace();
+  fs.mkdirSync(path.join(ws, ".kritya"), { recursive: true });
+  fs.writeFileSync(
+    registryFile(ws),
+    JSON.stringify({
+      good: { phase: "spec", updatedAt: "2026-01-01T00:00:00.000Z" },
+      bad: { phase: "design", updatedAt: "2026-01-01T00:00:00.000Z" },
+      junk: "not an object",
+    })
+  );
+  assert.deepEqual(Object.keys(loadRegistry(ws)), ["good"]);
+});
+
+test("starting a second project parks the first without losing its phase", () => {
+  // The whole point of the registry: project.json only ever holds the active
+  // project, so starting another used to look like losing the first.
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "first-app", "plan");
+  saveProjectState(ws, "second-app", "brainstorm");
+
+  assert.equal(loadProjectState(ws)?.name, "second-app");
+  const rows = listProjects(ws);
+  assert.deepEqual(rows.map((r) => [r.name, r.phase, r.active]).sort(), [
+    ["first-app", "plan", false],
+    ["second-app", "brainstorm", true],
+  ]);
+});
+
+test("listProjects reads the live phase for the active project", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "brainstorm");
+  // A hand-edit of project.json that the registry has not caught up with: the
+  // active project's phase comes from the pointer, so the two cannot disagree.
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({ name: "app", phase: "build", updatedAt: "2026-02-02T00:00:00.000Z" })
+  );
+  const rows = listProjects(ws);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].phase, "build");
+  assert.equal(rows[0].active, true);
+});
+
+test("listProjects still shows a project whose pointer predates the registry", () => {
+  const ws = tmpWorkspace();
+  fs.mkdirSync(path.join(ws, ".kritya"), { recursive: true });
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({ name: "legacy", phase: "review", updatedAt: "2026-03-03T00:00:00.000Z" })
+  );
+  const rows = listProjects(ws);
+  assert.deepEqual(
+    rows.map((r) => [r.name, r.active]),
+    [["legacy", true]]
+  );
+});
+
+test("listProjects is empty on a fresh workspace", () => {
+  assert.deepEqual(listProjects(tmpWorkspace()), []);
+});
+
+test("resumeProject restores a parked project's phase", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "first-app", "plan");
+  saveProjectState(ws, "second-app", "brainstorm");
+
+  assert.deepEqual(resumeProject(ws, "first-app"), { ok: true, name: "first-app" });
+  assert.equal(loadProjectState(ws)?.name, "first-app");
+  assert.equal(loadProjectState(ws)?.phase, "plan");
+  // And the one it displaced is still parked, not forgotten.
+  assert.equal(listProjects(ws).find((r) => r.name === "second-app")?.phase, "brainstorm");
+});
+
+test("resumeProject restores the loop-back budget, pending revisit and summaries", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "fix");
+  takeRevisit(ws, "spec");
+  saveProjectState(ws, "app", "fix");
+  markRevisit(ws, "plan", "milestone 2 is wrong");
+  writeSummaries(ws, { spec: "6 ACs, 2 MUST" });
+  // Park it by starting something else.
+  saveProjectState(ws, "other", "brainstorm");
+
+  assert.deepEqual(resumeProject(ws, "app"), { ok: true, name: "app" });
+  const state = loadProjectState(ws);
+  assert.equal(state?.revisits, 1);
+  assert.deepEqual(state?.revisit, { to: "plan", reason: "milestone 2 is wrong" });
+  assert.equal(state?.summaries?.spec, "6 ACs, 2 MUST");
+});
+
+test("resumeProject is a no-op success for the already-active project", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "plan");
+  assert.deepEqual(resumeProject(ws, "App"), { ok: true, name: "app" });
+  assert.equal(loadProjectState(ws)?.phase, "plan");
+});
+
+test("resumeProject reports an unknown name, listing what it does know", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "plan");
+  const result = resumeProject(ws, "nope");
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /No project named "nope"/);
+  assert.match(result.ok ? "" : result.error, /app/);
+});
+
+test("resumeProject with nothing saved says how to start one", () => {
+  const result = resumeProject(tmpWorkspace(), "anything");
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /No saved projects yet/);
+});
+
+test("clearProjectState parks the project rather than forgetting it", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "build");
+  assert.equal(clearProjectState(ws), true);
+  assert.equal(loadProjectState(ws), null, "the pointer is gone");
+  // ...but the registry still knows it, which is what makes resume work.
+  assert.equal(listProjects(ws)[0]?.phase, "build");
+  assert.deepEqual(resumeProject(ws, "app"), { ok: true, name: "app" });
+  assert.equal(loadProjectState(ws)?.phase, "build");
+});
+
+test("a rename moves the registry entry instead of leaving a ghost", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "old-name", "plan");
+  assert.deepEqual(renameProject(ws, "old-name", "New Name"), { ok: true, name: "new-name" });
+  assert.deepEqual(Object.keys(loadRegistry(ws)), ["new-name"]);
+  assert.deepEqual(
+    listProjects(ws).map((r) => r.name),
+    ["new-name"]
+  );
+});
+
+test("parking a project captures a scorecard written since the last save", () => {
+  // The agent edits project.json directly, so the outgoing pointer can be
+  // fresher than the registry entry — and starting another project is the last
+  // moment that state is still readable.
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  writeSummaries(ws, { spec: "6 ACs, 2 MUST" });
+  saveProjectState(ws, "other", "brainstorm");
+  assert.equal(loadRegistry(ws)["app"].summaries?.spec, "6 ACs, 2 MUST");
+});
+
+test("clearing the workflow parks the project with its latest scorecard", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "build");
+  writeSummaries(ws, { plan: "3 milestones, 1 risky" });
+  assert.equal(clearProjectState(ws), true);
+  assert.equal(listProjects(ws)[0]?.phase, "build");
+  assert.deepEqual(resumeProject(ws, "app"), { ok: true, name: "app" });
+  assert.equal(loadProjectState(ws)?.summaries?.plan, "3 milestones, 1 risky");
+});
+
+// --- Per-phase summaries -----------------------------------------------------
+
+test("loadProjectState reads per-phase summaries", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  writeSummaries(ws, { brainstorm: "3 MVP features, FastAPI + SQLite" });
+  assert.equal(loadProjectState(ws)?.summaries?.brainstorm, "3 MVP features, FastAPI + SQLite");
+});
+
+test("loadProjectState ignores malformed summaries and unknown phases", () => {
+  const ws = tmpWorkspace();
+  fs.mkdirSync(path.join(ws, ".kritya"), { recursive: true });
+  fs.writeFileSync(
+    path.join(ws, ".kritya", "project.json"),
+    JSON.stringify({
+      name: "app",
+      phase: "spec",
+      summaries: { spec: "  real one  ", design: "not a phase", build: 42, plan: "  " },
+    })
+  );
+  const summaries = loadProjectState(ws)?.summaries;
+  assert.deepEqual(summaries, { spec: "real one" }, "only known phases with real text survive");
+});
+
+test("a save carries summaries forward", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  writeSummaries(ws, { brainstorm: "3 MVP features" });
+  // Running the next phase saves state first; the earlier scorecard must survive.
+  saveProjectState(ws, "app", "plan");
+  assert.equal(loadProjectState(ws)?.summaries?.brainstorm, "3 MVP features");
+});
+
+test("re-entering a phase drops that phase's stale summary", () => {
+  // The scorecard describes a run; the phase is about to be produced again, so
+  // showing last run's line as if it were current would be a lie.
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  writeSummaries(ws, { brainstorm: "old", spec: "stale spec line" });
+  saveProjectState(ws, "app", "spec");
+  const summaries = loadProjectState(ws)?.summaries;
+  assert.equal(summaries?.spec, undefined);
+  assert.equal(summaries?.brainstorm, "old", "other phases are untouched");
+});
+
+test("a loop-back also drops the summary of the phase it re-enters", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "fix");
+  writeSummaries(ws, { spec: "the old spec line", fix: "2 findings closed" });
+  takeRevisit(ws, "spec");
+  const summaries = loadProjectState(ws)?.summaries;
+  assert.equal(summaries?.spec, undefined);
+  assert.equal(summaries?.fix, "2 findings closed");
+});
+
+test("a fresh project does not inherit the previous project's summaries", () => {
+  const ws = tmpWorkspace();
+  saveProjectState(ws, "app", "spec");
+  writeSummaries(ws, { brainstorm: "app's own" });
+  saveProjectState(ws, "other", "spec");
+  assert.equal(loadProjectState(ws)?.summaries, undefined);
+});
+
+test("every phase prompt asks for a one-line scorecard in project.json", () => {
+  for (const phase of PHASE_ORDER) {
+    const prompt = phasePrompt("app", phase, "");
+    assert.match(prompt, /summaries/, `${phase} prompt should mention summaries`);
+    assert.match(prompt, /\.kritya\/project\.json/, phase);
+    assert.match(prompt, new RegExp(`summaries"?\\.?"?${phase}`), phase);
+  }
 });

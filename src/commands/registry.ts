@@ -25,6 +25,7 @@ import {
   BACK_COMMAND,
   clearProjectState,
   DEFAULT_GATES,
+  listProjects,
   loadProjectState,
   MAX_REVISITS,
   nextPhase,
@@ -35,6 +36,7 @@ import {
   phasePrompt,
   planRun,
   renameProject,
+  resumeProject,
   revisitsRemaining,
   saveProjectState,
   shouldStopAfter,
@@ -111,7 +113,7 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   },
   {
     name: "/project",
-    description: "workflow status · /project goto <phase> · rename <name> · clear",
+    description: "workflow status · list · resume <name> · goto <phase> · rename <name> · clear",
     category: WORKFLOW,
   },
   {
@@ -232,6 +234,7 @@ Project workflow: /flow-brainstorm <idea> starts one; /flow runs the next phase.
 It stops for your approval after ${DEFAULT_GATES.join(", ")}, then runs the rest
 through to ship. --auto for no stops · --until <phase> to stop early · --fast to
 merge brainstorm and spec · ${BACK_COMMAND} <phase> when a finding belongs upstream.
+Starting another project parks this one: /project list · /project resume <name>.
 Keys: Esc cancels · Tab completes · Shift+Tab cycles normal/accept-edits/dry-run
 mode · ↑/↓ recalls history · Ctrl+R searches history · Ctrl+P opens the command
 palette · Ctrl+B copies the last code block · Ctrl+O toggles full tool output ·
@@ -562,6 +565,36 @@ function phaseCommand(phase: WorkflowPhase): CommandHandler {
     }
     return runFlow(ctx, phase, req);
   };
+}
+
+/**
+ * `/project list` — every project this workspace knows, newest first.
+ *
+ * The active one is starred, and its phase is read from the live pointer rather
+ * than the registry so the two can never disagree on screen.
+ */
+function projectListText(workspace: string): string {
+  const rows = listProjects(workspace);
+  if (!rows.length) {
+    return "No projects yet. Start one with /flow-brainstorm <idea>.";
+  }
+  const width = Math.max(...rows.map((r) => r.name.length));
+  const lines = rows.map((r) => {
+    const marker = r.active ? "*" : " ";
+    const date = r.updatedAt ? `  ${r.updatedAt.slice(0, 10)}` : "";
+    const loops = r.revisits ? `  ${r.revisits} loop-back(s)` : "";
+    return (
+      `  ${marker} ${r.name.padEnd(width)}  ${r.phase.padEnd(9)} ` +
+      `(${phaseIndex(r.phase)}/${PHASE_ORDER.length})${date}${loops}`
+    );
+  });
+  const active = rows.find((r) => r.active);
+  return (
+    `Projects (* = active):\n${lines.join("\n")}\n\n` +
+    (active
+      ? `/project resume <name> switches to another one — "${active.name}" keeps its phase.`
+      : `Nothing is active. /project resume <name> picks one up where it stopped.`)
+  );
 }
 
 const handlers: Record<string, CommandHandler> = {
@@ -974,8 +1007,8 @@ const handlers: Record<string, CommandHandler> = {
         kind: "info",
         text:
           `Starting a new project "${name}". The previous project "${existing.name}" was in the ` +
-          `${existing.phase} phase; its docs/${existing.name}/ artifacts are untouched, and ` +
-          `/project goto ${existing.phase} after /flow-brainstorm ${existing.name} returns to it.`,
+          `${existing.phase} phase — its docs/${existing.name}/ artifacts are untouched, and ` +
+          `/project resume ${existing.name} picks it back up there.`,
       });
     }
     saveProjectState(ctx.workspace, name, "brainstorm");
@@ -1132,8 +1165,38 @@ const handlers: Record<string, CommandHandler> = {
   "/flow-ship": phaseCommand("ship"),
   "/project": (ctx) => {
     const [sub = "", ...rest] = ctx.arg.trim().split(/\s+/);
+    const verb = sub.toLowerCase();
     const project = loadProjectState(ctx.workspace);
-    if (sub.toLowerCase() === "clear") {
+    // `list` and `resume` are the two subcommands that have to work with no
+    // active project — that is exactly the state they exist for. Everything
+    // below this point assumes a project is active.
+    if (verb === "list") {
+      ctx.addItem({ kind: "info", text: projectListText(ctx.workspace) });
+      return;
+    }
+    if (verb === "resume") {
+      const name = rest.join(" ").trim();
+      if (!name) {
+        ctx.addItem({ kind: "info", text: "Usage: /project resume <name>. See /project list." });
+        return;
+      }
+      const result = resumeProject(ctx.workspace, name);
+      if (!result.ok) {
+        ctx.addItem({ kind: "info", text: result.error });
+        return;
+      }
+      ctx.refreshWorkflow();
+      const resumed = loadProjectState(ctx.workspace);
+      ctx.addItem({
+        kind: "info",
+        text:
+          `Resumed "${result.name}" at the ${resumed?.phase ?? "?"} phase` +
+          (resumed ? ` (${phaseIndex(resumed.phase)}/${PHASE_ORDER.length})` : "") +
+          `. /flow continues from here.`,
+      });
+      return;
+    }
+    if (verb === "clear") {
       if (!project) {
         ctx.addItem({ kind: "info", text: "No active project workflow." });
         return;
@@ -1142,18 +1205,22 @@ const handlers: Record<string, CommandHandler> = {
       ctx.refreshWorkflow();
       ctx.addItem({
         kind: "info",
-        text: `Workflow for "${project.name}" ended. Its docs/${project.name}/ artifacts are kept.`,
+        text:
+          `Workflow for "${project.name}" ended. Its docs/${project.name}/ artifacts are kept, ` +
+          `and /project resume ${project.name} brings it back at the ${project.phase} phase.`,
       });
       return;
     }
     if (!project) {
       ctx.addItem({
         kind: "info",
-        text: "No active project workflow. Start one with /flow-brainstorm <idea>.",
+        text:
+          "No active project workflow. Start one with /flow-brainstorm <idea>, " +
+          "or /project list to resume a saved one.",
       });
       return;
     }
-    if (sub.toLowerCase() === "rename") {
+    if (verb === "rename") {
       const result = renameProject(ctx.workspace, project.name, rest.join(" "));
       if (!result.ok) {
         ctx.addItem({ kind: "info", text: result.error });
@@ -1166,7 +1233,7 @@ const handlers: Record<string, CommandHandler> = {
       });
       return;
     }
-    if (sub.toLowerCase() === "goto") {
+    if (verb === "goto") {
       const target = parsePhase(rest.join(" "));
       if (!target) {
         ctx.addItem({ kind: "info", text: `Usage: /project goto <${PHASE_ORDER.join("|")}>` });
@@ -1185,8 +1252,13 @@ const handlers: Record<string, CommandHandler> = {
       const artifact = artifactPath(project.name, p);
       // build has no document of its own, so there is nothing to look for.
       const written = artifact !== null && artifactExists(ctx.workspace, project.name, p);
+      // A recorded scorecard is what the phase actually concluded; PHASE_SUMMARY
+      // is the generic description of what the phase *does*, so it is only the
+      // fallback — for a phase that hasn't run, or one run before summaries
+      // existed.
+      const recorded = project.summaries?.[p];
       return (
-        `  ${marker} ${String(i + 1).padStart(2)}. ${p.padEnd(11)}${PHASE_SUMMARY[p]}` +
+        `  ${marker} ${String(i + 1).padStart(2)}. ${p.padEnd(11)}${recorded ?? PHASE_SUMMARY[p]}` +
         `\n         ${artifact ?? "(application code)"}${written ? "  ✓" : ""}`
       );
     });
@@ -1206,7 +1278,7 @@ const handlers: Record<string, CommandHandler> = {
         staleBlock +
         revisitBlock +
         `\n\n/flow continues · ${PHASE_COMMAND[project.phase]} re-runs this phase · ` +
-        `/project goto <phase> to move · /project rename <name> · /project clear to end the workflow.`,
+        `/project goto <phase> to move · rename <name> · list · resume <name> · clear to end it.`,
     });
   },
   "/diff": (ctx) => {
