@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
   Static,
@@ -42,6 +42,7 @@ import { StreamViewport } from "./StreamViewport.js";
 import { TextInput } from "./TextInput.js";
 import { TranscriptItem } from "./TranscriptItem.js";
 import { terminalColumns, terminalRows } from "./viewport.js";
+import { fitRow, listRows, ROW_GUTTER, ROW_SEPARATOR, windowList } from "./windowList.js";
 import type { CustomCommand } from "../commands/custom.js";
 import { BUILTIN_COMMANDS, runCommand, type CommandContext } from "../commands/registry.js";
 import { mcpPrompts, mcpResources } from "../mcp/client.js";
@@ -372,6 +373,46 @@ export function App({
       ? allCommands.filter((c) => c.name.startsWith(input.trim()))
       : [];
   const selectedCmd = suggestions.length ? Math.min(cmdIndex, suggestions.length - 1) : 0;
+
+  /** One rendered line of the suggestion list: a group heading or a command. */
+  type SuggestionLine =
+    { kind: "header"; label: string } | { kind: "cmd"; cmd: (typeof suggestions)[number] };
+
+  /**
+   * The suggestion list flattened to rendered lines, so a group heading costs
+   * a row like any other — windowing the commands alone would still let the
+   * headings push real rows off the bottom of the screen.
+   *
+   * `lineOfCmd[i]` is the line `suggestions[i]` landed on. The cursor indexes
+   * commands, because that is what the arrow keys move through; this is what
+   * maps it onto a line.
+   */
+  const suggestionLines: SuggestionLine[] = [];
+  const lineOfCmd: number[] = [];
+  {
+    // Group headers only earn their keep once more than one category is
+    // actually on screen — once typing has filtered down to a single family,
+    // a lone header is just noise.
+    const showHeaders = new Set(suggestions.map((c) => c.category)).size > 1;
+    let lastCategory: string | undefined;
+    for (const c of suggestions) {
+      if (showHeaders && c.category !== lastCategory) {
+        suggestionLines.push({ kind: "header", label: c.category ?? "Other" });
+        lastCategory = c.category;
+      }
+      lineOfCmd.push(suggestionLines.length);
+      suggestionLines.push({ kind: "cmd", cmd: c });
+    }
+  }
+  // The transcript above is static; this reserves the prompt box, the hint
+  // line and the status line, which is what has to stay visible.
+  const suggestionWindow = windowList(
+    suggestionLines,
+    lineOfCmd[selectedCmd] ?? 0,
+    listRows(rows, 8)
+  );
+  // The list is indented by its own paddingLeft, then by the row's marker.
+  const suggestionRowWidth = contentWidth - 2 - ROW_GUTTER;
 
   // File suggestions while typing an @mention.
   const mentionMatch = phase === "input" && !input.startsWith("/") ? MENTION_RE.exec(input) : null;
@@ -1055,34 +1096,56 @@ export function App({
           </Box>
           {suggestions.length > 0 && (
             <Box flexDirection="column" paddingLeft={2}>
-              {(() => {
-                // Group headers only earn their keep once more than one
-                // category is actually on screen — once typing has filtered
-                // down to a single family, a lone header is just noise.
-                const showHeaders = new Set(suggestions.map((c) => c.category)).size > 1;
-                let lastCategory: string | undefined;
-                return suggestions.map((c, i) => {
-                  const showHeader = showHeaders && c.category !== lastCategory;
-                  lastCategory = c.category;
+              {suggestionWindow.visible.map((line, i) => {
+                if (line.kind === "header") {
                   return (
-                    <Fragment key={c.name}>
-                      {showHeader && <Text dimColor>{c.category ?? "Other"}</Text>}
-                      <Text color={i === selectedCmd ? "cyan" : undefined}>
-                        {i === selectedCmd ? "❯ " : "  "}
-                        <Text bold={i === selectedCmd}>{c.name}</Text>
-                        <Text dimColor> — {c.description}</Text>
-                      </Text>
-                    </Fragment>
+                    <Text key={`header:${line.label}`} dimColor wrap="truncate">
+                      {line.label}
+                    </Text>
                   );
-                });
-              })()}
-              <Text dimColor>↑↓ select · Tab/Enter select · Enter again to run</Text>
+                }
+                const c = line.cmd;
+                const selected = i === suggestionWindow.cursor;
+                const row = fitRow(c.name, c.description, suggestionRowWidth);
+                return (
+                  // truncate is a backstop: the row must never grow a second
+                  // line, whatever the width arithmetic does with odd glyphs.
+                  <Text key={c.name} color={selected ? "cyan" : undefined} wrap="truncate">
+                    {selected ? "❯ " : "  "}
+                    <Text bold={selected}>{row.label}</Text>
+                    {row.hint ? (
+                      <Text dimColor>
+                        {ROW_SEPARATOR}
+                        {row.hint}
+                      </Text>
+                    ) : null}
+                  </Text>
+                );
+              })}
+              {suggestionWindow.clipped ? (
+                <Text dimColor>
+                  {"  "}
+                  {suggestionWindow.from}–{suggestionWindow.to} of {suggestionWindow.total} · ↑↓ to
+                  scroll
+                </Text>
+              ) : null}
+              <Text dimColor>↑↓ select · Tab/Enter insert · Esc cancel</Text>
             </Box>
           )}
+          {/* A fragment that matches nothing used to make the list vanish with
+              no explanation, which reads as a broken menu rather than a miss. */}
+          {phase === "input" &&
+            input.startsWith("/") &&
+            !input.includes(" ") &&
+            suggestions.length === 0 && (
+              <Box paddingLeft={2}>
+                <Text dimColor>no command matches {input.trim()} · Esc to clear</Text>
+              </Box>
+            )}
           {fileSuggestions.length > 0 && (
             <Box flexDirection="column" paddingLeft={2}>
               {fileSuggestions.map((f, i) => (
-                <Text key={f} color={i === selectedFile ? "cyan" : undefined}>
+                <Text key={f} color={i === selectedFile ? "cyan" : undefined} wrap="truncate">
                   {i === selectedFile ? "❯ " : "  "}
                   {f}
                 </Text>

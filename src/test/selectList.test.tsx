@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { render } from "ink-testing-library";
 import type { ReactElement } from "react";
+import stringWidth from "string-width";
 import { SelectList } from "../ui/SelectList.js";
 
 const UP = "\x1B[A";
@@ -135,4 +136,76 @@ test("an empty list only responds to escape, never to selection keys", async () 
   assert.equal(selectCalled, false);
   await press(stdin, ESCAPE);
   assert.equal(cancelled, true);
+});
+
+const many = Array.from({ length: 10 }, (_, i) => ({ label: `Row ${i}`, value: `v${i}` }));
+
+test("a list longer than maxRows renders only the window, plus a scroll indicator", async () => {
+  const { lastFrame } = await renderReady(
+    <SelectList items={many} onSelect={() => {}} maxRows={4} width={40} />
+  );
+  const frame = plain(lastFrame());
+  assert.match(frame, /❯ Row 0/);
+  assert.match(frame, /Row 3/);
+  assert.doesNotMatch(frame, /Row 4\b/);
+  assert.match(frame, /1–4 of 10/);
+});
+
+test("scrolling keeps the highlighted row in view instead of letting it leave the window", async () => {
+  const { stdin, lastFrame } = await renderReady(
+    <SelectList items={many} onSelect={() => {}} maxRows={4} width={40} />
+  );
+  for (let i = 0; i < 4; i++) await press(stdin, DOWN);
+  const frame = plain(lastFrame());
+  assert.match(frame, /❯ Row 4/);
+  assert.doesNotMatch(frame, /Row 1\b/);
+  assert.match(frame, /3–6 of 10/);
+});
+
+test("the last row is selectable, and the window stops at the end of the list", async () => {
+  let selected: string | undefined;
+  const { stdin, lastFrame } = await renderReady(
+    <SelectList
+      items={many}
+      onSelect={(v) => {
+        selected = v;
+      }}
+      maxRows={4}
+      width={40}
+    />
+  );
+  // One UP from the top wraps to the last row, which must be inside the window.
+  await press(stdin, UP);
+  assert.match(plain(lastFrame()), /❯ Row 9/);
+  await press(stdin, ENTER);
+  assert.equal(selected, "v9");
+});
+
+test("a row too long for the width is cut, never wrapped onto a second line", async () => {
+  const long = [
+    {
+      label: "/flow-brainstorm",
+      value: "a",
+      hint: "start a new-project workflow: /flow-brainstorm <idea> (brainstorm→spec→plan→build→review→fix)",
+    },
+  ];
+  const { lastFrame } = await renderReady(
+    <SelectList items={long} onSelect={() => {}} width={40} />
+  );
+  const lines = plain(lastFrame())
+    .split("\n")
+    .filter((l) => l.trim());
+  assert.equal(lines.length, 1);
+  assert.ok(stringWidth(lines[0]) <= 40, `row was ${stringWidth(lines[0])} columns`);
+  assert.match(lines[0], /…/);
+});
+
+test("a narrow row drops the hint rather than stubbing it, keeping the label", async () => {
+  const narrow = [{ label: "/export", value: "a", hint: "export the transcript to markdown" }];
+  const { lastFrame } = await renderReady(
+    <SelectList items={narrow} onSelect={() => {}} width={15} />
+  );
+  const frame = plain(lastFrame());
+  assert.match(frame, /\/export/);
+  assert.doesNotMatch(frame, /export the transcript/);
 });
