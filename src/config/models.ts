@@ -88,7 +88,9 @@ export const CURATED_MODELS: ModelInfo[] = [
     contextWindow: 1_048_576,
   },
   // Groq (https://console.groq.com/docs/models). Context windows verified
-  // against the docs table; both are 131,072.
+  // against the docs table; both are 131,072. llama-3.3-70b-versatile is
+  // enterprise-only on Groq ("Contact Sales", no self-serve), so it is
+  // deliberately not listed — it 404s on a normal API key.
   {
     id: "openai/gpt-oss-120b",
     label: "GPT-OSS 120B",
@@ -97,9 +99,10 @@ export const CURATED_MODELS: ModelInfo[] = [
     contextWindow: 131_072,
   },
   {
-    id: "llama-3.3-70b-versatile",
-    label: "Llama 3.3 70B Versatile",
+    id: "openai/gpt-oss-20b",
+    label: "GPT-OSS 20B",
     provider: "groq",
+    note: "fast + cheap",
     contextWindow: 131_072,
   },
 ];
