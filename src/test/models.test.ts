@@ -40,10 +40,7 @@ test("a model without an explicit provider is treated as nvidia", () => {
 
 test("modelsForProvider returns only that provider's entries", () => {
   const groq = modelsForProvider("groq");
-  assert.deepEqual(groq.map((m) => m.id).sort(), [
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-  ]);
+  assert.deepEqual(groq.map((m) => m.id).sort(), ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
   assert.ok(groq.every((m) => m.provider === "groq"));
   assert.ok(modelsForProvider("nvidia").every((m) => providerOfModel(m) === "nvidia"));
 });
