@@ -4,6 +4,36 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.48-beta] — 2026-10-10
+
+### Added
+
+- kritya is now enrolled in **Anthropic's OSS Scanner**, which builds the
+  project in an isolated VM and audits it with no network access. The build
+  image (`.oss-scanner/Dockerfile`) and threat model
+  (`.oss-scanner/threat_model.md`) that the scanner uses live in this
+  repository, so both can be updated without a pull request to the scanner.
+  `SECURITY.md` records the enrolment and how its reports are triaged.
+
+### Changed
+
+- `SECURITY.md` now covers the EU AI Act Article 50 obligations in full
+  rather than only paragraph (1). The section opens with a regulatory posture
+  statement — kritya is not a high-risk system and is not a provider of a
+  general-purpose AI model, so Article 50 is the only substantive obligation
+  that applies — and then documents each paragraph: the existing 50(1)
+  disclosure, a stated position on 50(2) machine-readable marking of generated
+  content, and 50(3) and 50(4) as not triggered. The permission gate, danger
+  detector, subagent constraints, and sandbox are now also described as human
+  oversight, and a new subsection covers plugins and MCP servers that ingest
+  data kritya does not control.
+- The threat model gained the detail the scanner needs to rate findings: the
+  sandbox is named as the backstop for the command-inspection gap (so
+  "the danger detector can be evaded" reads as the documented limitation it
+  is), output redaction is described as display-only, and a mapping to the
+  OWASP Top 10 states which categories are covered, partial, and not
+  applicable.
+
 ## [0.8.47-beta] — 2026-10-09
 
 ### Added
