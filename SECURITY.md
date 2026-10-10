@@ -4,8 +4,8 @@
 
 Please report security vulnerabilities privately rather than opening a public
 issue. Use GitHub's "Report a vulnerability" (Security Advisories) on the
-repository, or contact the maintainer directly. We aim to acknowledge reports
-within a few days.
+repository, or email the security contact, **technologistvenkat@gmail.com**. We
+aim to acknowledge reports within a few days.
 
 kritya is beta software. The properties below are implemented and covered by
 automated checks (`npm audit`, Dependabot), but have not had a third-party
