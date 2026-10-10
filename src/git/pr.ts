@@ -194,7 +194,9 @@ export async function createPullRequest(
       }),
     });
   } catch (err) {
-    throw new Error(`Could not reach api.github.com: ${(err as Error).message}`);
+    throw new Error(`Could not reach api.github.com: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
   if (res.status === 401) {
     throw new Error(

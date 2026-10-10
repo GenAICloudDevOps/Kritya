@@ -172,8 +172,16 @@ test("createPullRequest explains auth and repo problems", async () => {
 
 test("createPullRequest flags the already-exists case for the caller", async () => {
   const { fn } = fakeFetch(422, {}, { ok: false });
-  const err = await assert.rejects(() => createPullRequest(PR_REQ, fn));
-  assert.equal((err as { alreadyExists?: boolean }).alreadyExists, true);
+  let caught: unknown;
+  await assert.rejects(async () => {
+    try {
+      await createPullRequest(PR_REQ, fn);
+    } catch (err) {
+      caught = err;
+      throw err;
+    }
+  });
+  assert.equal((caught as { alreadyExists?: boolean }).alreadyExists, true);
 });
 
 test("findOpenPullRequest returns the first open PR, or null", async () => {
