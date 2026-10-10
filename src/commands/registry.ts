@@ -20,6 +20,25 @@ import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
 import { recordCommandUse } from "../ui/recentCommands.js";
 import {
+  gitBranch,
+  gitCommitsAhead,
+  gitDefaultBranch,
+  gitHasUpstream,
+  gitPush,
+  gitRefExists,
+  gitRemoteUrl,
+  gitUnpushedCount,
+} from "../git/git.js";
+import {
+  createPullRequest,
+  findOpenPullRequest,
+  parseGitHubRemote,
+  parsePrFlags,
+  prBodyFor,
+  prTitleFor,
+  resolveGitHubToken,
+} from "../git/pr.js";
+import {
   artifactExists,
   artifactPath,
   BACK_COMMAND,
@@ -143,6 +162,12 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/commit",
     description: "have the agent stage and commit the current changes",
+    category: SESSION,
+  },
+  {
+    name: "/pr",
+    description:
+      "push the branch and open a GitHub PR: /pr [--draft] [--title T] [--body B] [--base BR]",
     category: SESSION,
   },
   {
@@ -1002,6 +1027,94 @@ const handlers: Record<string, CommandHandler> = {
         "and create a commit with a well-written conventional-commit message that describes " +
         `the change.${trailerInstruction} Do not push. Show the final commit hash and message.`
     );
+  },
+  "/pr": async (ctx) => {
+    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+    const say = (text: string) => ctx.addItem({ kind: "info", text });
+    const opts = parsePrFlags(ctx.arg);
+    const ws = ctx.workspace;
+
+    const branch = gitBranch(ws);
+    if (!branch) {
+      say("Not a git repository — /pr needs one to push from.");
+      return;
+    }
+    const remote = gitRemoteUrl(ws);
+    const gh = remote ? parseGitHubRemote(remote) : null;
+    if (!gh) {
+      say(
+        "No GitHub origin remote found — /pr opens pull requests on GitHub.\n" +
+          "Set it with: git remote add origin <your-github-repo-url>"
+      );
+      return;
+    }
+    const base = opts.base ?? gitDefaultBranch(ws);
+    if (!gitRefExists(ws, base)) {
+      say(`Base branch "${base}" does not exist locally. Pass one that does: /pr --base <branch>`);
+      return;
+    }
+    if (branch === base) {
+      say(
+        `You are on "${branch}", the default branch — a pull request needs a feature branch.\n` +
+          "Create one first: git checkout -b <name>"
+      );
+      return;
+    }
+    const auth = resolveGitHubToken();
+    if (!auth) {
+      say(
+        "No GitHub token found. Provide one of:\n" +
+          "  export GITHUB_TOKEN=<token>   (a classic or fine-grained PAT from github.com/settings/tokens)\n" +
+          "  gh auth login                (then /pr reads it via `gh auth token`)"
+      );
+      return;
+    }
+    const commits = gitCommitsAhead(ws, base);
+    if (commits.length === 0) {
+      say(`"${branch}" has no commits that "${base}" does not — nothing to open a PR for.`);
+      return;
+    }
+
+    // Push first: the PR is opened against the pushed branch. Only pushes
+    // when there is something to send — a no-op push that fails on network
+    // would otherwise block opening the PR for no reason.
+    if (!gitHasUpstream(ws, branch) || gitUnpushedCount(ws) > 0) {
+      say(`Pushing ${branch} to origin…`);
+      const err = gitPush(ws, branch, !gitHasUpstream(ws, branch));
+      if (err) {
+        say(err);
+        return;
+      }
+    }
+
+    const title = prTitleFor(commits, branch, opts.title);
+    const body = prBodyFor(commits, opts.body);
+    try {
+      const pr = await createPullRequest({
+        owner: gh.owner,
+        repo: gh.repo,
+        head: branch,
+        base,
+        title,
+        body,
+        draft: opts.draft,
+        token: auth.token,
+      });
+      say(`✓ PR #${pr.number} opened${opts.draft ? " (draft)" : ""}: ${pr.url}`);
+    } catch (err) {
+      // A 422 almost always means the PR already exists — report it instead
+      // of failing on a duplicate.
+      if ((err as { alreadyExists?: boolean }).alreadyExists) {
+        const existing = await findOpenPullRequest(gh.owner, gh.repo, branch, auth.token);
+        say(
+          existing
+            ? `A pull request for "${branch}" already exists: PR #${existing.number}: ${existing.url}`
+            : "GitHub says a pull request for this branch already exists, but it could not be found."
+        );
+        return;
+      }
+      say((err as Error).message);
+    }
   },
   "/flow-brainstorm": async (ctx) => {
     const req = takeFlowFlags(ctx.arg);

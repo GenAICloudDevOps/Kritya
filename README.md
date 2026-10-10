@@ -175,6 +175,7 @@ In-session commands (type `/` to see them with autocomplete; letters filter the 
 | `/diff`                   | show the cumulative git diff of this session's changes                                                                              |
 | `/init`                   | scan the repo and generate a `KRITYA.md` project-memory file                                                                        |
 | `/commit`                 | have the agent review, stage, and commit the current git changes                                                                    |
+| `/pr`                     | push the branch and open a GitHub PR: `/pr [--draft] [--title T] [--body B] [--base BR]`                                            |
 | `/web-search <query>`     | search the web via Tavily; results are shown and added to context                                                                   |
 | `/mcp`                    | MCP server status; `/mcp add\|remove <name>`, `/mcp login\|logout <name>`, `/mcp trust` ([more](docs/CONFIGURATION.md#mcp-servers)) |
 | `/skills`                 | list discovered skills (project + user-global) and why any were skipped                                                             |
