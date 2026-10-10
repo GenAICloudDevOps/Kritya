@@ -74,6 +74,21 @@ buckets:
     breaking `.docx` support. Revisit once `mammoth` adapts to the new
     `xmldom` API.
 
+## Third-party security scan
+
+kritya is enrolled in [Anthropic's OSS Scanner](https://red.anthropic.com/oss-scanner)
+([enrolment PR](https://github.com/anthropics/oss-scanner/pull/346),
+[`projects/kritya`](https://github.com/anthropics/oss-scanner/tree/main/projects/kritya)).
+The scanner builds kritya in an isolated VM and analyses it with no network
+access, emailing findings with reproducers and proposed patches to the security
+contact above. The build image and threat model it uses live in this repository
+at [`.oss-scanner/`](.oss-scanner/): `Dockerfile` and `threat_model.md`.
+
+Reports from that service are model-generated and not human-reviewed, so they
+are triaged the same way as any other finding — see "Reporting a vulnerability"
+above. Findings that overlap the dependency allowlist in
+`scripts/audit-allowlist.json` are documented there.
+
 ## Scope and design notes
 
 kritya runs an autonomous agent that can read and modify files and run shell
