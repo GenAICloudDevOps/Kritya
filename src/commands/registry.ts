@@ -175,6 +175,11 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
     description: "summarize older conversation to free context space",
     category: SESSION,
   },
+  {
+    name: "/summarize",
+    description: "one-shot summary of the session so far (history is left untouched)",
+    category: SESSION,
+  },
   { name: "/clear", description: "start a fresh conversation", category: SESSION },
   {
     name: "/undo",
@@ -999,6 +1004,26 @@ const handlers: Record<string, CommandHandler> = {
         ctx.addItem({
           kind: "info",
           text: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      )
+      .finally(() => {
+        ctx.setActivity(null);
+        ctx.setPhase("input");
+      });
+  },
+  "/summarize": (ctx) => {
+    ctx.addItem({ kind: "user", text: "/summarize" });
+    ctx.setPhase("working");
+    ctx.setActivity("Summarizing session…");
+    return ctx.agent
+      .summarize()
+      .then((summary) => {
+        ctx.addItem({ kind: "info", text: summary });
+      })
+      .catch((err) =>
+        ctx.addItem({
+          kind: "info",
+          text: `Summarization failed: ${err instanceof Error ? err.message : String(err)}`,
         })
       )
       .finally(() => {

@@ -1,7 +1,14 @@
 import type { ChatMessage } from "../types.js";
+import { estimateHistoryTokens } from "./tokens.js";
 
 /** How many recent messages survive compaction untouched. */
 const KEEP_TAIL = 8;
+
+/** The briefing prompt shared by compaction and the one-shot /summarize. */
+export const SUMMARY_SYSTEM_PROMPT =
+  "You summarize coding-session transcripts. Produce a dense briefing: the user's goals, " +
+  "key decisions, files created/modified (with paths), commands run and their outcomes, " +
+  "current state, and open items. Plain text, no preamble.";
 
 interface AssistantWithCalls {
   role: string;
@@ -71,8 +78,9 @@ export function fallbackSummary(toSummarize: ChatMessage[]): string {
   return lines.join("\n");
 }
 
-/** Render messages as a plain-text transcript for the summarization request. */
-export function renderTranscript(messages: ChatMessage[]): string {
+/** Render messages as a plain-text transcript for the summarization request. */ export function renderTranscript(
+  messages: ChatMessage[]
+): string {
   return messages
     .map((m) => {
       if (m.role === "tool") {
@@ -85,4 +93,27 @@ export function renderTranscript(messages: ChatMessage[]): string {
       return `${m.role}: ${content}${calls ? `\n[called: ${calls}]` : ""}`;
     })
     .join("\n\n");
+}
+
+/**
+ * Choose which messages the one-shot summary covers. The whole history when
+ * it fits comfortably; otherwise the newest messages that fit within half
+ * the context window (the summarization call needs headroom for its reply).
+ * Oldest drop first, and the selection never starts on a tool reply, so
+ * call/reply pairs stay together. Returns the selection and how many oldest
+ * messages were dropped.
+ */
+export function selectMessagesForSummary(
+  history: ChatMessage[],
+  contextWindow: number
+): { messages: ChatMessage[]; dropped: number } {
+  const budget = Math.floor(contextWindow / 2);
+  let messages = history;
+  while (messages.length > 1 && estimateHistoryTokens(messages) > budget) {
+    messages = messages.slice(1);
+  }
+  while (messages.length > 1 && messages[0].role === "tool") {
+    messages = messages.slice(1);
+  }
+  return { messages, dropped: history.length - messages.length };
 }

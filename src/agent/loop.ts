@@ -2,7 +2,13 @@ import { isContextOverflowError, type ProviderClient } from "../provider/client.
 import type { PermissionManager } from "../permissions/permissions.js";
 import type { SessionStore } from "../session/store.js";
 import type { AgentHandlers, ChatMessage, ToolContext, ToolDef } from "../types.js";
-import { splitForCompaction, renderTranscript, fallbackSummary } from "./compactor.js";
+import {
+  splitForCompaction,
+  renderTranscript,
+  fallbackSummary,
+  selectMessagesForSummary,
+  SUMMARY_SYSTEM_PROMPT,
+} from "./compactor.js";
 import { estimateHistoryTokens, estimateTokens } from "./tokens.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import type { AuditLog } from "../audit/audit.js";
@@ -350,6 +356,37 @@ export class Agent {
     }
   }
 
+  /**
+   * One-shot briefing of the session so far, for display. Unlike compact(),
+   * this never touches the history — it just asks the model to summarize
+   * what happened and returns the text. A failure is reported, not degraded:
+   * nothing is being destroyed, so there is no need for the mechanical
+   * fallback that compaction uses.
+   */
+  async summarize(signal?: AbortSignal): Promise<string> {
+    this.kill.assertLive();
+    if (this.history.length <= 4) {
+      return "Nothing to summarize yet — the session just started.";
+    }
+    const { messages, dropped } = selectMessagesForSummary(this.history, this.contextWindow);
+    const result = await this.client.chat(
+      this.getModel(),
+      [
+        { role: "system", content: SUMMARY_SYSTEM_PROMPT },
+        { role: "user", content: renderTranscript(messages) },
+      ],
+      [],
+      { onTextDelta: () => {}, onReasoningDelta: () => {} },
+      signal,
+      { tracer: this.tracer, parent: this.currentTurnSpan ?? undefined }
+    );
+    const summary = result.text.trim() || "(summary unavailable)";
+    return dropped > 0
+      ? `Session summary (most recent ${messages.length} messages — ` +
+          `${dropped} oldest omitted to fit the context window):\n\n${summary}`
+      : `Session summary:\n\n${summary}`;
+  }
+
   private async doCompact(signal: AbortSignal | undefined, compactSpan: Span): Promise<string> {
     const { toSummarize, keep } = splitForCompaction(this.history);
     if (!toSummarize.length) {
@@ -371,10 +408,7 @@ export class Agent {
         [
           {
             role: "system",
-            content:
-              "You summarize coding-session transcripts. Produce a dense briefing: the user's goals, " +
-              "key decisions, files created/modified (with paths), commands run and their outcomes, " +
-              "current state, and open items. Plain text, no preamble.",
+            content: SUMMARY_SYSTEM_PROMPT,
           },
           { role: "user", content: renderTranscript(toSummarize) },
         ],
