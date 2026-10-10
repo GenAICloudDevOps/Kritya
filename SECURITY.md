@@ -179,6 +179,28 @@ of:
 
 ## AI disclosure (EU AI Act Article 50)
 
+### Regulatory posture
+
+Stated once so the rest of this section can be read in context:
+
+- **What kritya is, under the Act.** kritya is a provider of an AI _system_ —
+  an agent that reads and writes files and runs shell commands through a model
+  the user configures. It is not a provider of a general-purpose AI _model_
+  (Title VIII / Chapter V obligations attach to the model provider, not to us).
+- **Risk classification.** kritya is **not a high-risk system.** It is a
+  developer tool and none of the Annex III categories (employment, education,
+  credit, critical infrastructure, law enforcement, migration, justice,
+  biometrics) describe it. It is also not a prohibited practice under Article
+  5 — it does not manipulate behaviour, exploit vulnerability, or perform
+  social scoring or real-time remote biometric identification.
+- **What therefore applies.** The transparency obligations of Article 50, and
+  nothing else in the Act's substantive requirements. Chapter III duties
+  (risk management, technical documentation, QMS, conformity assessment,
+  registration) are high-risk obligations and do not apply to kritya. We
+  deliberately do not fabricate them.
+
+### Article 50(1) — disclosure that the user is interacting with an AI
+
 kritya is an AI agent: you launch it by name and it reads/writes files and
 runs shell commands via a model you configure, so there is no disguise to
 disclose — Article 50(1)'s "obvious from the circumstances" exemption
@@ -200,8 +222,107 @@ notes" above), and that explicit flag is itself the informed, deliberate
 invocation Article 50(1)'s "obvious from the circumstances" exemption turns
 on.
 
-**Scope.** kritya's own disclosure covers kritya as the AI _system_ under
-Article 50(1) — it does not, and cannot, discharge whatever separate
+### Article 50(2) — machine-readable marking of generated content
+
+**Known position: kritya does not embed machine-readable provenance markers in
+the content it generates, and we have decided not to add them at this time.**
+
+Article 50(2) requires providers of AI systems that generate synthetic audio,
+image, video, or text to mark the output in a machine-readable format so it
+can be detected as artificially generated. Our reasoning for the position
+above:
+
+- **Code is not the media 50(2) targets.** The obligation is drafted around
+  synthetic audio, image, video, and text published to inform the public.
+  Code written into a source file is functional rather than communicative, and
+  the Commission's own implementation work has not settled that code falls
+  within "synthetic text." We do not claim blanket exemption — we state a
+  position and will revisit it as guidance lands.
+- **A marker would not survive.** Any provenance we inserted into a source
+  file is stripped by the first formatter, compiler, bundler, or copy-paste
+  into another file. A marker that disappears on ordinary use is worse than
+  none, because it implies an assurance it cannot keep.
+- **The disclosure that does survive is the one we already make.** The
+  `Generated-By:` commit trailer travels with the change in version control,
+  which is where provenance actually matters for code.
+
+We treat this as an open item rather than a settled one: if the Code of
+Practice on marking synthetic content, or subsequent guidance, brings
+generated code clearly into scope, this position will be revisited. In the
+meantime, anyone relying on kritya output in a context that mandates
+machine-readable provenance should add their own marking step downstream.
+
+### Article 50(3) — emotion recognition and biometric categorisation
+
+Neither capability is present. kritya performs no emotion recognition and no
+biometric categorisation of any kind: it has no model, classifier, or code
+path that infers emotional state from a person or classifies an individual
+against biometric data. The Article 50(3) disclosure duty is therefore not
+triggered.
+
+To be precise about image input, since kritya does accept it: a user can
+attach an image (an `@image.png` mention) and kritya forwards it to the model
+as a base64 `image_url` content block, for providers that support vision.
+Accepting pixels is not the regulated act — 50(3) attaches to the system
+_performing_ emotion inference or biometric categorisation, and kritya adds no
+such processing of its own. What the configured model does with an attached
+image is that provider's responsibility (see "Scope" below), and a user
+attaching a picture of a person is making an ordinary tooling choice, not
+invoking a biometric system.
+
+This section exists so the point is stated rather than left to inference.
+
+### Article 50(4) — deepfakes and public-interest text
+
+kritya generates no image, audio, or video and does not produce text for the
+purpose of informing the public on matters of public interest. The 50(4)
+disclosure duty is not triggered. Where kritya's output is published in such a
+context, the user doing the publishing carries that obligation, as with any
+tool.
+
+### Plugins and MCP servers
+
+kritya supports MCP servers and agent plugins, which can add tools that ingest
+data — including images — from sources kritya itself does not control. Two
+points matter for the assessment above:
+
+- Each server and plugin is trust-gated individually, and any configuration
+  change counts as new and re-prompts, so nothing of this kind runs without an
+  explicit user decision.
+- A third-party tool that performed emotion recognition or biometric
+  categorisation would do so as that third party's system, not kritya's. We do
+  not ship such a tool, and enabling one is the user's decision and the
+  plugin author's responsibility — the same position as any other third-party
+  integration (see "Out of scope" in the threat model).
+
+### Human oversight
+
+kritya is not a high-risk system, so Article 14 does not apply to it as a
+legal matter. The property is nonetheless a deliberate design choice, and it
+is the strongest safety guarantee in the product: **every action that mutates
+state requires a human decision.**
+
+- Writes, edits, and shell commands each prompt before running. Deny rules
+  always win over allow rules. An "always allow" for a shell command is scoped
+  to that exact command, not the program name, so approving `git status` in
+  one workspace is not an approval of `git` everywhere.
+- The danger detector forces a warning prompt for destructive and irreversible
+  commands — `rm -rf`, force-push, `curl | sh`, exfiltration patterns,
+  `base64`/`eval` obfuscation — even when an allowlist rule would otherwise
+  cover them. Oversight cannot be configured away into a blanket allow.
+- Subagents that have no user present to confirm a prompt are constrained
+  rather than trusted: read-only subagents are given no write, edit, or shell
+  tool at all, and write-capable ones run isolated on their own git
+  worktree/branch with destructive commands blocked outright.
+- Headless mode requires an explicit `--trust` opt-in before workspace-local
+  configuration takes effect, so autonomy is never inherited silently.
+- An OS-enforced sandbox (`bwrap` / `sandbox-exec`) confines writes to the
+  workspace as a backstop behind all of the above, and `/doctor` runs a live
+  canary proving containment actually holds on the current machine.
+
+### Scope
+
+kritya's own disclosure covers kritya as the AI _system_ under Article 50(1) — it does not, and cannot, discharge whatever separate
 obligations your chosen model provider (NVIDIA, OpenAI, Anthropic, etc.) has
 as a GPAI _model_ provider under Title VIII. Those are a different party's
 responsibility under the Act.
