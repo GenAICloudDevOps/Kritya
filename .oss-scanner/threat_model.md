@@ -31,6 +31,14 @@ permission system should have blocked" is.
    meant to stay inside the workspace. If the sandbox binary is absent,
    kritya proceeds unsandboxed **with a warning**. That fallback is
    intentional and documented.
+
+   The sandbox is also the **backstop for the injection-detection gap
+   described in "Danger detection is best-effort" below.** If the sandbox
+   cannot run in a given environment (e.g. a container that forbids namespace
+   creation, where `bwrap` fails with `Operation not permitted`), the
+   containment property for that deepest class of injection is genuinely
+   untested there — findings of that shape should be read accordingly.
+
 3. **Untrusted input.** Three sources:
    - **Repository contents** — file contents, filenames, and command output
      read during a task. This is untrusted and is the primary vector for
@@ -46,6 +54,35 @@ permission system should have blocked" is.
    default. **Privacy mode** (`--privacy`, `KRITYA_PRIVACY=1`, or
    `"privacyMode": true`) disables all three. Privacy mode is a
    confidentiality control and its bypass is a security bug.
+6. **Output redaction is display-only.** Shell output is scanned for secrets
+   and masked before it is shown (`[REDACTED: <kind>]`). Note this happens
+   _after_ the command has already run: a secret can reach disk (e.g.
+   `curl ... > file`) before redaction ever sees it. Redaction is therefore a
+   display-hygiene measure, not a write-time control. It is in scope as an
+   information-flow finding (does a secret reach somewhere it should not?),
+   but an "the secret appeared in output before being redacted" observation
+   is not a defect in itself — the write-time control is the secret scan on
+   file writes, and the sandbox confines where writes can land.
+
+## Danger detection is best-effort; the sandbox is the guarantee
+
+Command inspection (`src/permissions/danger.ts`) is **pattern matching over
+command text, not a shell parser.** It normalises one specific evasion
+(`$IFS` in place of a space) and flags several ways of running an opaque
+payload (`eval`, `base64 -d`, an interpreter's `-c`/`-e`, PowerShell's
+`-EncodedCommand`), all of which force a warning prompt even under an
+allowlist rule.
+
+It cannot catch a command that reassembles a dangerous word at runtime without
+those constructs — e.g. `a=r;b=m;$a$b -rf /`, or piping through `tr`/`rev`.
+There is no literal substring left to match.
+
+**This is a documented, accepted limitation, not a vulnerability.** The
+OS-enforced sandbox — not this detector — is the actual guarantee that a
+reassembled destructive command cannot escape the workspace. A report that
+"the danger detector can be evaded" is expected and already known; the
+interesting question is always whether containment (the sandbox) held.
+Sandbox-escape findings are rated Critical (see above).
 
 ## Severity guidance
 
@@ -114,6 +151,29 @@ permission system should have blocked" is.
   gate above (e.g. auto-approving a prompt the CLI would ask about).
 - Denial of service against the provider's API.
 - Any issue that requires the user to pass a secret on the command line.
+
+## Relation to the OWASP Top 10
+
+kritya is a local CLI that runs with the user's own privileges — not a web
+application. Several Top 10 categories have no corresponding surface here, so
+we map them explicitly rather than leave the gap unstated:
+
+| Category                                     | Status                                                                                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| A01 Broken Access Control                    | Covered: permission gate, deny rules always win, workspace confinement.                                                              |
+| A02 Cryptographic Failures                   | Covered: content secret scanning, output redaction, key-format detection.                                                            |
+| A03 Injection                                | **Partial by design.** Command-text inspection is best-effort (see above); the sandbox is the actual control for the residual class. |
+| A04 Insecure Design                          | Covered: documented threat model, staged workflow, fail-closed strict sandbox mode.                                                  |
+| A05 Security Misconfiguration                | Covered: workspace trust gating, hash-pinned so a later `git pull` re-prompts.                                                       |
+| A06 Vulnerable & Outdated Components         | Covered: `npm audit` behind a reviewed allowlist, Socket supply-chain scanning, Dependabot.                                          |
+| A07 Identification & Authentication Failures | **Not applicable:** no authentication surface in a local CLI.                                                                        |
+| A08 Software & Data Integrity Failures       | Covered: install-script allowlist, MCP/plugin trust gates.                                                                           |
+| A09 Security Logging & Monitoring Failures   | Covered: audit log, with privacy mode to disable it.                                                                                 |
+| A10 Server-Side Request Forgery              | Covered: private/loopback/metadata hosts refused; untrusted web/MCP content is marked as data, never instructions.                   |
+
+Two categories are intentionally not applicable and two are partial with the
+gap named. A finding that reduces to "this is a local tool without an auth
+layer" is not a defect.
 
 ## Reporting and patches
 
