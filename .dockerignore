@@ -1,0 +1,36 @@
+# Keep the build context to the files the scanner actually needs. The scanner
+# builds this Dockerfile with the repository as context, so anything not needed
+# to build kritya is dead weight at best and breaks the build at worst
+# (local node_modules/ from a different platform, editor state, logs).
+
+# Dependencies are installed inside the image by `npm ci` from the lockfile.
+node_modules
+
+# Build output is produced inside the image by `npm run build`.
+dist
+release
+
+# Test/coverage artifacts are not needed to build.
+coverage
+
+# Local machine and editor state.
+.git
+.github
+.vscode
+.idea
+.workbuddy-ai
+.claude
+.kritya
+.playwright-mcp
+.oss-scanner-enrollment
+
+# Secrets and logs.
+.env
+*.log
+npm.txt
+socket_temp.txt
+otelcol
+
+# Docs and media that are not part of the build.
+screenshots
+docs
