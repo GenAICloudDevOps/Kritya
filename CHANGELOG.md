@@ -4,6 +4,29 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.49-beta] — 2026-10-10
+
+### Added
+
+- Groq's `openai/gpt-oss-120b` and `llama-3.3-70b-versatile` are now in the
+  model picker, each with the 131,072-token context window Groq documents.
+  `openai/gpt-oss-120b` is the default for the provider.
+
+### Fixed
+
+- **`-p groq` with no `-m` sent an NVIDIA model id to the Groq API and
+  failed.** The fallback model was a single hardcoded NVIDIA id, so switching
+  provider without naming a model kept the old provider's default. A curated
+  model now carries the provider it belongs to, and the default resolves per
+  provider — `-p groq` picks a Groq model, `-p nvidia` picks the NVIDIA one.
+  Providers with no curated models keep the previous fallback, since those are
+  callers passing an explicit provider/model pair.
+- The model picker listed the NVIDIA catalog regardless of the active
+  provider, with nothing to say which models belonged to which. It now leads
+  with the active provider's models, labels each entry with its provider, and
+  falls back to showing the whole registry when the provider has no curated
+  models of its own.
+
 ## [0.8.48-beta] — 2026-10-10
 
 ### Added
