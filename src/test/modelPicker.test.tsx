@@ -29,7 +29,13 @@ function plain(frame: string | undefined): string {
 test("the currently selected curated model is marked '(current)'", async () => {
   const current = CURATED_MODELS[0];
   const { lastFrame } = await renderReady(
-    <ModelPicker current={current.id} customModels={[]} onSelect={() => {}} onCancel={() => {}} />
+    <ModelPicker
+      current={current.id}
+      provider="nvidia"
+      customModels={[]}
+      onSelect={() => {}}
+      onCancel={() => {}}
+    />
   );
   assert.match(plain(lastFrame()), new RegExp(`${current.label} \\(current\\)`));
 });
@@ -38,6 +44,7 @@ test("custom models from config appear alongside the curated list, marked as cus
   const { lastFrame } = await renderReady(
     <ModelPicker
       current="nvidia/some-other-model"
+      provider="nvidia"
       customModels={[{ id: "acme/foo", label: "Foo Model" }]}
       onSelect={() => {}}
       onCancel={() => {}}
@@ -52,6 +59,7 @@ test("a custom model with no label falls back to showing its id", async () => {
   const { lastFrame } = await renderReady(
     <ModelPicker
       current=""
+      provider="nvidia"
       customModels={[{ id: "acme/bar" }]}
       onSelect={() => {}}
       onCancel={() => {}}
@@ -65,6 +73,7 @@ test("selecting the first item calls onSelect with the curated model's id", asyn
   const { stdin } = await renderReady(
     <ModelPicker
       current=""
+      provider="nvidia"
       customModels={[]}
       onSelect={(id) => {
         selected = id;
@@ -81,6 +90,7 @@ test("escape cancels model selection", async () => {
   const { stdin } = await renderReady(
     <ModelPicker
       current=""
+      provider="nvidia"
       customModels={[]}
       onSelect={() => {}}
       onCancel={() => {
@@ -90,4 +100,39 @@ test("escape cancels model selection", async () => {
   );
   await press(stdin, "\x1B");
   assert.equal(cancelled, true);
+});
+
+test("the active provider's models are listed first, with the provider shown in each hint", async () => {
+  const { lastFrame } = await renderReady(
+    <ModelPicker
+      current=""
+      provider="groq"
+      customModels={[]}
+      onSelect={() => {}}
+      onCancel={() => {}}
+    />
+  );
+  const frame = plain(lastFrame());
+  // The Groq default appears above every NVIDIA entry.
+  const groqAt = frame.indexOf("GPT-OSS 120B");
+  const nvidiaAt = frame.indexOf("Nemotron");
+  assert.ok(groqAt >= 0, "expected a Groq model in the list");
+  assert.ok(nvidiaAt >= 0, "expected the NVIDIA catalog to still be reachable");
+  assert.ok(groqAt < nvidiaAt, "expected the active provider's models to lead the list");
+  assert.match(frame, /openai\/gpt-oss-120b · groq/);
+});
+
+test("a provider with no curated models falls back to showing the whole registry", async () => {
+  const { lastFrame } = await renderReady(
+    <ModelPicker
+      current=""
+      provider="ollama"
+      customModels={[]}
+      onSelect={() => {}}
+      onCancel={() => {}}
+    />
+  );
+  const frame = plain(lastFrame());
+  assert.match(frame, /Nemotron/);
+  assert.match(frame, /GPT-OSS 120B/);
 });

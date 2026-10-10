@@ -1007,6 +1007,7 @@ export function App({
       {phase === "model" && (
         <ModelPicker
           current={model}
+          provider={provider}
           customModels={config.customModels ?? []}
           onSelect={(id) => {
             setPhase("input");

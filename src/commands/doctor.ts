@@ -13,7 +13,7 @@ import {
   resolveProvider,
 } from "../config/config.js";
 import type { CliConfig, McpServerConfig } from "../config/config.js";
-import { DEFAULT_MODEL, contextWindowFor } from "../config/models.js";
+import { defaultModelFor, contextWindowFor } from "../config/models.js";
 import { retentionDaysFor } from "../config/retention.js";
 import { assertJsonWithinLimits } from "../config/jsonSafety.js";
 import { isGitRepo } from "../agent/worktree.js";
@@ -224,7 +224,7 @@ function providerSection(
   const model = resolveEffectiveModel(
     provider.name,
     [config.providers?.[provider.name]?.model, legacyGlobalModel(config, provider.name)],
-    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : defaultModelFor(provider.name)
   );
   checks.push(
     ok(`model: ${model} (context ${contextWindowFor(model, config).toLocaleString("en-US")})`)

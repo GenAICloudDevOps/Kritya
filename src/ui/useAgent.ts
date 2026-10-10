@@ -9,7 +9,7 @@ import {
   saveProviderModel,
   type CliConfig,
 } from "../config/config.js";
-import { DEFAULT_MODEL, contextWindowFor, displayModelId } from "../config/models.js";
+import { defaultModelFor, contextWindowFor, displayModelId } from "../config/models.js";
 import {
   ProviderClient,
   RetryExhaustedError,
@@ -516,7 +516,7 @@ export function useAgent({
           name === "switchyard" ? SWITCHYARD_ROUTE_ID : undefined,
           modelRef.current,
         ],
-        name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+        name === "switchyard" ? SWITCHYARD_ROUTE_ID : defaultModelFor(name)
       );
       let note = `Switched provider to ${name} — conversation history kept.`;
       if (targetModel !== modelRef.current) {

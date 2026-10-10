@@ -8,7 +8,7 @@ import {
   privacyModeFor,
   resolveProvider,
 } from "./config/config.js";
-import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
+import { defaultModelFor, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import { ProviderClient } from "./provider/client.js";
@@ -73,7 +73,7 @@ export async function createEngineSession(
   let currentModel = resolveEffectiveModel(
     provider.name,
     [opts.model, providerDefaultModel, legacyGlobalModel(config, provider.name)],
-    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : defaultModelFor(provider.name)
   );
   const sampling = {
     temperature: provider.temperature,

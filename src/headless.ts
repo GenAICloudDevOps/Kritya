@@ -10,7 +10,7 @@ import {
   privacyModeFor,
   resolveProvider,
 } from "./config/config.js";
-import { DEFAULT_MODEL, contextWindowFor } from "./config/models.js";
+import { defaultModelFor, contextWindowFor } from "./config/models.js";
 import { PermissionManager } from "./permissions/permissions.js";
 import { loadRules } from "./permissions/rules.js";
 import {
@@ -201,7 +201,7 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   const model = resolveEffectiveModel(
     provider.name,
     [args.model, providerDefaultModel, legacyGlobalModel(config, provider.name)],
-    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : DEFAULT_MODEL
+    provider.name === "switchyard" ? SWITCHYARD_ROUTE_ID : defaultModelFor(provider.name)
   );
   const staleModelWarning = staleSwitchyardModelWarning(provider.name, model, args.model);
   if (staleModelWarning) process.stderr.write(`${staleModelWarning}\n`);

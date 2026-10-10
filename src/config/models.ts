@@ -6,6 +6,19 @@ export interface ModelInfo {
   note?: string;
   /** Context window in tokens; drives auto-compaction and the ctx meter. */
   contextWindow?: number;
+  /**
+   * Provider this model belongs to (matches a key in `BUILTIN_PROVIDERS`).
+   * Models without one are the NVIDIA catalog, which is what this registry
+   * started as — so an omitted `provider` means "nvidia" rather than
+   * "any provider", and the picker can group without every entry needing
+   * the field spelled out.
+   */
+  provider?: string;
+}
+
+/** The provider a `ModelInfo` belongs to, defaulting the historical NVIDIA catalog. */
+export function providerOfModel(m: ModelInfo): string {
+  return m.provider ?? "nvidia";
 }
 
 /** Fallback context window when neither config nor the registry knows the model. */
@@ -74,9 +87,57 @@ export const CURATED_MODELS: ModelInfo[] = [
     note: "fast + cheap",
     contextWindow: 1_048_576,
   },
+  // Groq (https://console.groq.com/docs/models). Context windows verified
+  // against the docs table; both are 131,072.
+  {
+    id: "openai/gpt-oss-120b",
+    label: "GPT-OSS 120B",
+    provider: "groq",
+    note: "default",
+    contextWindow: 131_072,
+  },
+  {
+    id: "llama-3.3-70b-versatile",
+    label: "Llama 3.3 70B Versatile",
+    provider: "groq",
+    contextWindow: 131_072,
+  },
 ];
 
+/** Models registered for one provider, in registry order. */
+export function modelsForProvider(provider: string): ModelInfo[] {
+  return CURATED_MODELS.filter((m) => providerOfModel(m) === provider);
+}
+
+/**
+ * The provider a curated model belongs to, or undefined for a model this
+ * registry doesn't know (custom models, arbitrary `-m` ids).
+ */
+export function curatedProviderFor(modelId: string): string | undefined {
+  const m = CURATED_MODELS.find((x) => x.id === modelId);
+  return m ? providerOfModel(m) : undefined;
+}
+
+/** The curated default model for a provider, if it has one. */
+export function defaultModelForProvider(provider: string): string | undefined {
+  const models = modelsForProvider(provider);
+  if (models.length === 0) return undefined;
+  // Prefer an entry flagged `note: "default"`, else the first registered.
+  return (models.find((m) => m.note === "default") ?? models[0]).id;
+}
+
 export const DEFAULT_MODEL = CURATED_MODELS[0].id;
+
+/**
+ * The default model id for a given provider. Providers with a curated list use
+ * their own default, so `-p groq` with no `-m` sends a Groq model id rather
+ * than the NVIDIA default (which the Groq API would reject). Providers with no
+ * curated models keep the historical behaviour of falling back to the NVIDIA
+ * default, since those are callers passing an arbitrary provider/model pair.
+ */
+export function defaultModelFor(provider: string): string {
+  return defaultModelForProvider(provider) ?? DEFAULT_MODEL;
+}
 
 /**
  * Context window for a model. Explicit config.contextWindow always wins; then
