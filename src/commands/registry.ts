@@ -20,6 +20,14 @@ import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
 import { recordCommandUse } from "../ui/recentCommands.js";
 import {
+  allTemplates,
+  applyTemplate,
+  isValidName,
+  lastUserText,
+  loadTemplates,
+  saveTemplates,
+} from "./templates.js";
+import {
   gitBranch,
   gitCommitsAhead,
   gitDefaultBranch,
@@ -178,6 +186,11 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/summarize",
     description: "one-shot summary of the session so far (history is left untouched)",
+    category: SESSION,
+  },
+  {
+    name: "/template",
+    description: "prompt templates: list, /template <name> [words], /template save|delete <name>",
     category: SESSION,
   },
   { name: "/clear", description: "start a fresh conversation", category: SESSION },
@@ -1010,6 +1023,67 @@ const handlers: Record<string, CommandHandler> = {
         ctx.setActivity(null);
         ctx.setPhase("input");
       });
+  },
+  "/template": (ctx) => {
+    ctx.addItem({ kind: "user", text: ctx.raw.trim() });
+    const say = (text: string) => ctx.addItem({ kind: "info", text });
+    const custom = loadTemplates();
+    const all = allTemplates(custom);
+    const arg = ctx.arg.trim();
+
+    if (!arg) {
+      const names = Object.keys(all).sort();
+      if (!names.length) {
+        say("No prompt templates yet. Save your last message as one: /template save <name>");
+        return;
+      }
+      const lines = names.map((n) =>
+        custom[n] !== undefined ? `  ${n}  (yours)` : `  ${n}  (built-in)`
+      );
+      say(
+        "Prompt templates — `/template <name> [words...]` drops one into the input line:\n" +
+          lines.join("\n") +
+          "\n\nSave your last message: `/template save <name>` · remove one: `/template delete <name>`"
+      );
+      return;
+    }
+
+    const [sub, ...rest] = arg.split(/\s+/);
+    if (sub === "save" || sub === "delete") {
+      const name = rest[0] ?? "";
+      if (!isValidName(name)) {
+        say(`Usage: /template ${sub} <name> — letters, numbers, - and _ only, max 32 chars.`);
+        return;
+      }
+      if (sub === "save") {
+        const text = lastUserText(ctx.agent.history);
+        if (!text) {
+          say("Nothing to save — send a message first, then `/template save <name>`.");
+          return;
+        }
+        custom[name] = text;
+        saveTemplates(custom);
+        say(`Saved template "${name}" (${text.length} chars). Use it: /template ${name}`);
+      } else {
+        if (custom[name] === undefined) {
+          say(`No saved template named "${name}". Built-ins can't be deleted.`);
+          return;
+        }
+        delete custom[name];
+        saveTemplates(custom);
+        say(`Deleted template "${name}".`);
+      }
+      return;
+    }
+
+    const template = all[sub];
+    if (template === undefined) {
+      say(`No template named "${sub}". See /template for the list.`);
+      return;
+    }
+    // Into the input line, not executed: the user edits and hits Enter.
+    ctx.setPrefill(applyTemplate(template, rest.join(" ")));
+    say(`Template "${sub}" is in the input line — edit it and hit Enter. Nothing was sent.`);
   },
   "/summarize": (ctx) => {
     ctx.addItem({ kind: "user", text: "/summarize" });
