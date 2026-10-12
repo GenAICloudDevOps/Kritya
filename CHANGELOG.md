@@ -4,6 +4,33 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.50-beta] — 2026-10-11
+
+### Added
+
+- **`/pr` opens a pull request without leaving the session.** It pushes the
+  current branch and opens a GitHub PR, so the "commit, switch to a browser,
+  write the body, paste the URL back" loop collapses into one command.
+- **`/summarize` condenses the conversation.** It selects the messages worth
+  summarizing, prompts for a summary, and hands the result back — for the
+  point where a long session's history costs more context than it returns.
+- **`/template` manages reusable prompt templates.** A template module with
+  its own handler, registration and tests, so a prompt you use often is
+  something you invoke rather than retype.
+
+### Changed
+
+- The Groq catalog now lists `openai/gpt-oss-20b`. The previous second entry,
+  `llama-3.3-70b-versatile`, is enterprise-only and was unreachable on the
+  free tier the provider offers — listing it invited a 404 that read like a
+  kritya bug. `openai/gpt-oss-120b` remains the provider default.
+
+### Security
+
+- Bumped `github/codeql-action` (init/analyze/upload-sarif),
+  `step-security/harden-runner`, and `actions/upload-artifact` in the
+  workflows. Dependency bumps: `openai`, `docx`, `electron`.
+
 ## [0.8.49-beta] — 2026-10-10
 
 ### Added
