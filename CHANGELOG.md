@@ -4,6 +4,27 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.52-beta] — 2026-10-13
+
+### Changed
+
+- **Lint now type-checks the async paths it never looked at.** The config used
+  `tseslint.configs.recommended`, which never loads the type checker, so
+  `no-floating-promises`, `no-misused-promises` and `await-thenable` were all
+  off. In a CLI whose core is async end to end — permission prompts, audit
+  writes, MCP calls, background processes, subagents — a dropped `await`
+  compiled clean and linted clean, then surfaced as an ordering bug at runtime.
+  The three rules are on for `src/` and off for `src/test/**`, where firing a
+  promise without awaiting it is usually the point: 1400 of the 1410 findings
+  were there. The ten in production code are fixed — the MCP reply helper is
+  typed `void` at its one definition instead of at its seven call sites, the
+  headless entry gained the `.catch` it was missing, and two async callbacks in
+  the UI are detached explicitly.
+- **Commits are type-checked before they leave the machine.** The `pre-commit`
+  hook ran only `lint-staged`, so a type error could be committed and caught
+  only in CI. It now runs `tsc --noEmit` as well, with the same compiler the
+  build uses (TypeScript 7), for about three seconds per commit.
+
 ## [0.8.51-beta] — 2026-10-13
 
 ### Changed
