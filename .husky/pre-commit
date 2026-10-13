@@ -1,1 +1,15 @@
 npx lint-staged
+
+# Type-check with the same compiler the build uses. `tsc` is TypeScript 7
+# (@typescript/native) — the compiler that actually builds this project — not
+# the `tsc6` that exists only so typescript-eslint has the older compiler API
+# (see CONTRIBUTING, "Why are there two TypeScript packages?"). Checking with a
+# different compiler than the build would be worse than not checking at all: a
+# diagnostic one reports and the other accepts is a false alarm at the worst
+# possible moment.
+#
+# Whole project, not just the staged files: a change in one file breaking
+# another is exactly what this is here to catch. Expect it to add a few seconds
+# to every commit — `git commit --no-verify` when you knowingly want to land
+# something that does not compile yet.
+npx tsc --noEmit

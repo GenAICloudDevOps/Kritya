@@ -32,6 +32,11 @@ You'll need a provider API key (see the README) — get one at
   `src/undo`, and helpers should come with a `node:test` case under `src/test`.
 - **Keep the build green:** `npm run build` (strict TypeScript) and `npm test`
   must pass. `npm run lint` and `npm run format:check` should be clean.
+- **Commits are gated locally.** The `pre-commit` hook runs `lint-staged`
+  (eslint --fix + prettier on the staged files) and then `tsc --noEmit` over
+  the whole project, so a type error is caught before it reaches CI rather than
+  only there. `git commit --no-verify` skips both when you deliberately want to
+  land something that does not compile yet.
 - **Match the surrounding style.** Small, focused modules; comments explain
   _why_, not _what_.
 - **Avoid new dependencies** unless there's a clear, load-bearing reason. Part
