@@ -16,6 +16,7 @@ import stringWidth from "string-width";
 import type { Agent } from "../agent/loop.js";
 import { gitDiffStat } from "../git/git.js";
 import type { CliConfig } from "../config/config.js";
+import { debugLog } from "../config/debug.js";
 import { modelDisplaySlug } from "../config/models.js";
 import { setStderrSink } from "../stderr.js";
 import { openInEditor } from "./openInEditor.js";
@@ -220,7 +221,12 @@ export function App({
       ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", ...loadIgnorePatterns(workspace)],
     })
       .then((files) => setFileList(files.sort().slice(0, 2000)))
-      .catch(() => {});
+      .catch((err) => {
+        // A failed refresh must not leave the previous workspace's files
+        // behind for @-mentions: clear, and leave a trail in the debug log.
+        debugLog("refreshFileList", err);
+        setFileList([]);
+      });
   }, [workspace]);
 
   useEffect(refreshFileList, [refreshFileList]);
