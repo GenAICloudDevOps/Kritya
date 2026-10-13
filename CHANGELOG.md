@@ -4,6 +4,20 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.51-beta] — 2026-10-13
+
+### Changed
+
+- **CI runs the test suite on every live Node line, on every OS.** The matrix
+  was 22.x and 24.x with 24.x on Ubuntu alone, so Node 26 — the line that takes
+  over Active LTS this month — was executed nowhere, even though `engines`
+  claims `>=22.19.0` and `@types/node` compiles against 26. It is now 22.x,
+  24.x and 26.x on Ubuntu, Windows and macOS: 36 shard jobs instead of 16. Lint
+  and format stay at once per OS rather than once per cell — a Node version
+  does not change their result, but Windows line endings still do. `unsharded`,
+  `package`, `build.yml` and `publish.yml` deliberately stay on 22.x: the
+  release path reproduces one environment rather than widening coverage.
+
 ## [0.8.50-beta] — 2026-10-11
 
 ### Added
