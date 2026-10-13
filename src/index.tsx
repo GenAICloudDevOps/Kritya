@@ -276,7 +276,16 @@ if (args.prompt) {
     trust: args.trust,
     timeoutSeconds: args.timeoutSeconds,
     privacy: args.privacy,
-  }).then((code) => process.exit(code));
+  })
+    .then((code) => process.exit(code))
+    // runHeadless is documented to resolve with an exit code rather than
+    // throw, so reaching here means a bug in that path. Fail loudly with a
+    // non-zero code instead of letting Node print an unhandled-rejection
+    // trace — a CI job reading `$?` deserves a real exit status either way.
+    .catch((err: unknown) => {
+      console.error(err);
+      process.exit(1);
+    });
 } else {
   runInteractive();
 }

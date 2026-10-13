@@ -720,7 +720,11 @@ export function App({
       costReport,
       statusReport,
       gitDiffStat,
-      exit: exitAfterFlush,
+      // exitAfterFlush is async because it waits for Ink to flush the final
+      // render, but `exit` is typed void: no caller can do anything with the
+      // promise, so the detach is marked here rather than by widening the
+      // interface to `void | Promise<void>` to silence the lint rule.
+      exit: () => void exitAfterFlush(),
     };
     void runCommand(cmd, ctx);
   };
@@ -1117,7 +1121,10 @@ export function App({
                 setCmdIndex(0);
                 setFileIndex(0);
               }}
-              onSubmit={handleSubmit}
+              // handleSubmit is async only because it awaits runAgent, which
+              // catches its own errors and renders them as transcript items —
+              // so there is no rejection left for this callback to surface.
+              onSubmit={(value) => void handleSubmit(value)}
             />
           </Box>
           {suggestions.length > 0 && (

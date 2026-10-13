@@ -363,8 +363,14 @@ class McpConnection implements McpServerConnection {
    * server can tell the difference between an unsupported client and a hung one.
    */
   private onServerRequest(id: number, method: string, params?: unknown): void {
-    const reply = (body: Partial<JsonRpcMessage>) =>
-      this.transport.send({ jsonrpc: "2.0", id, ...body }, CONNECT_TIMEOUT_MS).catch(() => {});
+    // Typed void on purpose: every reply is best-effort, its own `.catch`
+    // already keeps a failed send from becoming an unhandled rejection, and no
+    // caller of `reply` has anything to do with the promise. The explicit
+    // return type is what tells that to callers — and to no-floating-promises,
+    // which cannot see through the `.catch` above.
+    const reply = (body: Partial<JsonRpcMessage>): void => {
+      void this.transport.send({ jsonrpc: "2.0", id, ...body }, CONNECT_TIMEOUT_MS).catch(() => {});
+    };
 
     if (method === "roots/list") {
       reply({
