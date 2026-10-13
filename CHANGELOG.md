@@ -4,6 +4,28 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.53-beta] — 2026-10-13
+
+### Changed
+
+- **Binary files are refused by `read_file` instead of being dumped as garbage.**
+  A file with a NUL byte in its first 8 KB is rejected with an error that
+  points `.pdf`, `.docx`, `.xlsx` and `.pptx` at `read_document`, which is
+  the tool that can actually parse them.
+- **Unknown config keys are warned about instead of silently ignored.** A
+  typo like `temprature` or a stale key like `maxStep` used to load without a
+  word; `loadConfig` now lists the ignored keys so the misconfiguration is
+  visible.
+- **Grep skips ultra-long lines.** Lines over 10,000 characters are skipped
+  during regex matching, keeping a pathological line from stalling the
+  event loop.
+- **A failed `@`-mention file refresh clears the list instead of showing
+  stale files.** The glob failure is logged and the list is emptied, so the
+  picker never offers files that no longer match.
+- **Dependencies bumped.** docx 9.9.0 → 9.11.0, openai 7.30.1 → 7.32.0,
+  electron 44.7.0 → 44.7.1, prettier 3.9.9 → 3.9.10, @types/node
+  26.6.4 → 26.6.5, typescript-eslint 8.71.1 → 8.71.2.
+
 ## [0.8.52-beta] — 2026-10-13
 
 ### Changed
