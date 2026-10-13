@@ -19,8 +19,9 @@ npm test
 npm run dev        # run from source against a scratch project
 ```
 
-Requires Node >=22.19.0 (undici 8 needs it). CI runs 22.x and 24.x on
-Ubuntu, plus 22.x on Windows and macOS.
+Requires Node >=22.19.0 (undici 8 needs it). CI runs 22.x, 24.x and 26.x on
+Ubuntu, Windows and macOS — the full claimed range on every OS the package
+ships to.
 
 You'll need a provider API key (see the README) — get one at
 [build.nvidia.com](https://build.nvidia.com).

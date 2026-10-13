@@ -212,17 +212,30 @@ jobs:
         # run to run. Bump the list if the suite grows a lot.
         shard: [1, 2, 3, 4]
         cell:
-          # Both Node versions the package claims to support (`engines:
-          # >=22`): 22.x is the floor, 24.x is the Active LTS most users
-          # will actually be on once 22 drops to maintenance. Testing only
-          # the floor meant the newer half of that range was never exercised.
+          # Every live Node line (`engines: >=22`, so 22/24/26 are all
+          # claimed) against every OS the package ships to. 22.x is the
+          # floor, 24.x the outgoing Active LTS, 26.x the line that takes
+          # over Active LTS this month — testing only the floor and 24 left
+          # the newest claimed version unexercised on any platform.
+          #
+          # 9 cells x 4 shards = 36 shard jobs (was 16). Cheap on a public
+          # repo and shards run in parallel, so wall time barely moves; if
+          # the queue ever matters, drop 26.x from Windows/macOS first —
+          # a Node-version difference is far more likely to show on Linux
+          # than to be OS-specific.
+          #
           # The ubuntu + 22.x cell additionally records raw coverage, merged
           # and threshold-checked in the `coverage` job below; every cell
           # still runs the full suite across its 4 shards.
           - { os: ubuntu-latest, node: 22.x, coverage: true }
           - { os: ubuntu-latest, node: 24.x, coverage: false }
+          - { os: ubuntu-latest, node: 26.x, coverage: false }
           - { os: windows-latest, node: 22.x, coverage: false }
+          - { os: windows-latest, node: 24.x, coverage: false }
+          - { os: windows-latest, node: 26.x, coverage: false }
           - { os: macos-latest, node: 22.x, coverage: false }
+          - { os: macos-latest, node: 24.x, coverage: false }
+          - { os: macos-latest, node: 26.x, coverage: false }
     steps:
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
@@ -239,14 +252,16 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      # Lint/format run once per cell (shard 1) rather than per shard: still
-      # per-OS, since Windows checkouts can differ in line endings.
+      # Lint/format run once per OS (shard 1 of the 22.x cell) rather than
+      # once per cell: a lint or Prettier result does not depend on the Node
+      # version, but it can depend on the OS, since Windows checkouts differ
+      # in line endings. Gating on node == 22.x keeps that OS coverage while
+      # dropping the two redundant repeats per OS that the 9-cell matrix
+      # would otherwise add.
       - run: npm run lint
-        if: matrix.shard == 1
-      # Kept per-OS rather than moved above: Windows checkouts can differ in
-      # line endings, so this isn't purely a repeat of the Linux run.
+        if: matrix.shard == 1 && matrix.cell.node == '22.x'
       - run: npm run format:check
-        if: matrix.shard == 1
+        if: matrix.shard == 1 && matrix.cell.node == '22.x'
 
       # Coverage cells record raw coverage for their shard instead of just
       # running it; the `coverage` job merges all four shards and enforces
