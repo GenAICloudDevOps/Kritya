@@ -96,6 +96,36 @@ test("write then read roundtrip", async () => {
   assert.ok(out.includes("line2"));
 });
 
+test("read_file refuses binary files", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  // PNG magic + a NUL byte: the same binary sniff grep uses.
+  await fs.writeFile(
+    path.join(ws, "img.png"),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02])
+  );
+  await assert.rejects(
+    () => readFileTool.execute({ path: "img.png" }, ctx),
+    /looks like a binary file.*read_document/
+  );
+});
+
+test("grep skips ultra-long lines", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  await writeFileTool.execute(
+    {
+      path: "min.js",
+      content: `x${"a".repeat(20000)}needle`,
+    },
+    ctx
+  );
+  await writeFileTool.execute({ path: "normal.txt", content: "has needle here" }, ctx);
+  const out = await grepTool.execute({ pattern: "needle", path: "." }, ctx);
+  assert.ok(out.includes("normal.txt"));
+  assert.ok(!out.includes("min.js"));
+});
+
 test("edit requires unique old_string", async () => {
   const ws = await makeWorkspace();
   const ctx = { workspace: ws };

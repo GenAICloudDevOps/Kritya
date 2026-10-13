@@ -135,3 +135,46 @@ test("loadConfig drops mcpServers env/header entries over the size limit", async
   assert.equal(loaded.mcpServers?.demo?.env?.OK, "fine");
   assert.equal(loaded.mcpServers?.demo?.env?.TOO_BIG, undefined);
 });
+
+test("unknownConfigKeys flags typo'd keys and accepts every CliConfig key", async () => {
+  const { unknownConfigKeys } = await import(`../config/config.js?t=${Date.now()}`);
+  assert.deepEqual(unknownConfigKeys({ maxStep: 5, temprature: 0.5 }), ["maxStep", "temprature"]);
+  assert.deepEqual(
+    unknownConfigKeys({
+      apiKey: "x",
+      model: "m",
+      baseUrl: "u",
+      provider: "nvidia",
+      providers: {},
+      customModels: [],
+      pricing: {},
+      contextWindow: 1,
+      maxSteps: 1,
+      tokenBudget: 1,
+      toolTimeoutSeconds: 1,
+      subagentConcurrency: 1,
+      subagentTimeoutSeconds: 1,
+      subagentMaxSteps: 1,
+      subagentWriteMaxSteps: 1,
+      mcpServers: {},
+      sandboxExec: "auto",
+      retentionDays: 1,
+      audit: "on",
+      otel: "off",
+      commitAttribution: true,
+      privacyMode: false,
+    }),
+    []
+  );
+});
+
+test("loadConfig still loads a config containing unknown keys", async () => {
+  await freshHome();
+  const { loadConfig, CONFIG_FILE } = await import(`../config/config.js?t=${Date.now()}`);
+  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
+  await fs.writeFile(
+    CONFIG_FILE,
+    JSON.stringify({ provider: "nvidia", maxStep: 5, temprature: 0.5 })
+  );
+  assert.equal(loadConfig().provider, "nvidia");
+});
