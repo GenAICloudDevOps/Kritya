@@ -6,7 +6,7 @@ export const readFileTool: ToolDef = {
   name: "read_file",
   description:
     "Read a text file from the workspace. Returns the content with line numbers. " +
-    "Use offset/limit for large files.",
+    "Use offset/limit for large files. Refuses binary files — use read_document for .pdf/.docx/.xlsx/.pptx.",
   parameters: {
     type: "object",
     properties: {
@@ -21,7 +21,17 @@ export const readFileTool: ToolDef = {
   resultSummary: (output) => countLines(output, "line", "lines"),
   async execute(args, ctx) {
     const abs = resolveSafe(ctx.workspace, String(args.path));
-    const content = await fs.readFile(abs, "utf8");
+    const buffer = await fs.readFile(abs);
+    // Binary sniff, same as grep: a NUL byte in the first 8KB means this is
+    // not text. Decoding it as UTF-8 anyway would dump garbage into the
+    // context and burn tokens on bytes no one can read.
+    if (buffer.subarray(0, 8000).includes(0)) {
+      throw new Error(
+        `"${args.path}" looks like a binary file — read_file only reads text. ` +
+          `For .pdf, .docx, .xlsx, or .pptx use read_document instead.`
+      );
+    }
+    const content = buffer.toString("utf8");
     const lines = content.split("\n");
     const offset = Math.max(1, Number(args.offset) || 1);
     const limit = Number(args.limit) || 2000;
