@@ -13,6 +13,14 @@ import { loadIgnorePatterns } from "./ignore.js";
 
 const MAX_MATCHES = 200;
 const MAX_FILE_BYTES = 1024 * 1024;
+/**
+ * Longest line regex-tested. A minified file is a single ~1MB line, and
+ * safeCompileRegex only blocks nested-quantifier shapes — any other
+ * ReDoS-shaped pattern tested against that one line spins the event loop,
+ * where the tool timeout can't fire. Skipping the line closes it; a real
+ * match on a line this long is unreadable in the result anyway.
+ */
+const MAX_LINE_CHARS = 10_000;
 
 export const grepTool: ToolDef = {
   name: "grep",
@@ -78,6 +86,7 @@ export const grepTool: ToolDef = {
       const rel = path.relative(ctx.workspace, abs);
       const lines = content.split("\n");
       for (let i = 0; i < lines.length && matches.length < MAX_MATCHES; i++) {
+        if (lines[i].length > MAX_LINE_CHARS) continue;
         if (regex.test(lines[i])) {
           matches.push(`${rel}:${i + 1}: ${lines[i].slice(0, 250)}`);
         }

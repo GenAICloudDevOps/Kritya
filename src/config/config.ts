@@ -309,6 +309,46 @@ export function sanitizeMcpServersRecord(
   return out;
 }
 
+/**
+ * Top-level keys `~/.kritya/config.json` understands — keep in sync with
+ * CliConfig. Anything else in the file is silently ignored (the parsed
+ * object is only ever consumed through the typed interface), so a typo like
+ * `maxStep` or `contextwindow` looks like "my config isn't taking effect"
+ * with no clue why. loadConfig warns about those instead.
+ */
+const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "apiKey",
+  "model",
+  "baseUrl",
+  "provider",
+  "providers",
+  "customModels",
+  "pricing",
+  "contextWindow",
+  "maxSteps",
+  "tokenBudget",
+  "toolTimeoutSeconds",
+  "subagentConcurrency",
+  "subagentTimeoutSeconds",
+  "subagentMaxSteps",
+  "subagentWriteMaxSteps",
+  "mcpServers",
+  "sandboxExec",
+  "retentionDays",
+  "audit",
+  "otel",
+  "commitAttribution",
+  "privacyMode",
+]);
+
+/**
+ * Keys in a parsed config object that CliConfig doesn't know — all ignored
+ * by the typed code that consumes it. Exported for tests.
+ */
+export function unknownConfigKeys(parsed: Record<string, unknown>): string[] {
+  return Object.keys(parsed).filter((key) => !KNOWN_CONFIG_KEYS.has(key));
+}
+
 function sanitizeCliConfig(config: CliConfig): CliConfig {
   if (!config.mcpServers) return config;
   return { ...config, mcpServers: sanitizeMcpServersRecord(config.mcpServers) };
@@ -444,7 +484,20 @@ export function loadConfig(): CliConfig {
   }
   try {
     assertJsonWithinLimits(raw, "config.json");
-    return sanitizeCliConfig(JSON.parse(raw) as CliConfig);
+    const parsed = JSON.parse(raw) as CliConfig;
+    const unknown = unknownConfigKeys(parsed as Record<string, unknown>);
+    if (unknown.length > 0) {
+      // warnUser dedupes per context, so this prints once per process even
+      // though loadConfig runs often.
+      warnUser(
+        `loadConfig(${CONFIG_FILE})`,
+        new Error(
+          `unknown key(s) ${unknown.map((key) => `"${key}"`).join(", ")} ignored — ` +
+            `check the spelling against the documented config keys`
+        )
+      );
+    }
+    return sanitizeCliConfig(parsed);
   } catch (err) {
     // Malformed or oversized — worth being able to see when someone reports
     // "my config isn't taking effect".
