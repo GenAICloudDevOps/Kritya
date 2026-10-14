@@ -4,6 +4,12 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.54-beta] — 2026-10-14
+
+### Changed
+
+- **Dependencies bumped.** react 19.3.0 → 19.3.1.
+
 ## [0.8.53-beta] — 2026-10-13
 
 ### Changed
