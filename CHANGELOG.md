@@ -4,6 +4,34 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.55-beta] — 2026-10-16
+
+### Added
+
+- **Nemotron 3.5 Super VL 120B is in the curated model list.** It carries a
+  1,048,576-token context window — eight times the 128k of the Nemotron 3 Super
+  entry it sits beside — and is registered for `nvidia` without becoming that
+  provider's default, which the test asserts so a later reorder cannot quietly
+  move it.
+
+### Changed
+
+- **Dependencies bumped.** openai 7.33.0 → 7.34.0, undici 8.12.1 → 8.12.2,
+  electron 44.7.2 → 44.8.0.
+
+### GitLab
+
+- **The repository is mirrored to GitLab on every push.** A workflow now pushes
+  all branches and tags to `gitlab.com/tech_venkat/kritya` roughly 25 seconds
+  after each push, so a full copy exists outside GitHub. GitHub stays canonical:
+  the mirror is one-way, and nothing runs on the GitLab side — its pipeline file
+  ships inert as `.gitlab-ci.yml.disabled` and is not read until renamed. The
+  push is deliberately unforced, so a rewritten `main` fails loudly instead of
+  silently rewriting the copy.
+- **`check:release` understands GitLab CI.** It read `GITHUB_REF_NAME` only, so
+  the guardrail would have refused to run on a GitLab tag pipeline with "No tag
+  to check". It now falls back to `CI_COMMIT_TAG`.
+
 ## [0.8.54-beta] — 2026-10-14
 
 ### Changed
