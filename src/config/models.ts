@@ -43,6 +43,11 @@ export const CURATED_MODELS: ModelInfo[] = [
     contextWindow: 128_000,
   },
   {
+    id: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+    label: "Nemotron 3.5 Super VL 120B",
+    contextWindow: 1_048_576,
+  },
+  {
     id: "nvidia/nemotron-3-ultra-550b-a55b",
     label: "Nemotron 3 Ultra 550B",
     contextWindow: 128_000,
