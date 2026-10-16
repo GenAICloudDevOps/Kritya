@@ -10,8 +10,8 @@
 // afterwards, which is why this runs before anything else in the publish job.
 //
 // Usage: node scripts/check-release.mjs [vX.Y.Z-beta]
-// Falls back to $GITHUB_REF_NAME, then fails — there is no safe guess for
-// "which tag is this release for".
+// Falls back to $GITHUB_REF_NAME (GitHub Actions) or $CI_COMMIT_TAG (GitLab
+// CI), then fails — there is no safe guess for "which tag is this release for".
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,7 @@ export function checkRelease({ root, tag }) {
   if (!cleanTag) {
     failures.push(
       "No tag to check. Pass one (`node scripts/check-release.mjs v0.8.28-beta`) or set " +
-        "GITHUB_REF_NAME."
+        "GITHUB_REF_NAME (GitHub Actions) or CI_COMMIT_TAG (GitLab CI)."
     );
   } else if (cleanTag.replace(/^v/, "") !== version) {
     failures.push(
@@ -117,7 +117,9 @@ export function checkRelease({ root, tag }) {
 }
 
 function main() {
-  const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME ?? "";
+  // GITHUB_REF_NAME is GitHub Actions, CI_COMMIT_TAG is GitLab CI. Both hold a
+  // bare tag name (v0.8.28-beta), so either value works unchanged.
+  const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME ?? process.env.CI_COMMIT_TAG ?? "";
   const checked = checkRelease({ root: repoRoot, tag });
   const { version, failures } = checked;
 

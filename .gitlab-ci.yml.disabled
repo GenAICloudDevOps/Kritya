@@ -1,0 +1,77 @@
+# GitLab CI for the GitLab copy of kritya.
+#
+# INERT ON PURPOSE: this file ends in .disabled, so GitLab never reads it.
+# Activate later with:
+#     git mv .gitlab-ci.yml.disabled .gitlab-ci.yml
+#
+# Why a suffix instead of commenting every line: a .gitlab-ci.yml with no
+# visible jobs fails pipeline creation outright ("jobs config should contain at
+# least one visible job"). A file GitLab does not read cannot fail. The whole
+# config can still be validated without activating it, by pasting it into
+# GitLab's CI Lint (Settings > CI/CD > CI Lint).
+#
+# Linux only, one job. GitLab Free gives 400 compute minutes per month; the
+# matrix in .github/workflows/ci.yml is 36 shard jobs plus a 3-OS package job
+# and would exhaust that quota in roughly three pipelines. GitHub stays the real
+# gate for this repo — this pipeline is a second opinion, not a replacement.
+#
+# Deliberately NOT ported from ci.yml, because each one needs GitHub itself:
+#   codeql         security-events: write + SARIF upload to GitHub's Security tab
+#   scorecard      reads GitHub's repo-posture API
+#   workflow-scan  zizmor only audits GitHub Actions YAML
+#   harden-runner  a GitHub Action
+#   fork guard     keys off GitHub's pull_request event payload
+# Free-tier equivalents: SAST and secret detection are Free on GitLab.
+# Dependency scanning is Ultimate-only, so `npm audit` stays the dependency gate.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Lets you trigger a run by hand from the GitLab UI without pushing.
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+stages:
+  - verify
+
+variables:
+  # GitLab clones shallow by default (GIT_DEPTH 20). Full history is needed so a
+  # key committed months ago is still visible to the scan at the bottom.
+  GIT_DEPTH: "0"
+
+default:
+  image: node:22-bookworm
+  interruptible: true
+
+verify:
+  stage: verify
+  timeout: 15m
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npm run build
+    - npm run lint
+    - npm run format:check
+    # Unsharded on purpose, matching the `unsharded` job in ci.yml: the whole
+    # suite in one `node --test` run is the profile publish.yml gates a release
+    # on, and sharding is exactly what hides load-dependent races.
+    - node scripts/run-tests.mjs
+
+# Optional — uncomment for secret scanning. gitleaks is a plain Go binary, so it
+# ports from ci.yml unchanged. Version + SHA256 pinned for the same reason as
+# there: a swapped release fails loudly instead of running different code.
+#
+# secret-scan:
+#   stage: verify
+#   script:
+#     - curl -sL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.27.2/gitleaks_8.27.2_linux_x64.tar.gz
+#     - echo "141c3b2dede46d8b3a53b47116da756bd223decc0374797559a6b50ecba5590c  gitleaks.tar.gz" | sha256sum -c -
+#     - tar xzf gitleaks.tar.gz gitleaks
+#     - ./gitleaks detect --config .gitleaks.toml --no-banner --verbose --redact
