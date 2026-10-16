@@ -54,17 +54,26 @@ jobs:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_REPO: gitlab.com/tech_venkat/kritya.git
         run: |
+          # actions/checkout creates a local branch only for the ref that
+          # triggered this run. Pushing refs/heads/* straight from there mirrors
+          # that single branch — and because the push below prunes, it then
+          # deletes every other branch already on GitLab, so the copy would hold
+          # exactly one branch forever. Fetch origin's heads into a private
+          # namespace first, so the push sees all of them.
+          #
+          # A private namespace rather than refs/remotes/origin/*, because that
+          # one also collects origin/HEAD — a symref that would otherwise arrive
+          # on GitLab as a branch literally named HEAD.
+          git fetch --prune origin \
+            "+refs/heads/*:refs/mirror/heads/*" "+refs/tags/*:refs/tags/*"
+
           # Pushed by URL rather than via `git remote add`, so the token is
           # never written into .git/config on the runner. GitHub masks secret
           # values in logs, so a failing push cannot echo it back either.
           #
-          # Explicit refspecs rather than --mirror: --mirror would also push
-          # refs/remotes/* and delete anything on the GitLab side that is not
-          # here, which is more than a copy needs. --prune still propagates
-          # branch deletions.
-          #
-          # No forced push on main. GitLab protects main with "Allowed to force
-          # push: No" by default, so a rewritten history here fails loudly
-          # instead of silently rewriting the copy.
+          # --prune propagates branch and tag deletions. No forced push on main:
+          # GitLab protects main with "Allowed to force push: No" by default, so
+          # a rewritten history fails loudly instead of silently rewriting the
+          # copy.
           git push --prune "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" \
-            "+refs/heads/*:refs/heads/*" "+refs/tags/*:refs/tags/*"
+            "+refs/mirror/heads/*:refs/heads/*" "+refs/tags/*:refs/tags/*"
