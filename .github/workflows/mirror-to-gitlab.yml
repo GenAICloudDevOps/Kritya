@@ -1,0 +1,70 @@
+# Mirrors every branch and tag from GitHub to the GitLab copy.
+#
+# INERT ON PURPOSE: this file ends in .disabled, and GitHub only picks up *.yml
+# and *.yaml inside .github/workflows/. Rename it to mirror-to-gitlab.yml once
+# the GitLab project and the GITLAB_TOKEN secret exist.
+#
+# Why this direction: GitLab Free cannot pull from GitHub — pull mirroring is
+# Premium/Ultimate — so the copy has to be pushed from here. kritya is a public
+# repo, so these minutes are free, unlike the 400/month GitLab would charge to
+# do the same work on its own runners.
+#
+# Prerequisites:
+#   1. An empty GitLab project at gitlab.com/tech_venkat/kritya (no README).
+#   2. A project access token on it: role Maintainer, scope write_repository.
+#   3. That token stored here as the repo secret GITLAB_TOKEN.
+#
+# Not yet audited by the `workflow-scan` job in ci.yml: zizmor matches *.yml, so
+# a .disabled file is invisible to it. Renaming this file brings it under that
+# audit — it is written to pass (pinned actions, no credential persistence, no
+# template injection), but the first run after renaming is the real check.
+
+name: Mirror to GitLab
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-to-gitlab
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every ref, not just the one that triggered this run.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push all branches and tags to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_REPO: gitlab.com/tech_venkat/kritya.git
+        run: |
+          # Pushed by URL rather than via `git remote add`, so the token is
+          # never written into .git/config on the runner. GitHub masks secret
+          # values in logs, so a failing push cannot echo it back either.
+          #
+          # Explicit refspecs rather than --mirror: --mirror would also push
+          # refs/remotes/* and delete anything on the GitLab side that is not
+          # here, which is more than a copy needs. --prune still propagates
+          # branch deletions.
+          #
+          # No forced push on main. GitLab protects main with "Allowed to force
+          # push: No" by default, so a rewritten history here fails loudly
+          # instead of silently rewriting the copy.
+          git push --prune "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" \
+            "+refs/heads/*:refs/heads/*" "+refs/tags/*:refs/tags/*"
