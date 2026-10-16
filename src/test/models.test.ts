@@ -71,3 +71,13 @@ test("the Groq entries carry the context window their docs state", () => {
     assert.equal(m.contextWindow, 131_072, `${m.id} context window`);
   }
 });
+
+test("Nemotron 3.5 Super VL is registered for nvidia and is not the default", () => {
+  const m = CURATED_MODELS.find((x) => x.id === "nvidia/nemotron-3.5-super-vl-120b-a12b");
+  assert.ok(m);
+  assert.equal(providerOfModel(m), "nvidia");
+  assert.equal(curatedProviderFor(m.id), "nvidia");
+  assert.equal(m.contextWindow, 1_048_576);
+  assert.notEqual(m.id, DEFAULT_MODEL);
+  assert.equal(defaultModelFor("nvidia"), DEFAULT_MODEL);
+});
