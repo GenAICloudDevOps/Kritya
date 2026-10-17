@@ -1,8 +1,8 @@
 # Mirrors every branch and tag from GitHub to the GitLab copy.
 #
-# INERT ON PURPOSE: this file ends in .disabled, and GitHub only picks up *.yml
-# and *.yaml inside .github/workflows/. Rename it to mirror-to-gitlab.yml once
-# the GitLab project and the GITLAB_TOKEN secret exist.
+# Active: this workflow runs on every push and mirrors all branches and
+# tags to the GitLab copy. It needs the GITLAB_TOKEN secret (see
+# Prerequisites below).
 #
 # Why this direction: GitLab Free cannot pull from GitHub — pull mirroring is
 # Premium/Ultimate — so the copy has to be pushed from here. kritya is a public
@@ -14,10 +14,9 @@
 #   2. A project access token on it: role Maintainer, scope write_repository.
 #   3. That token stored here as the repo secret GITLAB_TOKEN.
 #
-# Not yet audited by the `workflow-scan` job in ci.yml: zizmor matches *.yml, so
-# a .disabled file is invisible to it. Renaming this file brings it under that
-# audit — it is written to pass (pinned actions, no credential persistence, no
-# template injection), but the first run after renaming is the real check.
+# Audited by the `workflow-scan` job in ci.yml like every other *.yml
+# workflow: pinned actions, no credential persistence, no template
+# injection.
 
 name: Mirror to GitLab
 
