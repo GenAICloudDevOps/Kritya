@@ -111,10 +111,11 @@ jobs:
           # `--tag` so the two cannot silently disagree about which tag this
           # check is asserting.
           TAG=beta
-          # 24 x 5s = 120s. 12 x 5s (60s) proved too tight: 0.8.27 got through
-          # but 0.8.28 did not. Keep the budget in one place so the count, the
-          # progress line, and the final message cannot drift apart.
-          ATTEMPTS=24
+          # 48 x 5s = 240s. 24 x 5s (120s) proved too tight: the registry
+          # had not caught up on 0.8.28-beta or on 0.8.56-beta. Keep the
+          # budget in one place so the count, the progress line, and the
+          # final message cannot drift apart.
+          ATTEMPTS=48
           INTERVAL=5
           # Both conditions share one deadline: the version usually lands first,
           # so after it does the loop stops paying for that request and spends
