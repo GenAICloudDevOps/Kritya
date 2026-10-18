@@ -14,4 +14,4 @@
 - [ ] `npm test` passes
 - [ ] `npm run lint` and `npm run format:check` are clean
 - [ ] Added/updated tests for the change
-- [ ] Added a `CHANGELOG.md` entry
+- [ ] Did not edit `CHANGELOG.md` (entries are written at release time)
