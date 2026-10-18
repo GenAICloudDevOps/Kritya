@@ -1,6 +1,6 @@
 # Architecture
 
-kritya is a compact TypeScript codebase — ~21k lines under `src/`, plus ~14k
+kritya is a compact TypeScript codebase — ~31k lines under `src/`, plus ~23k
 lines of tests — that implements a terminal coding agent. It streams from an
 OpenAI-compatible model, runs a tool-call loop, and renders an Ink/React
 terminal UI.
@@ -106,7 +106,7 @@ toolCalls, usage, durationMs, model}` object that `--output json` prints.
   binary — see `docs/CONFIGURATION.md#nemo-switchyard`) on a free localhost
   port, and waits for it to be ready; `SwitchyardProviderClient` extends
   `ProviderClient` to add a cross-model fallback Switchyard itself doesn't
-  have, calling three more curated models directly against NVIDIA if the
+  have, calling one more curated model directly against NVIDIA if the
   sidecar's own retries are exhausted.
 - **`src/config/`** — config file, `.env` loading, built-in provider registry
   (`resolveProvider`), and the model registry with per-model context windows.

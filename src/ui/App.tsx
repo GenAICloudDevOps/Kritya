@@ -581,7 +581,7 @@ export function App({
       void copyLastCodeBlock();
       return;
     }
-    // Shift+Tab cycles normal → accept-edits → plan → normal. Only from the
+    // Shift+Tab cycles normal → accept-edits → dry-run → auto → normal. Only from the
     // plain input state — not mid-permission-prompt, mid-resume-picker, etc.
     if (key.tab && key.shift && phase === "input") {
       cycleMode();
@@ -982,9 +982,11 @@ export function App({
           </Text>
           <Text>File writes and edits will auto-approve without asking.</Text>
           <Text dimColor>
-            Destructive shell commands (rm -rf, force-push, etc.) always still ask, in every mode.
+            Destructive shell commands (rm -rf, force-push, etc.) always still ask in this mode.
           </Text>
-          <Text dimColor>Shift+Tab again moves to dry-run mode; once more back to normal.</Text>
+          <Text dimColor>
+            Shift+Tab again moves to dry-run mode; once more to auto mode, then back to normal.
+          </Text>
           <Box marginTop={1}>
             <Text>
               <Text color="green">Yes (y)</Text> · No (n/Esc)
