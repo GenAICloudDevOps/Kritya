@@ -105,6 +105,14 @@ of:
   flags like `--recursive --force`, or obfuscation via `$(...)`, `eval`, or a
   base64-encoded payload). Don't rely on it as the sole safeguard for a
   blanket `shell(*)` allow rule.
+- **Writes that would run code later** force a prompt of their own: git hooks,
+  `.husky/*`, `.git/config`, `.envrc`, VS Code tasks, `.pre-commit-config.yaml`,
+  and a `package.json` write that adds a lifecycle script — plus shell redirects
+  into any of them. This covers the one gap the sandbox cannot: the workspace is
+  writable by design, so a hook planted now executes on your next `git commit`,
+  outside the sandbox. A session also ends with a list of every such file it
+  touched, which catches what the prompt missed. See
+  [Files that run code later](docs/CONFIGURATION.md#files-that-run-code-later).
 - **Sandboxed execution** (`sandboxExec` in config — see
   [Sandboxed execution](docs/CONFIGURATION.md#sandboxed-execution)) adds an
   OS-enforced backstop for the case above: shell commands run under `bwrap`

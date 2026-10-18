@@ -46,6 +46,48 @@ Separately, destructive commands (`rm -rf`, `git push --force`,
 red warning prompt and can't be "always allowed" — even if a broad `shell(*)`
 rule would otherwise cover them.
 
+### Files that run code later
+
+The danger guard is about what a command does **now**. It says nothing about
+what a command **leaves behind**, and the workspace is writable by design — so
+a file written today can run tomorrow, when you type `git commit` or
+`npm install` in your own terminal, with no sandbox around it.
+
+Writing one of these prompts, even when an allow rule covers every write:
+
+| Path                                        | Runs when                                                                                                                                    |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.git/hooks/*` (except `*.sample`)          | you next run a git command                                                                                                                   |
+| `.husky/*`                                  | you next run a git command                                                                                                                   |
+| `.git/config`                               | git reads it — `core.hooksPath` and shell aliases both execute code                                                                          |
+| `.envrc`                                    | you enter the directory, via direnv                                                                                                          |
+| `.vscode/tasks.json`, `.vscode/launch.json` | you launch that task                                                                                                                         |
+| `.pre-commit-config.yaml`                   | you next commit                                                                                                                              |
+| `package.json`                              | **only when the write adds a lifecycle script** — `preinstall`, `install`, `postinstall`, `prepare`, `prepublishOnly`, `prepack`, `postpack` |
+
+`package.json` is conditional on purpose: it is edited for dependencies
+constantly, and prompting on every bump would train you to click through the one
+that matters.
+
+A shell redirect into one of those paths (`printf x > .git/hooks/pre-commit`) is
+caught the same way, by inspecting the redirect target.
+
+The prompt is skipped when there is no one to answer it — headless runs and
+write subagents, whose permission handler auto-refuses anything carrying a
+warning, so prompting there would turn every `package.json` edit into a refusal.
+Nothing is lost silently: a session ends with a list of everything touched.
+
+```
+2 files here can run code later, outside the sandbox:
+  .git/hooks/pre-commit  a git hook (runs on your next git command)
+  package.json           package.json scripts (npm runs them on install and publish)
+  review before your next git or npm command
+```
+
+That list is the backstop, not the feature. It catches what the prompt missed —
+an approved write whose consequence wasn't obvious at the time, or a path
+written by something the redirect check couldn't see.
+
 ### Sandboxed execution
 
 The danger guard above is regex-based pattern matching on the command text —

@@ -3,6 +3,13 @@ import type { PermissionManager } from "../permissions/permissions.js";
 import type { AgentHandlers, ToolContext, ToolDef } from "../types.js";
 import { classifyDanger } from "../permissions/danger.js";
 import {
+  classifyLaterExec,
+  classifyLaterExecInShell,
+  recordLaterExec,
+  workspaceRelative,
+  type LaterExecMatch,
+} from "../permissions/later.js";
+import {
   acknowledgeUnsandboxedFallback,
   sandboxAvailable,
   sandboxFallbackWarning,
@@ -68,6 +75,29 @@ export class ToolTimeoutError extends Error {
  * applies regardless of any mode.
  */
 const ACCEPT_EDITS_TOOL_NAMES = new Set(["write_file", "edit_file", "write_document"]);
+
+/**
+ * A write to a path that can run code later (a git hook, a lifecycle script,
+ * a direnv config — see `permissions/later.ts`), or null for an ordinary file.
+ *
+ * Only the text being *added* is inspected, never `old_string`: removing a
+ * `postinstall` script is not the risky direction, and matching the removed
+ * text would prompt on the cleanup.
+ */
+function laterExecForWrite(
+  args: Record<string, unknown>,
+  workspace: string
+): LaterExecMatch | null {
+  const target = args.path;
+  if (typeof target !== "string" || !target.trim()) return null;
+  const rel = workspaceRelative(workspace, target);
+  if (!rel) return null;
+  const added = [args.content, args.new_string, args.text]
+    .filter((v): v is string => typeof v === "string")
+    .join("\n");
+  const label = classifyLaterExec(rel, added || undefined);
+  return label ? { path: rel, label } : null;
+}
 
 /**
  * Wrap external (web/MCP) tool output in untrusted-content markers. Any copy
@@ -318,7 +348,22 @@ export class ToolExecutor {
       tool.name === "shell" && dangerLabel === null && host.interactive
         ? sandboxFallbackWarning(host.ctx.sandboxMode, shellCommand)
         : null;
-    const danger = dangerLabel ?? sandboxWarning;
+    // The workspace is writable by design, so the sandbox cannot stop a command
+    // from *leaving* something behind that runs later — a git hook, a
+    // postinstall script, a direnv config. That is a different risk from
+    // anything classifyDanger covers (it is about what runs now), so it gets its
+    // own label and its own prompt.
+    //
+    // Prompted only where a human can answer: a write subagent's
+    // requestPermission auto-refuses anything carrying a danger label, which
+    // would turn every package.json edit into a refusal. The end-of-session
+    // list is unconditional, so nothing is lost silently.
+    const laterMatch =
+      tool.name === "shell"
+        ? classifyLaterExecInShell(shellCommand, host.ctx.workspace)
+        : laterExecForWrite(args, host.ctx.workspace);
+    const laterLabel = host.interactive ? (laterMatch?.label ?? null) : null;
+    const danger = dangerLabel ?? sandboxWarning ?? laterLabel;
 
     const autoApproveEdit =
       host.acceptEdits &&
@@ -440,6 +485,9 @@ export class ToolExecutor {
       }
       output = truncateToolOutput(output);
       const failed = tool.failed?.(output) ?? false;
+      // Only a write that actually landed is worth putting on the sign-off
+      // list — a rejected or failed one left nothing behind.
+      if (!failed && laterMatch) recordLaterExec(laterMatch);
       logToolOutcome(failed ? "error" : "ok");
       finishSpan(failed ? "ERROR" : "OK");
       handlers.onToolEnd(

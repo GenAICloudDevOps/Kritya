@@ -24,6 +24,7 @@ import {
 } from "./provider/switchyardSidecar.js";
 import { SessionStore } from "./session/store.js";
 import { exitNotice } from "./session/exitNotice.js";
+import { laterExecFiles, laterExecNotice } from "./permissions/later.js";
 import { AuditLog } from "./audit/audit.js";
 import { runAuditCli } from "./audit/cli.js";
 import { runSkillsCli } from "./agent/skillsCli.js";
@@ -562,6 +563,11 @@ async function main() {
       isTTY: Boolean(process.stdout.isTTY),
     });
     if (text) writeExitNotice(text);
+    // Printed even when the session notice is not (privacy mode, an empty
+    // session): this is a warning about files left on disk, not about the
+    // transcript, so it does not belong to that decision.
+    const later = laterExecNotice(laterExecFiles(), Boolean(process.stdout.isTTY));
+    if (later) writeExitNotice(later);
   };
 
   // Filled in once the app is mounted, below; the crash handler needs a way to

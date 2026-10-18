@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Writes to files that run code later now prompt, and every session ends with
+  a list of them.** The sandbox and the danger guard both look at what a command
+  does while it runs; neither sees what it leaves behind. The workspace is
+  writable by design, so a git hook, a husky hook, a direnv config, a VS Code
+  task, `.git/config`, `.pre-commit-config.yaml`, or a `package.json` lifecycle
+  script written today executes tomorrow, on your next `git commit` or
+  `npm install`, with no sandbox around it. Writing any of those now forces a
+  warning prompt that an allow rule cannot silence, and shell redirects into
+  them (`printf x > .git/hooks/pre-commit`) are caught by inspecting the
+  redirect target. `package.json` only prompts when the write actually adds a
+  lifecycle script — it is edited for dependencies constantly, and prompting on
+  every bump would train you to click through the one that matters. Headless
+  runs and write subagents are not prompted (their permission handler refuses
+  anything carrying a warning, which would make every `package.json` edit
+  fail), but the file is still recorded, and the session sign-off lists every
+  one it touched.
 - **`sandboxNetwork: "none"` cuts a sandboxed command off from the network.**
   Until now the sandbox confined writes and credential reads but left the
   network wide open, so a command could still read something it shouldn't and
