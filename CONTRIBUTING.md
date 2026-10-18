@@ -66,6 +66,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the codebase.
 - Describe user-facing changes in the PR. Don't edit `CHANGELOG.md` yourself —
   entries are written in a single `chore(release): bump version …` commit at
   release time, so the file only ever lists shipped versions.
+- See [tag_to_publish.md](tag_to_publish.md) for the full release runbook.
 - One logical change per PR where practical.
 - Before opening a PR, run the full check suite locally — this mirrors what
   CI runs:

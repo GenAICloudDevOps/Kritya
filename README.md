@@ -65,7 +65,7 @@ Requires Node.js >=22.19.0.
    model → "Get API Key").
 2. Set it (any one of these):
    - Put `NVIDIA_API_KEY=nvapi-...` in a `.env` file — checked in the workspace
-     you launch in, the directory you run from, and `~/.kritya/.env`
+     you launch in, and `~/.kritya/.env`
    - Linux/macOS: `export NVIDIA_API_KEY=nvapi-...`
    - Windows: `setx NVIDIA_API_KEY nvapi-...` (then open a new terminal)
 
@@ -98,6 +98,14 @@ npm link           # puts `kritya` on your PATH
 cd ~/some-project
 kritya               # enter
 ```
+
+### Desktop app
+
+There is also an Electron desktop app wrapping the same agent (`electron/`,
+`npm run electron:dev` / `npm run electron:build`). Automatic desktop builds
+are currently paused; Windows installers are built manually via the
+"Build Desktop App" workflow. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the app is put together.
 
 ## Screenshots
 
@@ -205,7 +213,9 @@ Custom `/commands` you define (see [docs/CONFIGURATION.md](docs/CONFIGURATION.md
 `Esc` cancels a running request. `↑/↓` recalls input history. `Ctrl+O` toggles
 full tool output. `Ctrl+E` opens the file the agent touched most recently in
 `$EDITOR`. `Ctrl+P` opens the command palette (fuzzy-find commands and
-checkpoints). `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
+checkpoints). `Ctrl+B` copies the agent's most recent code block. `Ctrl+R`
+opens reverse history search. `Ctrl+K` is the kill switch (see below).
+`Ctrl+C` exits.
 
 ### More features
 
@@ -290,14 +300,20 @@ checkpoints). `Ctrl+K` is the kill switch (see below). `Ctrl+C` exits.
 
 - **Trust levels** — `Shift+Tab` cycles **normal** (every write/edit asks
   first) → **accept-edits** (file writes/edits auto-approve, no prompt) →
-  **plan** (read-only, nothing executes) → back to normal. The statusline
-  always shows which one you're in, with a running `(N auto-approved)` count
-  in accept-edits mode so you know how much slipped through before checking
-  `/diff`. Destructive shell commands (`rm -rf`, force-push, etc.) always
-  still prompt, in every mode — that guard never turns off. The first time you
-  switch into accept-edits mode each session, kritya asks you to confirm first
-  so it's a deliberate choice, not an accidental keypress. `/plan on` and
-  `/plan off` set the mode explicitly; a bare `/plan` toggles it. `/plan` never
+  **dry-run** (read-only: the agent explores and proposes a plan; edits and
+  shell are blocked) → **auto** (EVERY tool call auto-approves, including
+  destructive shell commands — nothing asks first) → back to normal. Auto
+  mode is only offered when the sandbox is active, and the sandbox — not a
+  human — is what contains any damage it causes; with the sandbox off,
+  dry-run goes straight back to normal. In accept-edits mode, destructive
+  shell commands (`rm -rf`, force-push, etc.) still prompt — that guard only
+  turns off in auto mode. The statusline always shows which mode you're in,
+  with a running `(N auto-approved)` count in the auto-approve modes so you
+  know how much slipped through before checking `/diff`. The first time you
+  switch into accept-edits or auto mode each session, kritya asks you to
+  confirm first so it's a deliberate choice, not an accidental keypress.
+  `/plan on` and `/plan off` set plan mode explicitly; a bare `/plan`
+  toggles it. Plan mode is separate from this cycle. `/plan` never
   touches the project workflow — that's `/flow-plan`.
 - **Kill switch** — `Ctrl+K` (or `/kill [reason]`) is a hard stop for the whole
   session. It aborts the in-flight model stream, any running tool, and every
