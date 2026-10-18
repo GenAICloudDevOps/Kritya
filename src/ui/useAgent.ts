@@ -377,7 +377,7 @@ export function useAgent({
       text:
         "Accept-edits mode ON — file writes/edits auto-approve without asking. Destructive shell " +
         "commands (rm -rf, force-push, etc.) still always ask. Shift+Tab again for dry-run mode, once " +
-        "more for normal.",
+        "more for auto mode, then back to normal.",
     });
   };
 
