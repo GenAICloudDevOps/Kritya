@@ -1,6 +1,6 @@
 # Agent Skills support — design
 
-Date: 2026-07-26 · Status: proposed
+Date: 2026-07-26 · Status: implemented
 
 ## Goal
 
