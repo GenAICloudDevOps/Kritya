@@ -158,6 +158,8 @@ test("unknownConfigKeys flags typo'd keys and accepts every CliConfig key", asyn
       subagentWriteMaxSteps: 1,
       mcpServers: {},
       sandboxExec: "auto",
+      sandboxReadDeny: true,
+      sandboxReadAllow: ["~/.aws"],
       retentionDays: 1,
       audit: "on",
       otel: "off",

@@ -3,7 +3,8 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { CONFIG_DIR, loadDotEnv } from "../config/config.js";
+import { CONFIG_DIR, loadConfig, loadDotEnv } from "../config/config.js";
+import type { CliConfig } from "../config/config.js";
 import { classifyDanger } from "../permissions/danger.js";
 
 export type SandboxMode = "auto" | "always" | "strict" | "off";
@@ -154,7 +155,7 @@ export interface SandboxCanaryProbe {
   what: string;
   /** True when the probe did NOT achieve its goal — i.e. containment held. */
   held: boolean;
-  /** True when this probe is not a containment claim (reads are open by design). */
+  /** True when this probe is not a containment claim (there was nothing to probe). */
   informational?: boolean;
 }
 
@@ -173,7 +174,7 @@ function windowsQuote(value: string): string {
 }
 
 /**
- * Turns the observed state of the canary's two marker files into probes.
+ * Turns the observed state of the canary's marker files into probes.
  *
  * Split out from `runSandboxCanary` so the decision — the part that can be
  * wrong — is testable without a backend to spawn. `escaped` is "the file
@@ -184,9 +185,19 @@ function windowsQuote(value: string): string {
  * means the command never reached the shell at all, which must NOT be read as
  * containment — that is why the inside write is a probe rather than a
  * throwaway control.
+ *
+ * `credentialRead` is the result of trying to read one credential file from
+ * inside the sandbox, when there was one to try and this backend claims to
+ * deny it. Passing it makes the read probe a real claim; omitting it (or
+ * passing null) leaves the informational note that reads are open by design,
+ * which is the honest answer when there is nothing to probe.
  */
-export function canaryProbes(escaped: boolean, wroteInside: boolean): SandboxCanaryProbe[] {
-  return [
+export function canaryProbes(
+  escaped: boolean,
+  wroteInside: boolean,
+  credentialRead?: { path: string; readable: boolean } | null
+): SandboxCanaryProbe[] {
+  const probes: SandboxCanaryProbe[] = [
     {
       what: "a write outside the workspace (system temp dir) did not reach the host",
       held: !escaped,
@@ -195,12 +206,38 @@ export function canaryProbes(escaped: boolean, wroteInside: boolean): SandboxCan
       what: "a write inside the workspace succeeded (the sandbox is not simply refusing everything)",
       held: wroteInside,
     },
-    {
-      what: "reads outside the workspace (incl. ~/.kritya/.env) are open by design",
-      held: false,
-      informational: true,
-    },
   ];
+  probes.push(
+    credentialRead
+      ? {
+          what: `a credential file (${credentialRead.path}) could not be read`,
+          held: !credentialRead.readable,
+        }
+      : {
+          what: "credential reads were not probed (reads are otherwise open by design)",
+          held: false,
+          informational: true,
+        }
+  );
+  return probes;
+}
+
+/**
+ * A credential file that exists on this host and is non-empty, so the canary
+ * has something whose content it can look for. Empty files are skipped: reading
+ * one yields nothing whether or not the deny is working, so a probe against it
+ * would pass for the wrong reason.
+ */
+function canaryCredentialFile(): string | null {
+  for (const p of sandboxReadDenyPaths()) {
+    try {
+      const st = fs.statSync(p);
+      if (st.isFile() && st.size > 0) return p;
+    } catch {
+      // Not present on this host — try the next one.
+    }
+  }
+  return null;
 }
 
 /**
@@ -213,12 +250,14 @@ export function canaryProbes(escaped: boolean, wroteInside: boolean): SandboxCan
  * `processcontainer`, a stale `wxc-exec.exe`, or a host missing the one-time
  * privilege prep all change the answer without changing a line of code here).
  * This closes that gap the only honest way — by trying to escape and looking
- * at the result. It writes at most one marker file, in the system temp dir,
- * and removes it either way.
+ * at the result. It writes at most three marker files — one in the system temp
+ * dir, two in the workspace — and removes all three either way.
  *
- * Only the *write* probe is a containment claim: reads outside the workspace
- * are open by design (see `buildSandboxedCommand`), so the read probe is
- * reported but never counted as a failure.
+ * The write probes are always containment claims. The credential probe is one
+ * only when there is a credential file to read and the backend claims to deny
+ * it (Linux and macOS); otherwise it degrades to the informational note that
+ * reads are open by design, so a host with no `~/.aws` or `~/.ssh` key is not
+ * reported as a sandbox failure.
  */
 export function runSandboxCanary(workspace: string): SandboxCanaryResult {
   const reason = sandboxUnavailableReason();
@@ -231,8 +270,11 @@ export function runSandboxCanary(workspace: string): SandboxCanaryResult {
   // blocked it. A path *inside* the workspace would prove nothing.
   const escapeTarget = path.join(os.tmpdir(), `kritya-canary-escape-${process.pid}.txt`);
   const insideTarget = path.join(workspace, `.kritya-canary-inside-${process.pid}.txt`);
+  // Where the credential probe's output lands. Its *size* is the answer: a
+  // masked file reads as zero bytes, an unmasked one gives up its content.
+  const credTarget = path.join(workspace, `.kritya-canary-cred-${process.pid}.txt`);
   const cleanup = () => {
-    for (const f of [escapeTarget, insideTarget]) {
+    for (const f of [escapeTarget, insideTarget, credTarget]) {
       try {
         fs.rmSync(f, { force: true });
       } catch {
@@ -243,17 +285,28 @@ export function runSandboxCanary(workspace: string): SandboxCanaryResult {
   cleanup(); // in case a previous run left a marker behind
 
   const isWindows = os.platform() === "win32";
+  // MXC cannot deny a read (see mxcPolicyJson), so there is nothing to probe
+  // there — reporting the gap as a failure would blame the user for a schema
+  // limitation, and reporting it as a pass would be a lie.
+  const credential = isWindows ? null : canaryCredentialFile();
   const writeOutside = isWindows
     ? `echo canary> ${windowsQuote(escapeTarget)}`
     : `printf canary > ${JSON.stringify(escapeTarget)}`;
   const writeInside = isWindows
     ? `echo canary> ${windowsQuote(insideTarget)}`
     : `printf canary > ${JSON.stringify(insideTarget)}`;
+  // `head -c 64` rather than `cat`: enough to tell content from no content,
+  // and it keeps a large credential file from being copied into the workspace.
+  // The redirection creates the marker even when the read is refused, which is
+  // exactly the signal — empty marker means the deny held.
+  const readCredential = credential
+    ? `; head -c 64 ${JSON.stringify(credential)} > ${JSON.stringify(credTarget)} 2>/dev/null`
+    : "";
   // The canary exits 0 regardless: reaching the shell at all is the point, and
   // a nonzero exit from a *blocked* write is not something the caller needs.
   const script = isWindows
     ? `${writeOutside} & ${writeInside} & exit /b 0`
-    : `${writeOutside}; ${writeInside}; true`;
+    : `${writeOutside}; ${writeInside}${readCredential}; true`;
 
   const wrapped = buildSandboxedCommand(script, workspace);
   if (!wrapped) {
@@ -280,9 +333,21 @@ export function runSandboxCanary(workspace: string): SandboxCanaryResult {
 
   const escaped = fs.existsSync(escapeTarget);
   const wroteInside = fs.existsSync(insideTarget);
+  const credentialRead = credential
+    ? { path: credential, readable: markerSize(credTarget) > 0 }
+    : null;
   cleanup();
 
-  return { ran: true, probes: canaryProbes(escaped, wroteInside) };
+  return { ran: true, probes: canaryProbes(escaped, wroteInside, credentialRead) };
+}
+
+/** Byte size of a marker file, 0 when it is missing (the expected case). */
+function markerSize(p: string): number {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
 }
 
 /** One-line reason sandboxing can't run here, for a fallback warning. */
@@ -410,6 +475,96 @@ function extraWritablePaths(): string[] {
       // don't exist, and the macOS profile tolerates nonexistent subpaths.
       .concat([path.join(home, "Library", "Caches")])
   );
+}
+
+/**
+ * Entries inside `~/.ssh` that are *not* secret, and which SSH therefore has to
+ * read for anything to work: `config` supplies host aliases and identity files,
+ * `known_hosts` is what makes host-key verification possible, and `.pub` files
+ * are public by definition. Everything else in that directory is treated as a
+ * private key — including names this list has never heard of, which is the
+ * point: `id_rsa` and `id_ed25519` are the common spellings, not the only ones.
+ */
+const SSH_READABLE_NAMES: ReadonlySet<string> = new Set([
+  "config",
+  "known_hosts",
+  "known_hosts.old",
+  "authorized_keys",
+  "environment",
+  "rc",
+]);
+
+/** `~/.ssh` entries that hold a private key, or a directory that holds them. */
+function sshPrivateKeyPaths(home: string): string[] {
+  const dir = path.join(home, ".ssh");
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return []; // no ~/.ssh at all — nothing to hide
+  }
+  return entries
+    .filter((e) => !SSH_READABLE_NAMES.has(e.name) && !e.name.endsWith(".pub"))
+    .map((e) => path.join(dir, e.name));
+}
+
+/** `~/x` and `~` expanded against the real home; anything else resolved as given. */
+function expandHome(p: string): string {
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
+  return path.resolve(p);
+}
+
+/** True when `parent` is `child` or contains it. */
+function pathContains(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * The credential paths a sandboxed command must not read, as absolute paths.
+ *
+ * The list is short on purpose, and it is a *deny* list rather than a narrowing
+ * of the read-everything default because reads have to stay open generally:
+ * dynamic linking, package manager caches and every toolchain's own config live
+ * outside the workspace, and closing those off breaks ordinary work rather than
+ * containing anything. What is left is the handful of files whose only value to
+ * a hostile command is the secret inside them, and which almost no build or
+ * test run touches:
+ *
+ *  - `~/.ssh` private keys (not `config`, `known_hosts`, or `.pub` files) —
+ *    SSH through an agent never reads the key file, so the everyday
+ *    `git push` keeps working while `cat ~/.ssh/id_rsa` stops working.
+ *  - `~/.aws`, `~/.config/gcloud`, `~/.kube` — cloud and cluster credentials.
+ *    A project's own build does not need *your* AWS keys.
+ *  - `~/.docker/config.json` — registry auth tokens. The rest of `~/.docker`
+ *    stays readable so contexts keep resolving.
+ *  - `~/.netrc` — plaintext credentials for whatever `machine` entries it has.
+ *
+ * Deliberately NOT denied, each because a first-class workflow reads it:
+ * `~/.npmrc` (`npm install` against a private registry, `npm publish`),
+ * `~/.config/gh/hosts.yml` (the `gh` calls behind pull requests), and
+ * `~/.git-credentials` (HTTPS `git push`). Blocking those would break the
+ * ordinary user's day far more often than it would stop an attacker, and the
+ * deny list is intentionally fixed so the only knob is the allow side.
+ *
+ * Exported for tests.
+ */
+export function sandboxReadDenyPaths(config: CliConfig = loadConfig()): string[] {
+  if (config.sandboxReadDeny === false) return [];
+  const home = os.homedir();
+  const deny = [
+    path.join(home, ".aws"),
+    path.join(home, ".config", "gcloud"),
+    path.join(home, ".kube"),
+    path.join(home, ".docker", "config.json"),
+    path.join(home, ".netrc"),
+    ...sshPrivateKeyPaths(home),
+  ];
+  const allow = (config.sandboxReadAllow ?? [])
+    .filter((p) => typeof p === "string" && p.length > 0)
+    .map(expandHome);
+  return [...new Set(deny.filter((p) => !allow.some((a) => pathContains(a, p))))];
 }
 
 /**
@@ -565,13 +720,41 @@ function macTmpRoots(): string[] {
   return [...new Set(["/tmp", "/private/tmp", os.tmpdir()].flatMap(sandboxPathVariants))];
 }
 
+/**
+ * Escapes a filesystem path for a string literal in a sandbox-exec profile.
+ * Backslashes first, so the quotes escaped second aren't double-escaped.
+ */
+function escapeProfilePath(p: string): string {
+  return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * The `(deny file-read* …)` lines that make the credential list unreadable
+ * under sandbox-exec. Exported for tests — the profile itself is only ever
+ * built on macOS, so this is the only way CI can check what it would contain.
+ *
+ * Seatbelt resolves the last matching rule, which is what makes a deny here
+ * work at all: `(allow default)` comes first in the profile, so these later
+ * rules win over it. Both spellings of each path are emitted (see
+ * `sandboxPathVariants`) because the kernel matches against the canonical path,
+ * and on macOS `$HOME` can itself be a symlink (`/Users/x` → `/System/Volumes/
+ * Data/Users/x`) — a rule written only against the `/Users` spelling would
+ * match nothing.
+ */
+export function macReadDenyRules(paths: string[]): string {
+  return [...new Set(paths.flatMap(sandboxPathVariants))]
+    .map((p) => `(deny file-read* (subpath "${escapeProfilePath(p)}"))`)
+    .join("\n");
+}
+
 function macSandboxProfile(
   workspace: string,
   extraDirs: string[],
   shared: string | null,
-  runDir: string
+  runDir: string,
+  readDeny: string[]
 ): string {
-  const esc = (p: string) => p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const esc = escapeProfilePath;
   // Every allow rule is emitted for both the literal and the symlink-resolved
   // spelling of its path — see `sandboxPathVariants`. Without that, a workspace
   // under `os.tmpdir()` (i.e. `/var/folders/...`) is silently unwritable,
@@ -588,11 +771,11 @@ function macSandboxProfile(
     .map((p) => `(allow file-write* (subpath "${esc(p)}"))`)
     .join("\n");
   // Reads and process exec/fork stay open by default (matches the Linux
-  // ro-bind-everything posture below) EXCEPT under the real temp-dir roots,
-  // which are denied and then selectively re-opened below — see the tmp-root
-  // rules. Writes are denied everywhere except the workspace, the per-run
-  // scratch dir, and a short explicit allowlist, so a command can't damage
-  // anything outside the project.
+  // ro-bind-everything posture below) EXCEPT under the real temp-dir roots and
+  // the credential list, both of which are denied and then selectively
+  // re-opened — see the tmp-root rules and `credentialDeny`. Writes are denied
+  // everywhere except the workspace, the per-run scratch dir, and a short
+  // explicit allowlist, so a command can't damage anything outside the project.
   const readAllowDirs = variants([workspace, runDir, ...extraDirs, ...(shared ? [shared] : [])]);
   const readExtra = readAllowDirs.map((p) => `(allow file-read* (subpath "${esc(p)}"))`).join("\n");
   // The world-writable /tmp (and its real path /private/tmp), plus the
@@ -607,11 +790,17 @@ function macSandboxProfile(
   const tmpDeny = macTmpRoots()
     .map((p) => `(deny file-read* (subpath "${esc(p)}"))\n(deny file-write* (subpath "${esc(p)}"))`)
     .join("\n");
+  // The credential list, denied for reads only. It sits after `(allow default)`
+  // so it wins, and before `readExtra` — but nothing in `readExtra` is on this
+  // list, so the two cannot fight. Writes to these paths are already blocked by
+  // the whole-filesystem write deny above.
+  const credentialDeny = macReadDenyRules(readDeny);
   return `(version 1)
 (allow default)
 (deny file-write* (subpath "/"))
 (allow file-write* (subpath "/dev"))
 ${tmpDeny}
+${credentialDeny}
 ${writeExtra}
 ${readExtra}
 `;
@@ -716,6 +905,13 @@ function windowsToolPaths(workspace: string): string[] {
  *  - The network is left open. Neither bwrap nor sandbox-exec restricts it, and
  *    a contained command that cannot reach the network cannot `npm install`,
  *    `git push`, or run a dev server. Tightening it is a cross-platform call.
+ *  - Credential reads are NOT denied here, unlike the other two backends (see
+ *    `sandboxReadDenyPaths`). MXC's filesystem policy is a grant list, and the
+ *    drive root has to appear in `readwritePaths` for the container to start at
+ *    all (see below) — which grants every path beneath it, with no deny entry
+ *    to carve one back out. That is a limitation of the policy schema, not a
+ *    choice about how much to enforce, so it is stated plainly in SECURITY.md
+ *    rather than papered over.
  *  - The temp dir is not isolated. Windows has no tmpfs equivalent, so scratch
  *    state already persists across calls without a shared-dir bind. MXC hands
  *    the container its own writable temp dir regardless (it rewrites `TEMP` to
@@ -785,15 +981,56 @@ export function mxcPolicyJson(
 }
 
 /**
+ * The bwrap operations that make the credential list unreadable: an empty
+ * read-only tmpfs over a denied directory, and `/dev/null` bound over a denied
+ * file.
+ *
+ * Both hide the *contents* while leaving the path present, which matters: a
+ * path that vanished entirely would make ordinary code take its "not
+ * configured yet" branch, and some tools respond to that by creating the file —
+ * so a deny that reads as ENOENT is a worse lie than one that reads as an empty
+ * file. `~/.aws` as an empty directory and `~/.netrc` as a zero-byte file are
+ * both what "nothing set up here" looks like.
+ *
+ * Paths that don't exist are skipped, because bwrap cannot bind onto a path
+ * that isn't there and a missing file is already unreadable. `statSync` (not
+ * `lstatSync`) is used so a symlink to a directory takes the tmpfs branch —
+ * `mount(2)` resolves the link either way, and binding `/dev/null` over a
+ * directory fails the whole command. That resolution is also what makes a
+ * symlinked key safe to mask: the mount lands on the target, so reads through
+ * the link fail too.
+ *
+ * Exported for tests.
+ */
+export function bwrapReadDenyArgs(paths: string[]): string[] {
+  const args: string[] = [];
+  for (const p of new Set(paths)) {
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(p);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) args.push("--tmpfs", p, "--remount-ro", p);
+    else args.push("--ro-bind", "/dev/null", p);
+  }
+  return args;
+}
+
+/**
  * Wraps `command` (run via `sh -c`) so it's confined to `workspace`: writes
- * are blocked everywhere else, network and (outside the real temp-dir roots)
- * reads are left open. This contains accidental or malicious damage outside
- * the project — it does not stop a command from reading files the real user
- * can read (e.g. `cat ~/.ssh/id_rsa`), since restricting reads generally
- * breaks most ordinary tooling (dynamic linking, package manager caches,
- * etc.); the temp-dir roots are the one exception, hidden to keep one
- * sandboxed command from reading another's scratch files. Returns null if no
- * sandbox binary is available on this platform.
+ * are blocked everywhere else, network is left open, and reads are left open
+ * outside the workspace *except* the credential list from
+ * `sandboxReadDenyPaths` (SSH private keys, cloud and cluster credentials) and
+ * the real temp-dir roots, which are hidden so one sandboxed command can't read
+ * another's scratch files.
+ *
+ * Read confinement stops there deliberately. Closing reads generally breaks
+ * most ordinary tooling — dynamic linking, package manager caches, every
+ * toolchain's own config live outside the workspace — so the sandbox hides the
+ * few files whose only value to a hostile command is the secret inside them,
+ * and leaves `cat` on everything else working. Returns null if no sandbox
+ * binary is available on this platform.
  */
 export function buildSandboxedCommand(command: string, workspace: string): SandboxedCommand | null {
   const tool = sandboxTool();
@@ -842,6 +1079,8 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   // null if the path exists but isn't a real, self-owned directory (e.g.
   // another local user squatted it as a symlink) — see safeSandboxSharedTmpDir.
   const shared = safeSandboxSharedTmpDir();
+  // Empty when the user set `sandboxReadDeny: false`.
+  const readDeny = sandboxReadDenyPaths();
 
   if (tool === "bwrap") {
     // /tmp is a fresh per-invocation tmpfs, EXCEPT for one dedicated shared
@@ -850,6 +1089,10 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
     // the host's real /tmp — which holds other agents' isolated worktrees and
     // is the easiest place to hardlink a host file and write through the link.
     const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"];
+    // Masked before the writable binds below rather than after, so a workspace
+    // that happens to contain one of these paths still wins — the same
+    // precedence the macOS profile gives the workspace.
+    args.push(...bwrapReadDenyArgs(readDeny));
     seedSshKnownHosts();
     for (const p of [
       ...extraWritablePaths(),
@@ -893,7 +1136,7 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     profilePath,
-    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir),
+    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir, readDeny),
     { mode: 0o600, flag: "wx" }
   );
   return {

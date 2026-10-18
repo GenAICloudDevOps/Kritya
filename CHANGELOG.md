@@ -4,6 +4,35 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **The sandbox can no longer read your credentials.** `sandboxExec` confined
+  writes but left reads open, so a command that slipped past the danger guard
+  could still `cat ~/.ssh/id_rsa` or `~/.aws/credentials` and send it anywhere —
+  the credential theft the guard was supposed to be backing up. On Linux and
+  macOS the sandbox now denies those reads at the kernel level: bwrap masks a
+  denied directory with a read-only tmpfs and a denied file with `/dev/null`,
+  and sandbox-exec emits `(deny file-read* …)` rules. Denied: SSH private keys
+  under `~/.ssh` (everything except `config`, `known_hosts`, `authorized_keys`
+  and `*.pub`), `~/.aws`, `~/.config/gcloud`, `~/.kube`,
+  `~/.docker/config.json` and `~/.netrc`. `~/.npmrc`, `~/.config/gh` and
+  `~/.git-credentials` stay readable on purpose, because `npm publish`,
+  `gh pr create` and HTTPS `git push` all read them. `sandboxReadDeny: false`
+  turns the list off and `sandboxReadAllow` exempts individual paths — use the
+  latter when one workflow needs one file, since a private key for a `git push`
+  over SSH without an agent costs `["~/.ssh"]`, not `false`. Not enforced on
+  Windows: MXC's policy is a grant list and the drive root has to be granted for
+  the container to start at all, so there is no deny entry to carve one path out
+  of.
+- **`kritya doctor`'s sandbox canary now probes a read as well as a write.** It
+  tries to read one real credential file from inside the sandbox and reports
+  whether the deny held, so a backend that is meant to enforce it and doesn't
+  shows up as a failed probe instead of as an untested claim. A host with no
+  credential file to read reports the probe as informational rather than
+  failing.
+
 ## [0.8.56-beta] — 2026-10-17
 
 ### Changed

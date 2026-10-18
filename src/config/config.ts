@@ -99,6 +99,35 @@ export interface CliConfig {
    */
   sandboxExec?: "auto" | "always" | "strict" | "off";
   /**
+   * Whether a sandboxed command is blocked from *reading* the credential files
+   * under your home directory — SSH private keys, `~/.aws`, `~/.config/gcloud`,
+   * `~/.kube`, `~/.docker/config.json`, `~/.netrc`. Default true.
+   *
+   * Reads are otherwise left open (see `sandboxExec`), so this is a deliberate
+   * exception rather than a general read confinement: those few paths are what
+   * a command that slipped past the danger guard would actually go after, and
+   * almost no build, test, or lint run needs them. Nothing is deleted or
+   * modified — the files are simply unreadable from inside the sandbox, and
+   * the error a command sees is the ordinary `EACCES` it would get from a
+   * permission bit.
+   *
+   * If a workflow genuinely needs one of them — a private key for a `git push`
+   * over SSH with no agent loaded, say — carve that single path back out with
+   * `sandboxReadAllow` instead of turning this off, which would expose the
+   * others too.
+   *
+   * Enforced on Linux (bubblewrap) and macOS (sandbox-exec) only. MXC's Windows
+   * policy is grant-based and grants the whole system drive read access, so it
+   * has no way to carve a denial out of that; see `mxcPolicyJson`.
+   */
+  sandboxReadDeny?: boolean;
+  /**
+   * Paths exempted from `sandboxReadDeny`: absolute, or relative to your home
+   * directory (`"~/.ssh"`, `"~/.aws"`). A directory exempts everything beneath
+   * it. Read by the Linux and macOS sandbox backends.
+   */
+  sandboxReadAllow?: string[];
+  /**
    * Days to keep session transcripts, audit logs, and telemetry files before
    * they're auto-deleted on startup. Default 15. Set to 0 (or any
    * non-positive number) to keep everything forever (auto-delete disabled).
@@ -334,6 +363,8 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "subagentWriteMaxSteps",
   "mcpServers",
   "sandboxExec",
+  "sandboxReadDeny",
+  "sandboxReadAllow",
   "retentionDays",
   "audit",
   "otel",

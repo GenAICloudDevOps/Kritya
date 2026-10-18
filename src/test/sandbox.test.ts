@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import {
   buildSandboxedCommand,
+  bwrapReadDenyArgs,
   canaryProbes,
   defaultSandboxMode,
+  macReadDenyRules,
   mxcPolicyJson,
   requiresSandbox,
   resetSandboxToolCache,
   runSandboxCanary,
   sandboxAvailable,
   sandboxPathVariants,
+  sandboxReadDenyPaths,
   sandboxSharedTmpDir,
   sandboxUnavailableReason,
   shouldSandbox,
@@ -889,4 +893,155 @@ test("runSandboxCanary: containment holds on a host with a backend", async () =>
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }
+});
+
+// --- Credential read denies -------------------------------------------------
+//
+// The deny list is a *policy* decision, so it is tested directly rather than
+// through a live sandbox: the three cases that matter are "the defaults cover
+// the secrets", "the carve-outs leave everyday workflows working", and "the
+// user's escape hatch removes exactly what it names and nothing else".
+
+test("sandboxReadDenyPaths: denies cloud and cluster credentials by default", () => {
+  const home = os.homedir();
+  const paths = sandboxReadDenyPaths({});
+  for (const expected of [
+    path.join(home, ".aws"),
+    path.join(home, ".config", "gcloud"),
+    path.join(home, ".kube"),
+    path.join(home, ".docker", "config.json"),
+    path.join(home, ".netrc"),
+  ]) {
+    assert.ok(paths.includes(expected), `the default deny list must include ${expected}`);
+  }
+});
+
+test("sandboxReadDenyPaths: leaves readable what everyday workflows need", () => {
+  // Denying these would break `npm publish`, the `gh` calls behind a pull
+  // request, and HTTPS `git push` — the trade recorded in the function's own
+  // comment. Asserted so a future edit has to argue with a failing test.
+  const home = os.homedir();
+  const paths = sandboxReadDenyPaths({});
+  for (const kept of [".npmrc", path.join(".config", "gh", "hosts.yml"), ".git-credentials"]) {
+    assert.ok(
+      !paths.includes(path.join(home, kept)),
+      `${kept} must stay readable — a first-class workflow reads it`
+    );
+  }
+});
+
+test("sandboxReadDenyPaths: ~/.ssh hides keys but not the files SSH itself needs", async (t) => {
+  const fs = await import("node:fs/promises");
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-readdeny-home-"));
+  try {
+    const ssh = path.join(home, ".ssh");
+    await fs.mkdir(ssh);
+    const secrets = ["id_rsa", "id_ed25519", "work_key"];
+    const plumbing = ["id_rsa.pub", "config", "known_hosts", "authorized_keys"];
+    for (const name of [...secrets, ...plumbing]) {
+      await fs.writeFile(path.join(ssh, name), "x");
+    }
+    t.mock.method(os, "homedir", () => home);
+
+    const denied = sandboxReadDenyPaths({});
+    for (const name of secrets) {
+      // "work_key" is the point: the rule is "anything that isn't known-public
+      // is a private key", not a list of the two conventional filenames.
+      assert.ok(
+        denied.includes(path.join(ssh, name)),
+        `${name} is a private key and must be denied`
+      );
+    }
+    for (const name of plumbing) {
+      assert.ok(
+        !denied.includes(path.join(ssh, name)),
+        `${name} must stay readable or SSH stops working at all`
+      );
+    }
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("sandboxReadDenyPaths: sandboxReadDeny=false empties the list", () => {
+  assert.deepEqual(sandboxReadDenyPaths({ sandboxReadDeny: false }), []);
+});
+
+test("sandboxReadAllow carves one path back out and leaves the rest denied", () => {
+  const home = os.homedir();
+  const allowed = sandboxReadDenyPaths({ sandboxReadAllow: ["~/.aws"] });
+  assert.ok(
+    !allowed.includes(path.join(home, ".aws")),
+    "a path the user allowed must not be denied"
+  );
+  assert.ok(
+    allowed.includes(path.join(home, ".netrc")),
+    "allowing one path must not weaken the others"
+  );
+  // A directory exempts what is under it, which is how `~/.ssh` gets its keys
+  // back for someone pushing over SSH without an agent.
+  const wholeSsh = sandboxReadDenyPaths({ sandboxReadAllow: ["~/.ssh"] });
+  assert.ok(
+    !wholeSsh.some((p) => p.startsWith(path.join(home, ".ssh") + path.sep)),
+    "allowing ~/.ssh must clear every key beneath it"
+  );
+});
+
+test("bwrapReadDenyArgs: a directory is emptied, a file is masked, a missing path is skipped", async () => {
+  const fs = await import("node:fs/promises");
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-bwrap-deny-"));
+  try {
+    const dir = path.join(base, "aws");
+    const file = path.join(base, "netrc");
+    await fs.mkdir(dir);
+    await fs.writeFile(file, "secret");
+    assert.deepEqual(
+      bwrapReadDenyArgs([dir, file, path.join(base, "missing")]),
+      // tmpfs so the directory reads as empty, remounted read-only so nothing
+      // can be left behind in it; /dev/null so the file reads as zero bytes.
+      ["--tmpfs", dir, "--remount-ro", dir, "--ro-bind", "/dev/null", file],
+      "bwrap cannot bind onto a path that isn't there, so missing entries are skipped"
+    );
+  } finally {
+    await fs.rm(base, { recursive: true, force: true });
+  }
+});
+
+test("macReadDenyRules: one read-only deny per path spelling, deduped", () => {
+  const target = path.join(os.homedir(), ".aws");
+  const variants = sandboxPathVariants(target);
+  const lines = macReadDenyRules([target]).split("\n");
+  assert.equal(lines.length, variants.length, "one rule per spelling of the path, no duplicates");
+  for (const line of lines) {
+    assert.match(line, /^\(deny file-read\* \(subpath ".+"\)\)$/);
+    assert.ok(
+      !line.includes("file-write"),
+      "writes are already denied by the whole-filesystem rule"
+    );
+  }
+  // The path is escaped for a profile string literal, so compare on the
+  // unescaped form rather than on the raw text.
+  const unescape = (s: string) => s.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  assert.ok(
+    lines.map(unescape).some((l) => l.includes(target)),
+    "the deny rule must name the real path, not a mangled spelling of it"
+  );
+});
+
+test("canaryProbes: a refused credential read is a containment claim", () => {
+  const probes = canaryProbes(false, true, { path: "/home/u/.aws/credentials", readable: false });
+  const cred = probes.find((p) => p.what.includes("credential file"))!;
+  assert.equal(cred.held, true);
+  assert.equal(
+    probes.filter((p) => p.informational).length,
+    0,
+    "with something real to probe, nothing is left informational"
+  );
+});
+
+test("canaryProbes: a credential read that succeeded must not report as held", () => {
+  // The whole point of probing: a backend that is supposed to deny reads and
+  // doesn't has to show up as a failure, not as a silently-missing note.
+  const probes = canaryProbes(false, true, { path: "/home/u/.netrc", readable: true });
+  assert.equal(probes.find((p) => p.what.includes("credential file"))!.held, false);
 });

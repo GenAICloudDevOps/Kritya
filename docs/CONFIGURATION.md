@@ -86,15 +86,50 @@ output instead of prompting again. Headless runs and unattended
 subagents skip the prompt (there's no one to answer it) and go straight
 to the unsandboxed run with the note. `"strict"` refuses the command
 instead of ever falling back. The sandbox
-confines **writes** to the workspace (plus system temp dirs on Linux/macOS) —
-reads and network access are left open, since restricting those breaks most
-ordinary tooling (dynamic linking, package manager caches, `git push`, etc.).
-It contains accidental or malicious damage outside your project; it isn't a
+confines **writes** to the workspace (plus system temp dirs on Linux/macOS).
+Reads and network access are otherwise left open, since restricting those
+breaks most ordinary tooling (dynamic linking, package manager caches,
+`git push`, etc.) — the one exception is the credential list below. It
+contains accidental or malicious damage outside your project, and stops a
+command from walking off with your cloud and SSH credentials; it still isn't a
 full read-confinement or network isolation sandbox.
 
 Background processes (`background: true`) run under the same policy, including
 `"strict"`'s fail-closed behavior — kritya refuses to start an unconfined
 background process rather than silently downgrading it.
+
+#### Credential reads
+
+Reads stay open for the reason above — dynamic linking, package manager caches
+and every toolchain's own config live outside the workspace — with one
+deliberate exception: a short list of credential files is unreadable from
+inside the sandbox. `cat ~/.ssh/id_rsa` fails. Nothing is deleted or modified;
+the error a command sees is the ordinary `EACCES` a permission bit would give.
+
+```json
+{ "sandboxReadDeny": true, "sandboxReadAllow": ["~/.ssh"] }
+```
+
+- `sandboxReadDeny` (**default `true`**) — denies reads of SSH private keys
+  under `~/.ssh` (every entry except `config`, `known_hosts`,
+  `authorized_keys` and `*.pub`), plus `~/.aws`, `~/.config/gcloud`,
+  `~/.kube`, `~/.docker/config.json` and `~/.netrc`. Set it to `false` to turn
+  the whole list off.
+- `sandboxReadAllow` — paths to exempt: absolute, or relative to your home
+  directory (`"~/.ssh"`, `"~/.aws"`). A directory exempts everything under it.
+
+Left readable on purpose, because a first-class workflow reads each one:
+`~/.npmrc` (`npm install` against a private registry, `npm publish`),
+`~/.config/gh/hosts.yml` (`gh pr create`), and `~/.git-credentials` (HTTPS
+`git push`). SSH through an agent never reads a key file, so the everyday
+`git push` keeps working without any configuration — only a key-file-without-
+agent setup needs `"~/.ssh"` in `sandboxReadAllow`, and that is a far smaller
+hole than `false`.
+
+Enforced by `bwrap` and `sandbox-exec` only. MXC's Windows policy is a grant
+list, and the drive root has to be granted for a container to start at all, so
+there is no deny entry to carve one path out of — on Windows reads stay open,
+exactly as before.
 
 ### Audit log & telemetry
 

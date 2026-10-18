@@ -119,11 +119,16 @@ of:
   present (falling back to only commands flagged as dangerous when it isn't);
   `"always"` and `"strict"` sandbox every command on every platform. On Windows
   the default is `"strict"`, so a host without MXC refuses commands rather than
-  running them unconfined. It does not confine reads or network access — treat
-  it as raising the cost of an evasion, not eliminating one. `"auto"` and
-  `"always"` fall back to an unsandboxed run (with a warning) if the sandbox
-  binary isn't available; `"strict"` refuses to run the command at all in that
-  case instead.
+  running them unconfined. Reads are open apart from a short credential deny
+  list — SSH private keys, `~/.aws`, `~/.config/gcloud`, `~/.kube`,
+  `~/.docker/config.json`, `~/.netrc` — which is enforced on Linux and macOS
+  and **not** on Windows, where MXC's grant-based policy has no way to deny a
+  path inside the system drive it must grant for the container to start. See
+  [Credential reads](docs/CONFIGURATION.md#credential-reads). Network access is
+  not confined on any platform. Treat all of it as raising the cost of an
+  evasion, not eliminating one. `"auto"` and `"always"` fall back to an
+  unsandboxed run (with a warning) if the sandbox binary isn't available;
+  `"strict"` refuses to run the command at all in that case instead.
 - **File access is confined** to the workspace root — including via a symlink
   inside the workspace that points outside it — and paths that look like
   secrets (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys)
