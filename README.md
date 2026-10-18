@@ -13,6 +13,8 @@ are triaged.
 
 Open source, [MIT licensed](LICENSE).
 
+GitHub is the canonical repo; the [GitLab copy](https://gitlab.com/tech_venkat/kritya) is a read-only backup mirror.
+
 Superintelligence at your command line
 
 It works with any OpenAI-compatible endpoint: [build.nvidia.com](https://build.nvidia.com)
