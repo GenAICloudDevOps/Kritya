@@ -4,7 +4,7 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.57-beta] — 2026-10-18
 
 ### Added
 
@@ -37,11 +37,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **A denied credential directory no longer breaks every sandboxed command.**
-  bwrap will not create a tmpfs mount point, so masking a directory absent from
-  the new root failed the whole command with `Can't mount tmpfs on /newroot/…:
-No such file or directory` — a read deny turning into "nothing runs at all".
-  The mask now emits `--dir` first, which is a no-op when the path is there.
+- **A credential directory that is a symlink no longer breaks every sandboxed
+  command.** bwrap will not mount a tmpfs over a path it cannot resolve in the
+  new root, and a refused mount fails the _whole_ command rather than just that
+  one path — so on a host where `~/.aws` is a link into another drive, every
+  shell call died with `Can't mount tmpfs` and the read deny turned into
+  "nothing runs at all". Masks now target the resolved path, which is where
+  `mount(2)` was going to look anyway, and a one-time probe runs the mask
+  arguments for real and drops them if the backend refuses them: a deny that
+  cannot be applied must not take the tool down with it. When the masks are
+  dropped, `kritya doctor`'s canary reports the credential probe as failed
+  rather than leaving the gap silent.
 
 ### Security
 
