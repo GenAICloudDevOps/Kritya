@@ -125,10 +125,14 @@ of:
   and **not** on Windows, where MXC's grant-based policy has no way to deny a
   path inside the system drive it must grant for the container to start. See
   [Credential reads](docs/CONFIGURATION.md#credential-reads). Network access is
-  not confined on any platform. Treat all of it as raising the cost of an
-  evasion, not eliminating one. `"auto"` and `"always"` fall back to an
-  unsandboxed run (with a warning) if the sandbox binary isn't available;
-  `"strict"` refuses to run the command at all in that case instead.
+  open unless `sandboxNetwork` is set to `"none"`, which blocks it on all three
+  backends — see [Network](docs/CONFIGURATION.md#network). That setting covers
+  the agent's own shell commands only: commands you run in your own terminal are
+  never sandboxed, and kritya's web search and fetch run outside it too. Treat
+  all of it as raising the cost of an evasion, not eliminating one. `"auto"` and
+  `"always"` fall back to an unsandboxed run (with a warning) if the sandbox
+  binary isn't available; `"strict"` refuses to run the command at all in that
+  case instead.
 - **File access is confined** to the workspace root — including via a symlink
   inside the workspace that points outside it — and paths that look like
   secrets (`.env*`, `.git/config`, `*credentials*`, `*secret*`, private keys)

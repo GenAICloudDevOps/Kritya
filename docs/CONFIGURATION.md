@@ -131,6 +131,51 @@ list, and the drive root has to be granted for a container to start at all, so
 there is no deny entry to carve one path out of — on Windows reads stay open,
 exactly as before.
 
+#### Network
+
+`"open"` (**default**) leaves the network exactly as it is. `"none"` cuts the
+sandbox off:
+
+```json
+{ "sandboxNetwork": "none" }
+```
+
+This is the only setting that makes exfiltration impossible rather than merely
+harder — a command that read something it shouldn't has nowhere to send it. It
+also stops `npm install`, `git push`, `docker pull`, and every other shell
+command that needs the internet, so it is the switch you turn on for a review
+pass or for code you don't own, not one that should surprise you mid-task.
+
+It does not touch kritya's own tools: web search and web fetch run inside
+kritya, not inside the sandbox, so research keeps working. `curl` typed into a
+shell command does not.
+
+**It also does not touch your terminal.** The sandbox wraps commands the _agent_
+runs — `bash`/`shell` tool calls and background processes it starts. A command
+you type yourself has no sandbox on it at all, so `npm install` and `git push`
+keep working normally in your own shell:
+
+| Who runs it                       | Internet with `"none"` |
+| --------------------------------- | ---------------------- |
+| Agent, via a shell command        | blocked                |
+| Agent, via web search / web fetch | works                  |
+| You, in your own terminal         | works                  |
+
+The practical workflow is therefore: the agent writes and commits, you push.
+If you want the agent to push as well, that one step needs the setting back at
+`"open"`.
+
+What it means per backend:
+
+| Backend        | What `"none"` does                                 | Side effect                                                                       |
+| -------------- | -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `bwrap`        | `--unshare-net` — a fresh, empty network namespace | Loopback goes down too, so a dev server can't be reached from your browser either |
+| `sandbox-exec` | `(deny network-outbound)`                          | Listeners still work, so `npm run dev` stays reachable                            |
+| MXC            | deny-by-default egress and ingress                 | —                                                                                 |
+
+MXC is also the only backend that can express an _allowlist_ rather than a
+blanket deny; that is a natural next step, not something this setting does.
+
 ### Audit log & telemetry
 
 The session transcript records the conversation; the **audit log** records what

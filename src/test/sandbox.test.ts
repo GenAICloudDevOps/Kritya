@@ -13,6 +13,7 @@ import {
   resetSandboxToolCache,
   runSandboxCanary,
   sandboxAvailable,
+  sandboxNetworkMode,
   sandboxPathVariants,
   sandboxReadDenyPaths,
   sandboxSharedTmpDir,
@@ -989,7 +990,10 @@ test("sandboxReadAllow carves one path back out and leaves the rest denied", () 
 
 test("bwrapReadDenyArgs: a directory is emptied, a file is masked, a missing path is skipped", async () => {
   const fs = await import("node:fs/promises");
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-bwrap-deny-"));
+  // Resolved up front: the mask names the real path, not a symlinked spelling
+  // of it (see bwrapReadDenyArgs), so on a host where /tmp is a symlink the
+  // expectation has to be built from the resolved form too.
+  const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kritya-bwrap-deny-")));
   try {
     const dir = path.join(base, "aws");
     const file = path.join(base, "netrc");
@@ -997,9 +1001,10 @@ test("bwrapReadDenyArgs: a directory is emptied, a file is masked, a missing pat
     await fs.writeFile(file, "secret");
     assert.deepEqual(
       bwrapReadDenyArgs([dir, file, path.join(base, "missing")]),
-      // tmpfs so the directory reads as empty, remounted read-only so nothing
-      // can be left behind in it; /dev/null so the file reads as zero bytes.
-      ["--tmpfs", dir, "--remount-ro", dir, "--ro-bind", "/dev/null", file],
+      // --dir so the mount point exists (bwrap refuses to create one), tmpfs so
+      // the directory reads as empty, remounted read-only so nothing can be
+      // left behind in it; /dev/null so the file reads as zero bytes.
+      ["--dir", dir, "--tmpfs", dir, "--remount-ro", dir, "--ro-bind", "/dev/null", file],
       "bwrap cannot bind onto a path that isn't there, so missing entries are skipped"
     );
   } finally {
@@ -1044,4 +1049,93 @@ test("canaryProbes: a credential read that succeeded must not report as held", (
   // doesn't has to show up as a failure, not as a silently-missing note.
   const probes = canaryProbes(false, true, { path: "/home/u/.netrc", readable: true });
   assert.equal(probes.find((p) => p.what.includes("credential file"))!.held, false);
+});
+
+// --- Network mode -----------------------------------------------------------
+//
+// Off by default, because it stops `npm install` and `git push`; on when asked
+// for. The backend flags are asserted per platform, since "no network" has to
+// mean the same thing on all three.
+
+test("sandboxNetworkMode: open unless explicitly set to none", () => {
+  assert.equal(sandboxNetworkMode({}), "open");
+  assert.equal(sandboxNetworkMode({ sandboxNetwork: "open" }), "open");
+  assert.equal(sandboxNetworkMode({ sandboxNetwork: "none" }), "none");
+});
+
+test("mxcPolicyJson: network none denies egress and ingress", () => {
+  const policy = JSON.parse(mxcPolicyJson("echo hi", "C:\\ws", [], [], "none"));
+  assert.deepEqual(policy.network, {
+    egress: { default: "deny" },
+    ingress: { default: "deny" },
+  });
+});
+
+test("mxcPolicyJson: the default keeps the network open", () => {
+  const policy = JSON.parse(mxcPolicyJson("echo hi", "C:\\ws", [], []));
+  assert.deepEqual(policy.network, {
+    egress: { default: "allow" },
+    ingress: { default: "allow" },
+  });
+});
+
+test("buildSandboxedCommand: network none reaches the backend that is in use", async (t) => {
+  const fs = await import("node:fs/promises");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-netmode-"));
+  const closed = buildSandboxedCommand("true", workspace, { sandboxNetwork: "none" });
+  try {
+    if (!closed) {
+      t.skip("no sandbox backend on this host");
+      return;
+    }
+    if (closed.cmd === "bwrap") {
+      assert.ok(closed.args.includes("--unshare-net"), "bwrap must get its own network namespace");
+      // The default stays as it was — no flag, so the command keeps the host's.
+      const open = buildSandboxedCommand("true", workspace, { sandboxNetwork: "open" })!;
+      assert.ok(!open.args.includes("--unshare-net"), "an open network must not unshare");
+    } else if (closed.cmd === "sandbox-exec") {
+      const profile = await fs.readFile(closed.args[closed.args.indexOf("-f") + 1], "utf8");
+      assert.match(profile, /\(deny network-outbound\)/);
+      // Outbound only: denying the whole family would also block a listening
+      // socket, so `npm run dev` could not serve anything.
+      assert.ok(!profile.includes("(deny network*)"), "binding must stay allowed");
+    } else {
+      const policy = JSON.parse(Buffer.from(closed.args[1], "base64").toString("utf8"));
+      assert.equal(policy.network.egress.default, "deny");
+      assert.equal(policy.network.ingress.default, "deny");
+    }
+  } finally {
+    closed?.cleanup?.();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("buildSandboxedCommand: sandboxReadDeny=false drops every credential mask", async (t) => {
+  const fs = await import("node:fs/promises");
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "kritya-nodeny-"));
+  const wrapped = buildSandboxedCommand("true", workspace, { sandboxReadDeny: false });
+  try {
+    if (!wrapped) {
+      t.skip("no sandbox backend on this host");
+      return;
+    }
+    if (wrapped.cmd === "bwrap") {
+      const home = os.homedir();
+      // Only the mask operations count — `extraWritablePaths` legitimately
+      // names home directories like ~/.npm for `--bind`, which is a different
+      // thing entirely.
+      const masked = wrapped.args.filter(
+        (a, i) =>
+          (wrapped.args[i - 1] === "--tmpfs" || wrapped.args[i - 1] === "--dir") &&
+          a.startsWith(home)
+      );
+      assert.deepEqual(masked, [], "no home-directory mask may survive the opt-out");
+    } else if (wrapped.cmd === "sandbox-exec") {
+      const profile = await fs.readFile(wrapped.args[wrapped.args.indexOf("-f") + 1], "utf8");
+      assert.ok(!profile.includes(".aws"), "the opt-out must reach the profile");
+    }
+  } finally {
+    wrapped?.cleanup?.();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });

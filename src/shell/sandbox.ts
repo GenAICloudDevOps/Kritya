@@ -110,6 +110,7 @@ export function resetSandboxToolCache(): void {
   cachedTool = undefined;
   cachedMxcExec = undefined;
   dotEnvLoaded = false;
+  bwrapMaskSupported = undefined;
 }
 
 /** Which sandbox backend (if any) is usable on this platform, cached after the first check. */
@@ -521,6 +522,21 @@ function pathContains(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/** Whether a sandboxed command may reach the network. */
+export type SandboxNetworkMode = "open" | "none";
+
+/**
+ * `"none"` only when the user asked for it; anything else is `"open"`.
+ *
+ * Deliberately not a default: cutting the network off stops `npm install`,
+ * `git push` and `docker pull`, so it is the setting you switch on for a review
+ * pass or for code you don't trust, not one that should surprise someone
+ * mid-task. Exported for tests.
+ */
+export function sandboxNetworkMode(config: CliConfig = loadConfig()): SandboxNetworkMode {
+  return config.sandboxNetwork === "none" ? "none" : "open";
+}
+
 /**
  * The credential paths a sandboxed command must not read, as absolute paths.
  *
@@ -752,7 +768,8 @@ function macSandboxProfile(
   extraDirs: string[],
   shared: string | null,
   runDir: string,
-  readDeny: string[]
+  readDeny: string[],
+  network: SandboxNetworkMode
 ): string {
   const esc = escapeProfilePath;
   // Every allow rule is emitted for both the literal and the symlink-resolved
@@ -795,12 +812,20 @@ function macSandboxProfile(
   // list, so the two cannot fight. Writes to these paths are already blocked by
   // the whole-filesystem write deny above.
   const credentialDeny = macReadDenyRules(readDeny);
+  // `network-outbound` and not `network*`: denying the whole operation family
+  // would also block binding a listening socket, so `npm run dev` could not
+  // serve anything at all. Denying only outbound connections stops a command
+  // from *sending* anything while leaving a dev server reachable from the
+  // browser — the same intent as bwrap's `--unshare-net`, minus the loopback
+  // loss that flag brings with it.
+  const networkDeny = network === "none" ? "(deny network-outbound)" : "";
   return `(version 1)
 (allow default)
 (deny file-write* (subpath "/"))
 (allow file-write* (subpath "/dev"))
 ${tmpDeny}
 ${credentialDeny}
+${networkDeny}
 ${writeExtra}
 ${readExtra}
 `;
@@ -902,9 +927,10 @@ function windowsToolPaths(workspace: string): string[] {
  *
  * Deliberate choices, all to keep Windows consistent with the other platforms
  * rather than stricter by accident:
- *  - The network is left open. Neither bwrap nor sandbox-exec restricts it, and
- *    a contained command that cannot reach the network cannot `npm install`,
- *    `git push`, or run a dev server. Tightening it is a cross-platform call.
+ *  - The network is left open unless `sandboxNetwork` is `"none"`, which turns
+ *    both directions into a deny-by-default policy here. It is not restricted by
+ *    default because a contained command that cannot reach the network cannot
+ *    `npm install`, `git push`, or run a dev server.
  *  - Credential reads are NOT denied here, unlike the other two backends (see
  *    `sandboxReadDenyPaths`). MXC's filesystem policy is a grant list, and the
  *    drive root has to appear in `readwritePaths` for the container to start at
@@ -955,7 +981,8 @@ export function mxcPolicyJson(
   command: string,
   workspace: string,
   writable: string[],
-  readable: string[] = []
+  readable: string[] = [],
+  network: SandboxNetworkMode = "open"
 ): string {
   return JSON.stringify({
     version: "1.0.0",
@@ -972,7 +999,13 @@ export function mxcPolicyJson(
       // are fatal under `readonlyPaths`.
       ...(readable.length > 0 ? { readonlyPaths: [...new Set(readable)] } : {}),
     },
-    network: { egress: { default: "allow" }, ingress: { default: "allow" } },
+    // MXC is the one backend that can express an allowlist here; `deny` with
+    // nothing listed is a plain "no network", which is what `sandboxNetwork:
+    // "none"` asks for.
+    network:
+      network === "none"
+        ? { egress: { default: "deny" }, ingress: { default: "deny" } }
+        : { egress: { default: "allow" }, ingress: { default: "allow" } },
     ui: { disable: false },
     // MXC telemetry is off unless the run opts in, the user consents, and
     // administrative policy permits it. Kritya opts out on the user's behalf.
@@ -992,38 +1025,80 @@ export function mxcPolicyJson(
  * file. `~/.aws` as an empty directory and `~/.netrc` as a zero-byte file are
  * both what "nothing set up here" looks like.
  *
- * Paths that don't exist are skipped, because bwrap cannot bind onto a path
- * that isn't there and a missing file is already unreadable. `statSync` (not
- * `lstatSync`) is used so a symlink to a directory takes the tmpfs branch —
- * `mount(2)` resolves the link either way, and binding `/dev/null` over a
- * directory fails the whole command. That resolution is also what makes a
- * symlinked key safe to mask: the mount lands on the target, so reads through
- * the link fail too.
+ * `--dir` comes before `--tmpfs` because bwrap will not create a tmpfs mount
+ * point: mounting on a path that is absent from the new root fails the *whole*
+ * command with `Can't mount tmpfs on /newroot/…: No such file or directory`,
+ * which turns a read deny into "nothing works at all". `--dir` is a no-op when
+ * the path is already there and creates it when it isn't.
+ *
+ * Paths that don't exist are skipped, because a missing file is already
+ * unreadable and there is nothing to mask. `statSync` (not `lstatSync`) is used
+ * so a symlink to a directory takes the tmpfs branch — `mount(2)` resolves the
+ * link either way, and binding `/dev/null` over a directory fails the command.
  *
  * Exported for tests.
  */
 export function bwrapReadDenyArgs(paths: string[]): string[] {
   const args: string[] = [];
-  for (const p of new Set(paths)) {
+  // The *resolved* path, not the literal one: a credential directory that is a
+  // symlink (`~/.aws -> ~/dotfiles/aws`) has to be masked where it really
+  // lives, because `mount(2)` follows the link and a link whose target the
+  // kernel cannot resolve is one of the ways this mount fails.
+  for (const raw of new Set(paths)) {
+    const p = realpathBestEffort(raw);
     let st: fs.Stats;
     try {
       st = fs.statSync(p);
     } catch {
       continue;
     }
-    if (st.isDirectory()) args.push("--tmpfs", p, "--remount-ro", p);
+    if (st.isDirectory()) args.push("--dir", p, "--tmpfs", p, "--remount-ro", p);
     else args.push("--ro-bind", "/dev/null", p);
   }
   return args;
 }
 
 /**
+ * Whether this host's bwrap actually accepts the mask operations, asked once
+ * per process by running them for real.
+ *
+ * This exists because of a failure mode that has no compile-time signal: a mask
+ * bwrap refuses (`Can't mount tmpfs on /newroot/…: No such file or directory`)
+ * does not just skip that one deny — it fails the *entire* command, so every
+ * shell call in the session dies and the sandbox looks broken rather than
+ * narrow. A security feature that can brick the tool is worse than one that is
+ * off, so the mask is used only if bwrap demonstrably accepts it here.
+ *
+ * The probe is the real argument list, not a synthetic one, so it exercises the
+ * exact paths the session will use. If it fails, the read deny is silently
+ * dropped and `kritya doctor`'s canary is what surfaces it: its credential
+ * probe reads a real file and reports the miss.
+ */
+let bwrapMaskSupported: boolean | undefined;
+
+function bwrapAcceptsMasks(maskArgs: string[]): boolean {
+  if (maskArgs.length === 0) return true;
+  if (bwrapMaskSupported !== undefined) return bwrapMaskSupported;
+  try {
+    const probe = spawnSync("bwrap", ["--ro-bind", "/", "/", ...maskArgs, "true"], {
+      stdio: "ignore",
+      timeout: 15_000,
+      windowsHide: true,
+    });
+    bwrapMaskSupported = probe.status === 0;
+  } catch {
+    bwrapMaskSupported = false;
+  }
+  return bwrapMaskSupported;
+}
+
+/**
  * Wraps `command` (run via `sh -c`) so it's confined to `workspace`: writes
- * are blocked everywhere else, network is left open, and reads are left open
- * outside the workspace *except* the credential list from
- * `sandboxReadDenyPaths` (SSH private keys, cloud and cluster credentials) and
- * the real temp-dir roots, which are hidden so one sandboxed command can't read
- * another's scratch files.
+ * are blocked everywhere else, reads are left open outside the workspace
+ * *except* the credential list from `sandboxReadDenyPaths` (SSH private keys,
+ * cloud and cluster credentials) and the real temp-dir roots, which are hidden
+ * so one sandboxed command can't read another's scratch files, and the network
+ * stays open unless `sandboxNetwork` is `"none"`.
  *
  * Read confinement stops there deliberately. Closing reads generally breaks
  * most ordinary tooling — dynamic linking, package manager caches, every
@@ -1032,9 +1107,19 @@ export function bwrapReadDenyArgs(paths: string[]): string[] {
  * and leaves `cat` on everything else working. Returns null if no sandbox
  * binary is available on this platform.
  */
-export function buildSandboxedCommand(command: string, workspace: string): SandboxedCommand | null {
+export function buildSandboxedCommand(
+  command: string,
+  workspace: string,
+  config: CliConfig = loadConfig()
+): SandboxedCommand | null {
   const tool = sandboxTool();
   if (!tool) return null;
+
+  // Read once: both settings are consulted by every branch below, and the
+  // third argument exists so tests can exercise a policy without writing to the
+  // user's real config.json.
+  const network = sandboxNetworkMode(config);
+  const readDeny = sandboxReadDenyPaths(config);
 
   // Linked worktrees / submodules keep their real git dir outside the workspace.
   const gitDir = externalGitCommonDir(workspace);
@@ -1068,7 +1153,8 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
             windowsShellCommand(command),
             workspace,
             writable,
-            windowsToolPaths(workspace)
+            windowsToolPaths(workspace),
+            network
           ),
           "utf8"
         ).toString("base64"),
@@ -1079,8 +1165,6 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   // null if the path exists but isn't a real, self-owned directory (e.g.
   // another local user squatted it as a symlink) — see safeSandboxSharedTmpDir.
   const shared = safeSandboxSharedTmpDir();
-  // Empty when the user set `sandboxReadDeny: false`.
-  const readDeny = sandboxReadDenyPaths();
 
   if (tool === "bwrap") {
     // /tmp is a fresh per-invocation tmpfs, EXCEPT for one dedicated shared
@@ -1089,10 +1173,18 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
     // the host's real /tmp — which holds other agents' isolated worktrees and
     // is the easiest place to hardlink a host file and write through the link.
     const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"];
+    // A fresh, empty network namespace: nothing routable, not even loopback.
+    // That is stricter than the macOS profile (which only denies outbound), and
+    // it is the honest limit of what bwrap can express — it has no per-host
+    // filter, so "no network" is the only useful setting it can enforce.
+    if (network === "none") args.push("--unshare-net");
     // Masked before the writable binds below rather than after, so a workspace
     // that happens to contain one of these paths still wins — the same
-    // precedence the macOS profile gives the workspace.
-    args.push(...bwrapReadDenyArgs(readDeny));
+    // precedence the macOS profile gives the workspace. Used only when bwrap
+    // accepts the operations on this host; see `bwrapAcceptsMasks` for why a
+    // mask that bwrap refuses must not take the whole command with it.
+    const maskArgs = bwrapReadDenyArgs(readDeny);
+    if (bwrapAcceptsMasks(maskArgs)) args.push(...maskArgs);
     seedSshKnownHosts();
     for (const p of [
       ...extraWritablePaths(),
@@ -1136,7 +1228,7 @@ export function buildSandboxedCommand(command: string, workspace: string): Sandb
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     profilePath,
-    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir, readDeny),
+    macSandboxProfile(workspace, gitDir ? [gitDir] : [], shared, runDir, readDeny, network),
     { mode: 0o600, flag: "wx" }
   );
   return {

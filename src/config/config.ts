@@ -128,6 +128,31 @@ export interface CliConfig {
    */
   sandboxReadAllow?: string[];
   /**
+   * Whether a sandboxed command can reach the network. `"open"` (default) leaves
+   * it exactly as it is today; `"none"` cuts the sandbox off entirely.
+   *
+   * `"none"` is the only setting that makes exfiltration impossible rather than
+   * merely harder: a command that has read something it shouldn't cannot send it
+   * anywhere. It also stops `npm install`, `git push`, `docker pull` and any
+   * other shell command that needs the internet, which is why it is opt-in —
+   * use it for review passes, untrusted code, and anything you are about to run
+   * against a repository you don't own.
+   *
+   * It does not affect kritya's own tools: web search and web fetch run inside
+   * kritya, not inside the sandbox, so research keeps working. Nor does it
+   * affect your own terminal — the sandbox only wraps commands the agent runs,
+   * so `git push` typed by you is untouched. The workflow it implies is "the
+   * agent writes and commits, you push".
+   *
+   * Enforced on all three backends — bwrap unshares the network namespace,
+   * sandbox-exec denies outbound connections, and MXC gets a deny-all egress and
+   * ingress policy. The platforms differ in one detail: bwrap's isolated
+   * namespace takes the loopback interface down too, so a dev server cannot be
+   * reached from your browser either, while sandbox-exec only blocks outbound,
+   * so a listener stays reachable.
+   */
+  sandboxNetwork?: "open" | "none";
+  /**
    * Days to keep session transcripts, audit logs, and telemetry files before
    * they're auto-deleted on startup. Default 15. Set to 0 (or any
    * non-positive number) to keep everything forever (auto-delete disabled).
@@ -365,6 +390,7 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "sandboxExec",
   "sandboxReadDeny",
   "sandboxReadAllow",
+  "sandboxNetwork",
   "retentionDays",
   "audit",
   "otel",

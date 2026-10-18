@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`sandboxNetwork: "none"` cuts a sandboxed command off from the network.**
+  Until now the sandbox confined writes and credential reads but left the
+  network wide open, so a command could still read something it shouldn't and
+  send it out. `"none"` is the only setting that makes that impossible rather
+  than merely harder: bwrap gets a fresh network namespace (`--unshare-net`),
+  sandbox-exec gets `(deny network-outbound)`, and MXC gets deny-by-default
+  egress and ingress. Default is `"open"`, because `"none"` also stops
+  `npm install`, `git push` and `docker pull` — it is a switch for a review pass
+  or for code you don't own, not something to leave on mid-task. Kritya's own
+  web search and fetch are unaffected; they run outside the sandbox.
+
+### Fixed
+
+- **A denied credential directory no longer breaks every sandboxed command.**
+  bwrap will not create a tmpfs mount point, so masking a directory absent from
+  the new root failed the whole command with `Can't mount tmpfs on /newroot/…:
+No such file or directory` — a read deny turning into "nothing runs at all".
+  The mask now emits `--dir` first, which is a no-op when the path is there.
+
 ### Security
 
 - **The sandbox can no longer read your credentials.** `sandboxExec` confined
