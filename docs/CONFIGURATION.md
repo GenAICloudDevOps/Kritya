@@ -347,7 +347,7 @@ only; your conversation, undo history, and task checklist are untouched, so
 the agent picks up exactly where it left off. `/provider` with no argument
 lists every built-in and custom provider and marks which ones currently have
 an API key configured (only those are actually switchable). In headless mode
-(`--prompt`/`kritya -p ...`) there's no session to fail over mid-run, but the
+(`--prompt ...`) there's no session to fail over mid-run, but the
 error message names an alternative to retry with via `--provider <name>`.
 
 A practical fallback chain to configure: keep `nvidia` as your default and set
@@ -492,15 +492,12 @@ The temp `routes.toml` kritya generates isn't deleted after the session
 either — the same debug line gives its path, so it can be inspected directly
 if the generated config itself is in question.
 
-- Requires `NVIDIA_API_KEY` regardless of which provider you normally use —
-  both the sidecar's outbound calls and kritya's own fallback path call
-  NVIDIA directly.
-
 ### Custom slash commands
 
 Drop a markdown file in `.kritya/commands/` (workspace) or `~/.kritya/commands/`
 (global) and it becomes a slash command named after the file. The body is a
 prompt; `$ARGUMENTS` is replaced with whatever you type after the command.
+`{{args}}` works the same as `$ARGUMENTS`.
 
 ```markdown
 <!-- .kritya/commands/review.md -->
