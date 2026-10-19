@@ -35,6 +35,12 @@ permissions:
 
 jobs:
   mirror:
+    # Dependabot pushes its branches to this repo, so the push trigger fires,
+    # but GitHub withholds repo secrets from Dependabot-triggered runs —
+    # GITLAB_TOKEN arrives empty and the push dies with exit 128. That is a
+    # red check on every Dependabot PR that says nothing about the PR. The
+    # mirror catches up on the push to main that the merge produces.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -24,3 +24,20 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      # github/codeql-action is one dependency spread across several entry
+      # points (init, analyze, upload-sarif), and CodeQL refuses to run when
+      # those steps disagree: "Loaded a configuration file for version X, but
+      # running version Y. All steps in a workflow that use
+      # github/codeql-action must use the same version." Ungrouped, Dependabot
+      # opens one PR per entry point, so each individual PR is red on arrival
+      # and none of them can be merged alone. Grouping forces a single PR that
+      # moves every step together.
+      codeql-action:
+        patterns:
+          # Both spellings: the docs only promise that `*` matches "zero or
+          # more characters" without saying whether it crosses a `/`, and the
+          # action is referenced by subpath (init, analyze, upload-sarif).
+          # Matching on both forms makes the group work either way.
+          - "github/codeql-action*"
+          - "github/codeql-action/*"
