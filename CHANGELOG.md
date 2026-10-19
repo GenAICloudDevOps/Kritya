@@ -4,6 +4,19 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.58-beta] — 2026-10-19
+
+### Changed
+
+- **Dependencies bumped.** openai 7.38.0 → 7.39.0, undici 8.12.2 → 8.12.3,
+  typescript-eslint 8.71.2 → 8.72.0.
+
+### Security
+
+- Bumped `github/codeql-action` (init/analyze/upload-sarif) 4.38.3 → 4.39.0,
+  `actions/download-artifact` 4.3.0 → 8.0.2, `actions/setup-node` 7.0.0 →
+  7.1.0, and `ossf/scorecard-action` 2.4.4 → 2.5.0 in the workflows.
+
 ## [0.8.57-beta] — 2026-10-18
 
 ### Added
