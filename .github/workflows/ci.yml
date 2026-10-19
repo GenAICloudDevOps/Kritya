@@ -88,12 +88,21 @@ jobs:
       # empty there — failing the job on a missing token would be a false
       # red, not a real finding.
       #
+      # Skipped on Dependabot PRs for the same reason, and the fork check does
+      # not catch them: Dependabot branches live in this repo, so
+      # `head.repo.full_name == github.repository` is true and the step would
+      # run with an empty token. GitHub withholds secrets from every
+      # Dependabot-triggered run. The PR's own package changes are still
+      # covered by `npm ci` (lockfile hashes), `check:audit` and
+      # `npm audit signatures` above; Socket re-scans the merged commit on the
+      # push to main.
+      #
       # Runs even if an earlier step in this job failed (e.g. npm audit's
       # registry endpoint timing out) — `!cancelled()` skips this only if the
       # job itself was cancelled, so a flaky npm audit doesn't also deny us
       # Socket's independent coverage for the same push.
       - name: Socket security scan
-        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: npx --yes @socketsecurity/cli ci
         env:
           SOCKET_CLI_API_TOKEN: ${{ secrets.SOCKET_CLI_API_TOKEN }}
