@@ -23,6 +23,45 @@ let cachedMxcExec: string | null | undefined;
 let dotEnvLoaded = false;
 
 /**
+ * True once a headless run has claimed maximum restriction.
+ *
+ * Module state rather than a config field, because the readers below are called
+ * from paths that pass no config and fall back to `loadConfig()` — a frontend
+ * that mutated its own copy of the config would not be seen by
+ * `buildSandboxedCommand`'s default argument. A process-wide flag is what makes
+ * the claim hold no matter which caller arrives first, and a headless run is
+ * one process, so there is nothing to scope it to.
+ *
+ * What it forces, and why each one:
+ *  - network `"none"` — a CI job has nobody watching it, so the setting that
+ *    depends on a human deciding "this looks untrusted" never gets chosen.
+ *  - the strict credential list — `gh`, `npm publish` and HTTPS push are not
+ *    things a headless run does on the user's behalf, so masking their tokens
+ *    costs nothing there.
+ *  - read denial even when `sandboxReadDeny` is false — the config was written
+ *    for an interactive session; a headless run cannot show the prompt that
+ *    would make an open read policy defensible.
+ *
+ * Deliberately not part of it: `sandboxExec`. A headless run with no backend
+ * already fails closed under "strict", and forcing the mode would silently
+ * override a host where the user deliberately chose "auto".
+ */
+let headlessRestrictions = false;
+
+/**
+ * Turns maximum restriction on or off for this process. Called by the headless
+ * entry point; exported so tests can drive both states without a CI runner.
+ */
+export function setHeadlessSandboxRestrictions(on: boolean): void {
+  headlessRestrictions = on;
+}
+
+/** Whether the headless maximum-restriction posture is in force. */
+export function headlessSandboxRestrictions(): boolean {
+  return headlessRestrictions;
+}
+
+/**
  * Load `~/.kritya/.env` before the backend is resolved, once per process.
  *
  * `locateMxcExecutable` reads `KRITYA_MXC_EXEC` and `MXC_BIN_DIR` from the
@@ -526,15 +565,38 @@ function pathContains(parent: string, child: string): boolean {
 export type SandboxNetworkMode = "open" | "none";
 
 /**
- * `"none"` only when the user asked for it; anything else is `"open"`.
+ * `"none"` when the user asked for it, or always under a headless run.
  *
- * Deliberately not a default: cutting the network off stops `npm install`,
- * `git push` and `docker pull`, so it is the setting you switch on for a review
- * pass or for code you don't trust, not one that should surprise someone
- * mid-task. Exported for tests.
+ * Deliberately not the interactive default: cutting the network off stops
+ * `npm install`, `git push` and `docker pull`, so it is the setting you switch
+ * on for a review pass or for code you don't trust, not one that should
+ * surprise someone mid-task. A headless run is the case where that judgement
+ * has nobody to make it — see `setHeadlessSandboxRestrictions`.
+ *
+ * Exported for tests.
  */
 export function sandboxNetworkMode(config: CliConfig = loadConfig()): SandboxNetworkMode {
+  if (headlessRestrictions) return "none";
   return config.sandboxNetwork === "none" ? "none" : "open";
+}
+
+/**
+ * The credential files that are readable by default because a first-class
+ * workflow reads each one, and which `sandboxReadDenyStrict` (or a headless
+ * run) masks anyway.
+ *
+ * Kept separate from the base list so the two postures stay legible: the base
+ * list is "nobody needs this to build", and this one is "somebody needs this
+ * to work". Every entry here is a live token in a plain file, which is exactly
+ * why it is the interesting half of the deny list and why it cannot be the
+ * default half.
+ */
+function strictReadDenyPaths(home: string): string[] {
+  return [
+    path.join(home, ".npmrc"),
+    path.join(home, ".config", "gh", "hosts.yml"),
+    path.join(home, ".git-credentials"),
+  ];
 }
 
 /**
@@ -557,18 +619,25 @@ export function sandboxNetworkMode(config: CliConfig = loadConfig()): SandboxNet
  *    stays readable so contexts keep resolving.
  *  - `~/.netrc` — plaintext credentials for whatever `machine` entries it has.
  *
- * Deliberately NOT denied, each because a first-class workflow reads it:
- * `~/.npmrc` (`npm install` against a private registry, `npm publish`),
- * `~/.config/gh/hosts.yml` (the `gh` calls behind pull requests), and
- * `~/.git-credentials` (HTTPS `git push`). Blocking those would break the
- * ordinary user's day far more often than it would stop an attacker, and the
- * deny list is intentionally fixed so the only knob is the allow side.
+ * Deliberately NOT denied by default, each because a first-class workflow
+ * reads it: `~/.npmrc` (`npm install` against a private registry,
+ * `npm publish`), `~/.config/gh/hosts.yml` (the `gh` calls behind pull
+ * requests), and `~/.git-credentials` (HTTPS `git push`). Blocking those would
+ * break the ordinary user's day far more often than it would stop an attacker,
+ * so they are the opt-in half of the list rather than an omission — see
+ * `sandboxReadDenyStrict` and `strictReadDenyPaths`.
+ *
+ * The deny list is fixed apart from that one switch, so the only per-path knob
+ * is the allow side.
  *
  * Exported for tests.
  */
 export function sandboxReadDenyPaths(config: CliConfig = loadConfig()): string[] {
-  if (config.sandboxReadDeny === false) return [];
+  // A headless run does not get to honour `sandboxReadDeny: false`: there is
+  // nobody to ask whether an open read policy is acceptable here.
+  if (config.sandboxReadDeny === false && !headlessRestrictions) return [];
   const home = os.homedir();
+  const strict = config.sandboxReadDenyStrict === true || headlessRestrictions;
   const deny = [
     path.join(home, ".aws"),
     path.join(home, ".config", "gcloud"),
@@ -576,6 +645,7 @@ export function sandboxReadDenyPaths(config: CliConfig = loadConfig()): string[]
     path.join(home, ".docker", "config.json"),
     path.join(home, ".netrc"),
     ...sshPrivateKeyPaths(home),
+    ...(strict ? strictReadDenyPaths(home) : []),
   ];
   const allow = (config.sandboxReadAllow ?? [])
     .filter((p) => typeof p === "string" && p.length > 0)
