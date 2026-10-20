@@ -41,7 +41,7 @@ import { loadHooks, HookRunner } from "./hooks/hooks.js";
 import { gatedContentHash, isTrusted } from "./trust/trust.js";
 import { partitionByTrust, serverFingerprint, trustServer } from "./trust/mcpTrust.js";
 import { installCrashHandlers } from "./crash.js";
-import { defaultSandboxMode } from "./shell/sandbox.js";
+import { defaultSandboxMode, setHeadlessSandboxRestrictions } from "./shell/sandbox.js";
 import type { AgentHandlers, ElicitationResult, ToolDef } from "./types.js";
 import type { McpServerConfig } from "./config/config.js";
 
@@ -184,6 +184,12 @@ export async function runHeadless(args: HeadlessArgs): Promise<number> {
   if (trustWorkspace) loadDotEnv([path.join(workspace, ".env")]);
 
   const config = loadConfig();
+  // Nobody is at the terminal to answer "this looks untrusted" or "allow the
+  // network for this one", so a headless run takes the maximum-restriction
+  // posture instead of the interactive defaults: no egress, and the strict
+  // credential list. Set before any agent is built so every shell call in the
+  // run, including subagents, sees it.
+  setHeadlessSandboxRestrictions(true);
   const privacyMode = args.privacy === true || privacyModeFor(config);
   const provider = resolveProvider(config, args.provider || undefined);
   if (!provider.apiKey) {

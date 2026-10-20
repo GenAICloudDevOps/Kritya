@@ -132,9 +132,16 @@ of:
   `~/.docker/config.json`, `~/.netrc` — which is enforced on Linux and macOS
   and **not** on Windows, where MXC's grant-based policy has no way to deny a
   path inside the system drive it must grant for the container to start. See
-  [Credential reads](docs/CONFIGURATION.md#credential-reads). Network access is
-  open unless `sandboxNetwork` is set to `"none"`, which blocks it on all three
-  backends — see [Network](docs/CONFIGURATION.md#network). That setting covers
+  [Credential reads](docs/CONFIGURATION.md#credential-reads). Three credential
+  files stay readable on purpose because a first-class workflow reads each one
+  (`~/.npmrc`, `~/.config/gh/hosts.yml`, `~/.git-credentials`); they are live
+  tokens in plain files, so `sandboxReadDenyStrict` masks them as well.
+  Network access is open unless `sandboxNetwork` is set to `"none"`, which
+  blocks it on all three backends — see [Network](docs/CONFIGURATION.md#network).
+  Headless runs take both postures unconditionally, since there is nobody to
+  make that call mid-run — see
+  [Headless and CI runs](docs/CONFIGURATION.md#headless-and-ci-runs). That
+  setting covers
   the agent's own shell commands only: commands you run in your own terminal are
   never sandboxed, and kritya's web search and fetch run outside it too. Treat
   all of it as raising the cost of an evasion, not eliminating one. `"auto"` and

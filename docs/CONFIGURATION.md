@@ -159,6 +159,10 @@ the error a command sees is the ordinary `EACCES` a permission bit would give.
   the whole list off.
 - `sandboxReadAllow` — paths to exempt: absolute, or relative to your home
   directory (`"~/.ssh"`, `"~/.aws"`). A directory exempts everything under it.
+- `sandboxReadDenyStrict` (**default `false`**) — extends the list to the three
+  files below that are otherwise readable on purpose. They hold live tokens, so
+  this is the setting for a review pass, a repository you don't own, or CI.
+  `sandboxReadAllow` still wins, so one path can be carved back out.
 
 Left readable on purpose, because a first-class workflow reads each one:
 `~/.npmrc` (`npm install` against a private registry, `npm publish`),
@@ -167,6 +171,11 @@ Left readable on purpose, because a first-class workflow reads each one:
 `git push` keeps working without any configuration — only a key-file-without-
 agent setup needs `"~/.ssh"` in `sandboxReadAllow`, and that is a far smaller
 hole than `false`.
+
+Those three are the interesting half of the list, not an oversight: each is a
+credential in a plain file that `~/.aws` and `~/.ssh` protection does not cover.
+`sandboxReadDenyStrict` masks them, at the cost of `gh`, private-registry
+installs, and HTTPS push.
 
 Enforced by `bwrap` and `sandbox-exec` only. MXC's Windows policy is a grant
 list, and the drive root has to be granted for a container to start at all, so
@@ -217,6 +226,22 @@ What it means per backend:
 
 MXC is also the only backend that can express an _allowlist_ rather than a
 blanket deny; that is a natural next step, not something this setting does.
+
+#### Headless and CI runs
+
+A headless run (`kritya -p "…"`, or any non-interactive invocation) has nobody
+at the terminal to answer "this looks untrusted" or "allow the network for this
+one", so it takes the maximum-restriction posture instead of the interactive
+defaults, regardless of what `config.json` says:
+
+- the network is `"none"` — no egress, whatever `sandboxNetwork` is set to;
+- the credential list is the strict one, whatever `sandboxReadDenyStrict` says;
+- `sandboxReadDeny: false` is ignored, since there is no one to ask whether an
+  open read policy is acceptable here.
+
+`sandboxExec` is deliberately **not** overridden: a headless run with no backend
+already fails closed under `"strict"`, and forcing the mode would silently
+override a host where `"auto"` was chosen on purpose.
 
 ### Audit log & telemetry
 

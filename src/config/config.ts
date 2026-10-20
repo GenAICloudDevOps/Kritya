@@ -128,6 +128,25 @@ export interface CliConfig {
    */
   sandboxReadAllow?: string[];
   /**
+   * Extends `sandboxReadDeny` to the three credential files that are otherwise
+   * left readable on purpose, because a first-class workflow reads each one:
+   * `~/.npmrc` (private-registry auth for `npm install` and `npm publish`),
+   * `~/.config/gh/hosts.yml` (the token behind every `gh` call), and
+   * `~/.git-credentials` (HTTPS `git push` without a credential helper).
+   *
+   * They are live credentials in plain files, so a command that got past the
+   * danger guard can read them even though `~/.aws` and `~/.ssh` are already
+   * masked. Default false, because masking them breaks `gh`, private-registry
+   * installs, and HTTPS push — ordinary daily work, not an edge case.
+   *
+   * Turn it on for a review pass, for a repository you don't own, or in CI,
+   * where none of those three workflows is expected to run. `sandboxReadAllow`
+   * still wins, so a single path can be carved back out. Enforced on Linux and
+   * macOS; MXC's Windows policy cannot express a deny, as with
+   * `sandboxReadDeny`.
+   */
+  sandboxReadDenyStrict?: boolean;
+  /**
    * Whether a sandboxed command can reach the network. `"open"` (default) leaves
    * it exactly as it is today; `"none"` cuts the sandbox off entirely.
    *
@@ -390,6 +409,7 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "sandboxExec",
   "sandboxReadDeny",
   "sandboxReadAllow",
+  "sandboxReadDenyStrict",
   "sandboxNetwork",
   "retentionDays",
   "audit",
