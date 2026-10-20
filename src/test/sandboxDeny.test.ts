@@ -226,7 +226,13 @@ test("network none: a sandboxed command cannot open a TCP connection", async (t)
     return;
   }
 
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "kritya-netprobe-"));
+  // Deliberately NOT under os.tmpdir(). On macOS the profile denies reads of
+  // the real temp roots, and node has to lstat an ancestor of its entry script
+  // to canonicalize it — so a workspace inside a denied root cannot even start
+  // node, and the positive control below would fail for a reason that has
+  // nothing to do with the network. The repo checkout is readable by default,
+  // which keeps this test about the network and nothing else.
+  const workspace = fs.mkdtempSync(path.join(process.cwd(), ".kritya-netprobe-"));
   const server = net.createServer((socket) => socket.end());
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
