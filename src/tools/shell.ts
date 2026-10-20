@@ -4,6 +4,7 @@ import { gitDiffStat } from "../git/git.js";
 import { backgroundManager } from "../shell/background.js";
 import {
   buildSandboxedCommand,
+  networkBlockedHint,
   requiresSandbox,
   sandboxUnavailableReason,
   shouldSandbox,
@@ -143,7 +144,19 @@ export const shellTool: ToolDef = {
             : runOpts;
           execFile(wrapped.cmd, wrapped.args, opts, (error, stdout, stderr) => {
             wrapped.cleanup?.();
-            finish(resolve, error, stdout, stderr);
+            // Only on failure, and only when the sandbox was the reason: a
+            // command that fails with a name-resolution error inside a
+            // no-network sandbox otherwise looks like a broken project rather
+            // than a setting the user can change.
+            finish(
+              resolve,
+              error,
+              stdout,
+              stderr,
+              error
+                ? (networkBlockedHint(wrapped.network, `${stdout}\n${stderr}`) ?? undefined)
+                : undefined
+            );
           });
           return;
         }

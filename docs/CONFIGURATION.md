@@ -184,18 +184,35 @@ exactly as before.
 
 #### Network
 
-`"open"` (**default**) leaves the network exactly as it is. `"none"` cuts the
-sandbox off:
+`"none"` (**default**) cuts the sandbox off. `"open"` leaves the network
+exactly as it is:
 
 ```json
-{ "sandboxNetwork": "none" }
+{ "sandboxNetwork": "open" }
 ```
 
-This is the only setting that makes exfiltration impossible rather than merely
-harder — a command that read something it shouldn't has nowhere to send it. It
-also stops `npm install`, `git push`, `docker pull`, and every other shell
-command that needs the internet, so it is the switch you turn on for a review
-pass or for code you don't own, not one that should surprise you mid-task.
+Closed by default because this is the only setting that makes exfiltration
+impossible rather than merely harder — a command that read something it
+shouldn't has nowhere to send it. The cost is that `npm install`, `git push`,
+`docker pull` and every other shell command that needs the internet fails until
+the network is opened.
+
+When it does fail, the failure says why: a command that dies with a
+name-resolution or connection error inside a closed sandbox gets a line
+explaining that the sandbox caused it, rather than looking like a broken
+project. Two ways to open it:
+
+- `/network on` — for the rest of this session. Resets when kritya restarts,
+  because "I trusted this session" is not a fact about the next one.
+  `/network off` closes it again, and `/network` on its own reports which
+  posture is in force and why.
+- `"sandboxNetwork": "open"` in `config.json` — permanent, for a machine where
+  the agent is expected to install and push.
+
+**It is not per-host.** `bwrap`'s `--unshare-net` is a network namespace and
+`sandbox-exec`'s rule is an operation family; neither can express "this host,
+not that one", so `/network on` grants every destination. A per-host allowlist
+would need a proxy in front of the sandbox, which does not exist yet.
 
 It does not touch kritya's own tools: web search and web fetch run inside
 kritya, not inside the sandbox, so research keeps working. `curl` typed into a
@@ -234,7 +251,8 @@ at the terminal to answer "this looks untrusted" or "allow the network for this
 one", so it takes the maximum-restriction posture instead of the interactive
 defaults, regardless of what `config.json` says:
 
-- the network is `"none"` — no egress, whatever `sandboxNetwork` is set to;
+- the network is `"none"` — no egress, whatever `sandboxNetwork` is set to, and
+  `/network on` cannot override it;
 - the credential list is the strict one, whatever `sandboxReadDenyStrict` says;
 - `sandboxReadDeny: false` is ignored, since there is no one to ask whether an
   open read policy is acceptable here.

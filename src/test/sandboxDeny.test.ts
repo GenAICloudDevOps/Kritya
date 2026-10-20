@@ -7,10 +7,14 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   buildSandboxedCommand,
+  looksLikeNetworkFailure,
+  networkBlockedHint,
   sandboxAvailable,
+  sandboxNetworkEscalated,
   sandboxNetworkMode,
   sandboxReadDenyPaths,
   setHeadlessSandboxRestrictions,
+  setSandboxNetworkEscalated,
   type SandboxedCommand,
 } from "../shell/sandbox.js";
 
@@ -104,9 +108,74 @@ test("headless: the posture does not leak into an interactive session", () => {
   assert.deepEqual(sandboxReadDenyPaths({ sandboxReadDeny: false }), []);
   assert.equal(
     sandboxNetworkMode({}),
-    "open",
-    "the default posture stays permissive for a session with a human in it"
+    "none",
+    "the closed default is what a fresh interactive session gets"
   );
+});
+
+test("network: closed by default, opened per session, and the grant resets", () => {
+  setHeadlessSandboxRestrictions(false);
+  setSandboxNetworkEscalated(false);
+  try {
+    assert.equal(sandboxNetworkMode({}), "none", "the network is off unless asked for");
+
+    // The escape hatch a failed command points at.
+    setSandboxNetworkEscalated(true);
+    assert.equal(sandboxNetworkMode({}), "open");
+    assert.equal(sandboxNetworkEscalated(), true);
+
+    // And revoking it puts the session back.
+    setSandboxNetworkEscalated(false);
+    assert.equal(sandboxNetworkMode({}), "none");
+
+    // A config that says "open" still wins over the default, so an existing
+    // setup is not silently changed by this.
+    assert.equal(sandboxNetworkMode({ sandboxNetwork: "open" }), "open");
+  } finally {
+    setSandboxNetworkEscalated(false);
+  }
+});
+
+test("network: a headless run cannot be talked into opening the network", () => {
+  setSandboxNetworkEscalated(true);
+  setHeadlessSandboxRestrictions(true);
+  try {
+    assert.equal(
+      sandboxNetworkMode({ sandboxNetwork: "open" }),
+      "none",
+      "neither the config nor a session grant outranks the headless posture"
+    );
+  } finally {
+    setHeadlessSandboxRestrictions(false);
+    setSandboxNetworkEscalated(false);
+  }
+});
+
+test("networkBlockedHint: only speaks up for a no-network failure", () => {
+  const dnsFailure = "npm error code ENOTFOUND\nnpm error errno ENOTFOUND";
+
+  assert.match(String(networkBlockedHint("none", dnsFailure)), /\/network on/);
+  assert.equal(networkBlockedHint("open", dnsFailure), null, "nothing is blocked when it is open");
+  assert.equal(
+    networkBlockedHint("none", "error TS2322: Type 'string' is not assignable"),
+    null,
+    "an unrelated failure must not be blamed on the sandbox"
+  );
+});
+
+test("looksLikeNetworkFailure: recognises the usual shapes, ignores the rest", () => {
+  for (const text of [
+    "getaddrinfo ENOTFOUND registry.npmjs.org",
+    "curl: (6) Could not resolve host: example.com",
+    "npm ERR! code EAI_AGAIN",
+    "connect ECONNREFUSED 127.0.0.1:5432",
+    "ssh: connect to host github.com port 22: Network is unreachable",
+  ]) {
+    assert.equal(looksLikeNetworkFailure(text), true, text);
+  }
+  for (const text of ["1 passing", "error: expected 2 arguments", "npm ERR! code ELIFECYCLE"]) {
+    assert.equal(looksLikeNetworkFailure(text), false, text);
+  }
 });
 
 test("headless: the posture reaches the bwrap args", (t) => {
