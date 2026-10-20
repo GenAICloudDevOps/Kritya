@@ -4,6 +4,37 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.60-beta] — 2026-10-19
+
+### Changed
+
+- **The sandbox closes the network by default.** Writes were already confined
+  and credentials masked, but a command could still send what it read anywhere
+  it liked. `sandboxNetwork` now defaults to `"none"`, so `npm install`,
+  `git push` and `docker pull` fail inside a sandboxed command until the network
+  is opened. Set `"sandboxNetwork": "open"` in config.json for the old behavior.
+- **A blocked command now says so.** When a sandboxed command dies with a
+  name-resolution or connection error, the note names the sandbox as the cause
+  and points at `/network on`, instead of leaving it looking like a broken
+  project.
+
+### Added
+
+- `/network on` opens egress for the rest of the session, `/network off` closes
+  it again, and bare `/network` reports the current posture and where it came
+  from. The grant is session-wide, not per-host: neither backend can express a
+  per-host rule, and saying otherwise would be a promise the sandbox cannot keep.
+- `sandboxReadDenyStrict` — also masks `~/.npmrc`, `~/.config/gh/hosts.yml` and
+  `~/.git-credentials` from sandboxed commands, on top of the default list.
+- Tests that prove the denials rather than assert the arguments: a real TCP
+  connect inside a closed sandbox, and a masked credential that cannot be read.
+
+### Security
+
+- Headless and CI runs force the strictest posture — network closed, strict read
+  list, sandbox reads not disabled — and neither the config nor `/network` can
+  loosen it, because there is nobody at the terminal to answer for it.
+
 ## [0.8.58-beta] — 2026-10-19
 
 ### Changed
