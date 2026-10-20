@@ -128,9 +128,16 @@ test("headless: the posture reaches the bwrap args", (t) => {
 });
 
 /** Runs a built wrapper to completion, returning its exit code and output. */
-function runWrapped(wrapped: SandboxedCommand): Promise<{ code: number | null; out: string }> {
+function runWrapped(
+  wrapped: SandboxedCommand,
+  cwd: string
+): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn(wrapped.cmd, wrapped.args, { stdio: ["ignore", "pipe", "pipe"] });
+    // `cwd` is not optional: bwrap's wrapper carries its own --chdir, but
+    // sandbox-exec does not, so a command naming a relative file only resolves
+    // on macOS if the caller sets the working directory the way the real
+    // tool executor does.
+    const child = spawn(wrapped.cmd, wrapped.args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (out += chunk.toString()));
@@ -178,7 +185,7 @@ test("network none: a sandboxed command cannot open a TCP connection", async (t)
     // reason.
     const open = buildSandboxedCommand(command, workspace, { sandboxNetwork: "open" });
     assert.ok(open, "a backend is available, so a wrapper must be produced");
-    const openResult = await runWrapped(open);
+    const openResult = await runWrapped(open, workspace);
     assert.equal(
       openResult.code,
       0,
@@ -188,7 +195,7 @@ test("network none: a sandboxed command cannot open a TCP connection", async (t)
 
     const closed = buildSandboxedCommand(command, workspace, { sandboxNetwork: "none" });
     assert.ok(closed);
-    const closedResult = await runWrapped(closed);
+    const closedResult = await runWrapped(closed, workspace);
     assert.notEqual(closedResult.code, 0, "a connection succeeded inside a no-network sandbox");
     assert.match(
       closedResult.out,
@@ -217,7 +224,7 @@ test("strict reads: a masked credential is unreadable inside the sandbox", async
     const command = `cat ${JSON.stringify(credential)}`;
     const wrapped = buildSandboxedCommand(command, workspace, { sandboxReadDenyStrict: true });
     assert.ok(wrapped);
-    const result = await runWrapped(wrapped);
+    const result = await runWrapped(wrapped, workspace);
     assert.notEqual(result.code, 0, "a masked credential must not be readable");
     assert.doesNotMatch(result.out, /token@example\.invalid/);
   } finally {
