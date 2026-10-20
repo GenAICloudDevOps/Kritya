@@ -136,8 +136,10 @@ of:
   files stay readable on purpose because a first-class workflow reads each one
   (`~/.npmrc`, `~/.config/gh/hosts.yml`, `~/.git-credentials`); they are live
   tokens in plain files, so `sandboxReadDenyStrict` masks them as well.
-  Network access is open unless `sandboxNetwork` is set to `"none"`, which
-  blocks it on all three backends — see [Network](docs/CONFIGURATION.md#network).
+  Network access is **closed by default** and blocks egress on all three
+  backends; `/network on` opens it for the rest of a session and
+  `"sandboxNetwork": "open"` makes that permanent. The grant is session-wide,
+  not per-host — see [Network](docs/CONFIGURATION.md#network).
   Headless runs take both postures unconditionally, since there is nobody to
   make that call mid-run — see
   [Headless and CI runs](docs/CONFIGURATION.md#headless-and-ci-runs). That

@@ -147,21 +147,26 @@ export interface CliConfig {
    */
   sandboxReadDenyStrict?: boolean;
   /**
-   * Whether a sandboxed command can reach the network. `"open"` (default) leaves
-   * it exactly as it is today; `"none"` cuts the sandbox off entirely.
+   * Whether a sandboxed command can reach the network. `"none"` (default) cuts
+   * the sandbox off entirely; `"open"` leaves it exactly as it is.
    *
    * `"none"` is the only setting that makes exfiltration impossible rather than
    * merely harder: a command that has read something it shouldn't cannot send it
-   * anywhere. It also stops `npm install`, `git push`, `docker pull` and any
-   * other shell command that needs the internet, which is why it is opt-in —
-   * use it for review passes, untrusted code, and anything you are about to run
-   * against a repository you don't own.
+   * anywhere. The cost is that `npm install`, `git push`, `docker pull` and any
+   * other shell command that needs the internet fails until the network is
+   * opened, which is why a network-shaped failure says so and `/network on`
+   * grants it for the rest of the session. Set `"open"` here to skip that and
+   * keep the old behavior permanently.
+   *
+   * The grant `/network on` makes is session-wide, not per-host: bwrap's
+   * `--unshare-net` is a namespace and sandbox-exec's rule is an operation
+   * family, so neither can say "this host, not that one". A real allowlist
+   * needs a proxy in front of the sandbox.
    *
    * It does not affect kritya's own tools: web search and web fetch run inside
    * kritya, not inside the sandbox, so research keeps working. Nor does it
    * affect your own terminal — the sandbox only wraps commands the agent runs,
-   * so `git push` typed by you is untouched. The workflow it implies is "the
-   * agent writes and commits, you push".
+   * so `git push` typed by you is untouched.
    *
    * Enforced on all three backends — bwrap unshares the network namespace,
    * sandbox-exec denies outbound connections, and MXC gets a deny-all egress and

@@ -16,6 +16,11 @@ export interface SandboxedCommand {
   env?: Record<string, string>;
   /** Removes any temp file/dir (e.g. a macOS sandbox profile, a per-run scratch dir) created for this run. */
   cleanup?: () => void;
+  /**
+   * The network posture this wrapper was built with, so a caller can explain a
+   * failure without re-reading the config (which may have changed since).
+   */
+  network?: SandboxNetworkMode;
 }
 
 let cachedTool: "bwrap" | "sandbox-exec" | "mxc" | null | undefined;
@@ -59,6 +64,35 @@ export function setHeadlessSandboxRestrictions(on: boolean): void {
 /** Whether the headless maximum-restriction posture is in force. */
 export function headlessSandboxRestrictions(): boolean {
   return headlessRestrictions;
+}
+
+/**
+ * True once this session has been granted network access by hand.
+ *
+ * The counterpart to `headlessRestrictions`, and the reason the default can be
+ * `"none"` without making the tool unusable: a command that needs the network
+ * fails, says so, and the user opens it with `/network on` for the rest of the
+ * session. Resets on restart, deliberately — "I trusted this session" is not a
+ * fact about the next one, and the same posture as the unsandboxed-fallback
+ * acknowledgement above.
+ *
+ * Session-scoped rather than per-command because the sandbox backends cannot
+ * express "this host, not that one": bwrap's `--unshare-net` is a namespace,
+ * and sandbox-exec's rule is an operation family. A per-host allowlist would
+ * need a proxy in front of the sandbox, which is a different piece of work —
+ * so this grants the whole session and says so, rather than implying a
+ * precision that does not exist.
+ */
+let networkEscalated = false;
+
+/** Grants or revokes network access for the rest of this session. */
+export function setSandboxNetworkEscalated(on: boolean): void {
+  networkEscalated = on;
+}
+
+/** Whether this session has been granted network access by hand. */
+export function sandboxNetworkEscalated(): boolean {
+  return networkEscalated;
 }
 
 /**
@@ -565,19 +599,54 @@ function pathContains(parent: string, child: string): boolean {
 export type SandboxNetworkMode = "open" | "none";
 
 /**
- * `"none"` when the user asked for it, or always under a headless run.
+ * `"none"` unless the user asked for `"open"`, this session was granted the
+ * network by hand, or a headless run is in force.
  *
- * Deliberately not the interactive default: cutting the network off stops
- * `npm install`, `git push` and `docker pull`, so it is the setting you switch
- * on for a review pass or for code you don't trust, not one that should
- * surprise someone mid-task. A headless run is the case where that judgement
- * has nobody to make it — see `setHeadlessSandboxRestrictions`.
+ * Off by default because egress is the one thing that turns a command that read
+ * something it shouldn't into a command that sent it somewhere. The cost is
+ * that `npm install`, `git push` and `docker pull` fail until the network is
+ * opened, which is why a failure says how (see `networkBlockedHint`) and
+ * `/network on` grants it for the session.
  *
  * Exported for tests.
  */
 export function sandboxNetworkMode(config: CliConfig = loadConfig()): SandboxNetworkMode {
   if (headlessRestrictions) return "none";
-  return config.sandboxNetwork === "none" ? "none" : "open";
+  if (networkEscalated) return "open";
+  return config.sandboxNetwork === "open" ? "open" : "none";
+}
+
+/**
+ * Whether a failed command's output looks like it died because the network was
+ * unreachable, rather than because the command itself was wrong.
+ *
+ * Deliberately loose: a false positive costs one extra line under an error that
+ * already happened, and a false negative leaves someone staring at
+ * `getaddrinfo ENOTFOUND` with no idea the sandbox caused it. Exported for
+ * tests.
+ */
+export function looksLikeNetworkFailure(output: string): boolean {
+  return /\b(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)\b|could not resolve host|network is unreachable|temporary failure in name resolution|getaddrinfo/i.test(
+    output
+  );
+}
+
+/**
+ * The line appended to a failed sandboxed command when the network was what
+ * stood in its way. Null when the network was open, or the failure looks
+ * unrelated, so nothing is said when nothing is wrong.
+ */
+export function networkBlockedHint(
+  network: SandboxNetworkMode | undefined,
+  output: string
+): string | null {
+  if (network !== "none") return null;
+  if (!looksLikeNetworkFailure(output)) return null;
+  return (
+    `[network is off inside the sandbox, so this command could not reach the network. ` +
+    `Run /network on to allow it for the rest of the session, or set "sandboxNetwork": "open" ` +
+    `in ~/.kritya/config.json to make that the default.]`
+  );
 }
 
 /**
@@ -1229,6 +1298,7 @@ export function buildSandboxedCommand(
           "utf8"
         ).toString("base64"),
       ],
+      network,
     };
   }
 
@@ -1275,7 +1345,7 @@ export function buildSandboxedCommand(
       "-c",
       command
     );
-    return { cmd: "bwrap", args };
+    return { cmd: "bwrap", args, network };
   }
 
   // sandbox-exec (macOS) takes its policy as a profile file, not inline args.
@@ -1304,6 +1374,7 @@ export function buildSandboxedCommand(
   return {
     cmd: "sandbox-exec",
     args: ["-f", profilePath, "sh", "-c", command],
+    network,
     env: { TMPDIR: runDir, TMP: runDir, TEMP: runDir },
     cleanup: () => {
       fs.rm(profilePath, { force: true }, () => {});

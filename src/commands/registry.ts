@@ -14,11 +14,17 @@ import {
   userPluginsDir,
 } from "../plugins/discover.js";
 import { scanPluginMcpServers } from "../plugins/mcp.js";
-import { listProviders, type CliConfig } from "../config/config.js";
+import { listProviders, loadConfig, type CliConfig } from "../config/config.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { ItemBody, Phase, TaskItem } from "../types.js";
 import { expandCommand, type CustomCommand } from "./custom.js";
 import { recordCommandUse } from "../ui/recentCommands.js";
+import {
+  headlessSandboxRestrictions,
+  sandboxNetworkEscalated,
+  sandboxNetworkMode,
+  setSandboxNetworkEscalated,
+} from "../shell/sandbox.js";
 import {
   allTemplates,
   applyTemplate,
@@ -234,6 +240,12 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   {
     name: "/audit",
     description: "show this session's permission decisions and verify the audit log's chain",
+    category: SAFETY,
+  },
+  {
+    name: "/network",
+    description:
+      "sandbox network access: /network on|off for this session, or no argument to see it",
     category: SAFETY,
   },
   {
@@ -931,6 +943,48 @@ const handlers: Record<string, CommandHandler> = {
   },
   "/status": (ctx) => {
     ctx.addItem({ kind: "info", text: ctx.statusReport() });
+  },
+  "/network": (ctx) => {
+    const arg = ctx.arg.trim().toLowerCase();
+    const config = loadConfig();
+    if (arg === "on" || arg === "off") {
+      if (headlessSandboxRestrictions()) {
+        ctx.addItem({
+          kind: "info",
+          text:
+            "This run is headless, so the sandbox keeps the network off regardless. " +
+            "A CI job has nobody to answer for the session, which is the whole point of the posture.",
+        });
+        return;
+      }
+      setSandboxNetworkEscalated(arg === "on");
+      ctx.addItem({
+        kind: "info",
+        text:
+          arg === "on"
+            ? "Sandbox network: OPEN for the rest of this session. It is not per-host — every " +
+              "destination is reachable — and it resets when kritya restarts."
+            : "Sandbox network: CLOSED for the rest of this session. Commands can no longer reach the network.",
+      });
+      return;
+    }
+    const mode = sandboxNetworkMode(config);
+    const source = headlessSandboxRestrictions()
+      ? "forced by this headless run"
+      : sandboxNetworkEscalated()
+        ? "opened by /network on this session"
+        : config.sandboxNetwork === "open"
+          ? 'set by "sandboxNetwork": "open" in config'
+          : "the default";
+    ctx.addItem({
+      kind: "info",
+      text:
+        `Sandbox network: ${mode.toUpperCase()} (${source}).\n` +
+        (mode === "none"
+          ? "Commands run without the network, so npm install, git push and docker pull fail. " +
+            "/network on opens it for this session."
+          : "Commands can reach the network. /network off closes it for this session."),
+    });
   },
   "/audit": (ctx) => {
     const audit = ctx.agent.audit;

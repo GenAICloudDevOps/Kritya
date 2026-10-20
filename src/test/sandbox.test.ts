@@ -1057,8 +1057,8 @@ test("canaryProbes: a credential read that succeeded must not report as held", (
 // for. The backend flags are asserted per platform, since "no network" has to
 // mean the same thing on all three.
 
-test("sandboxNetworkMode: open unless explicitly set to none", () => {
-  assert.equal(sandboxNetworkMode({}), "open");
+test("sandboxNetworkMode: closed unless the config opens it", () => {
+  assert.equal(sandboxNetworkMode({}), "none");
   assert.equal(sandboxNetworkMode({ sandboxNetwork: "open" }), "open");
   assert.equal(sandboxNetworkMode({ sandboxNetwork: "none" }), "none");
 });
