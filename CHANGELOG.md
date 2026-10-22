@@ -4,6 +4,14 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.61-beta] — 2026-10-22
+
+### Changed
+
+- **Dependencies bumped.** openai 7.39.0 → 7.42.0, electron 44.9.0 → 44.9.3,
+  docx 9.12.0 → 9.13.0. docx no longer pulls `xml` or `xml-js` transitively, so
+  both drop out of the lockfile.
+
 ## [0.8.60-beta] — 2026-10-19
 
 ### Changed
