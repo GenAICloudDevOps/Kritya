@@ -34,6 +34,7 @@ export type PermissionSource =
   | "plan-mode" // blocked because plan mode is on (read-only)
   | "dry-run-mode" // blocked because the manual dry-run toggle is on (read-only)
   | "kill-switch" // blocked because the session's kill switch is engaged
+  | "recon-tripwire" // blocked because the session's calls formed a recon-like pattern
   | "read-only"; // the tool never needed permission
 
 export type ToolOutcome = "ok" | "error" | "denied" | "blocked";

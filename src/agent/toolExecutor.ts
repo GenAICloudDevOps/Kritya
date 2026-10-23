@@ -21,6 +21,12 @@ import type { HookRunner } from "../hooks/hooks.js";
 import { isPlanningDocWrite, loadProjectState } from "./workflow.js";
 import type { KillSwitch } from "./killSwitch.js";
 import { redactSecrets } from "../tools/secretScan.js";
+import {
+  classifyReconCall,
+  ReconTripwire,
+  RECON_TRIP_THRESHOLD,
+  RECON_WINDOW_CALLS,
+} from "../permissions/recon.js";
 
 /** How much tool output to hand the UI (it shows a preview and expands on toggle). */
 const PREVIEW_CHARS = 4000;
@@ -146,6 +152,13 @@ export interface ToolExecutorHost {
  * still honored.
  */
 export class ToolExecutor {
+  /**
+   * Per-session recon-pattern score (see permissions/recon.ts). One
+   * executor serves one agent session, so the tripwire's state naturally
+   * spans exactly that session's calls and resets with it.
+   */
+  private readonly tripwire = new ReconTripwire();
+
   constructor(
     private readonly tools: ToolDef[],
     private readonly host: ToolExecutorHost
@@ -290,6 +303,36 @@ export class ToolExecutor {
     };
 
     if (host.kill.active) return killBlocked();
+
+    // Recon-pattern tripwire. The gates below (and the tools' own checks)
+    // judge calls one at a time; this is the one place that sees the
+    // sequence. Every call is scored, including ones another gate is about
+    // to block anyway — an attempt at a credential file is a signal whether
+    // or not it succeeds. Recording happens in this synchronous stretch,
+    // before any await, so a parallel batch of read-only calls can't race
+    // the score. Once tripped, only recon-carrying calls are blocked;
+    // ordinary work flows through the normal gates below.
+    const recon = this.tripwire.record(classifyReconCall(name, args));
+    if (recon.blocked) {
+      host.audit?.logPermission({
+        tool: name,
+        summary,
+        verdict: "denied",
+        source: "recon-tripwire",
+      });
+      logToolOutcome("blocked");
+      finishSpan("ERROR", "blocked: recon-pattern tripwire");
+      handlers.onToolEnd(id, name, summary, "blocked: recon-pattern tripwire", true);
+      return (
+        `Stopped by the recon-pattern tripwire: this session's recent calls form a ` +
+        `reconnaissance-like pattern (${this.tripwire.tripKinds.join(", ")}) — ${recon.score} ` +
+        `points across the last ${RECON_WINDOW_CALLS} calls, over the limit of ` +
+        `${RECON_TRIP_THRESHOLD}. This call was blocked, and further reconnaissance-like ` +
+        `calls stay blocked for the rest of the session. Ordinary work (reading and ` +
+        `editing project files, builds, tests) can continue. If this is legitimate ` +
+        `debugging, tell the user what you are doing and why; a new session resets the tripwire.`
+      );
+    }
 
     // The planning-doc exemption is scoped to the active project's own
     // docs/<slug>/ folder, so plan mode can persist its artifact without

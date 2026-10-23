@@ -46,7 +46,7 @@ const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /\.pfx$/i,
 ];
 
-function isSensitivePath(relPath: string): boolean {
+export function isSensitivePath(relPath: string): boolean {
   return SENSITIVE_PATH_PATTERNS.some((re) => re.test(relPath));
 }
 
