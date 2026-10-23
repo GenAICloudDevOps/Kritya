@@ -4,6 +4,24 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.62-beta] — 2026-10-22
+
+### Changed
+
+- **Dependencies bumped.** openai 7.42.0 → 7.43.0.
+
+### Security
+
+- **The write-time secret guard now covers the remaining write paths.** The
+  scanner that already blocked real-looking secrets in `write_file` and
+  `edit_file` now also scans notebook cell edits, generated documents
+  (.docx/.xlsx/.pptx/.pdf) and spreadsheet cell values, and shell commands
+  that would write a literal secret to a file (a redirect, `tee`, or
+  `dd of=`). Facts auto-extracted into project memory (KRITYA.md) are
+  dropped if they look like they contain a secret. A secret only _used_ in
+  a command (e.g. an auth header) is not blocked — output redaction still
+  applies, and referencing `$ENV_VAR` stays the sanctioned route.
+
 ## [0.8.61-beta] — 2026-10-22
 
 ### Changed
