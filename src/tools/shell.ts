@@ -11,7 +11,11 @@ import {
 } from "../shell/sandbox.js";
 import type { ToolDef } from "../types.js";
 import { commandTouchesSensitivePath, truncateTail } from "./common.js";
-import { redactSecrets } from "./secretScan.js";
+import {
+  redactSecrets,
+  scanCommandForSecretWrite,
+  formatShellSecretWarning,
+} from "./secretScan.js";
 
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_TIMEOUT_S = 600;
@@ -79,6 +83,15 @@ export const shellTool: ToolDef = {
       throw new Error(
         `Command references "${sensitivePath}", which looks like a secret file, and is blocked from tool access`
       );
+    }
+
+    // A command can also *create* the secret leak: a literal key in the
+    // command string plus a redirect/tee/dd target writes it to a file
+    // without going through the scanned file tools. Block that here, for
+    // background commands too — this check sits above the background branch.
+    const secretWrite = scanCommandForSecretWrite(command);
+    if (secretWrite.length > 0) {
+      throw new Error(formatShellSecretWarning(secretWrite));
     }
 
     if (args.background) {

@@ -8,6 +8,7 @@ import { readXlsx, writeXlsx, editXlsx } from "./document/xlsx.js";
 import { readPptx, writePptx } from "./document/pptx.js";
 import { readPdf, writePdf, editPdf } from "./document/pdf.js";
 import type { DocumentContent, CellEdit, PdfEdit } from "./document/types.js";
+import { formatSecretWarning, scanForSecrets } from "./secretScan.js";
 
 const READABLE_EXTENSIONS = [".docx", ".xlsx", ".pptx", ".pdf"];
 
@@ -156,6 +157,15 @@ export const writeDocumentTool: ToolDef = {
     const ext = path.extname(abs).toLowerCase();
     const content = extractContent(args);
 
+    // Same write-time secret guard as write_file: the blocks/sheets/slides
+    // payload is model-authored text, and a generated .docx/.xlsx is still
+    // a file a real key shouldn't be baked into. The payload is structured,
+    // so scan its JSON form — every user-visible string is in there.
+    const secrets = scanForSecrets(JSON.stringify(content));
+    if (secrets.length > 0) {
+      throw new Error(formatSecretWarning(secrets, relPath));
+    }
+
     let buf: Buffer;
     switch (ext) {
       case ".docx":
@@ -248,6 +258,16 @@ export const editSpreadsheetTool: ToolDef = {
     }
     const edits = (args.edits ?? []) as CellEdit[];
     if (edits.length === 0) throw new Error("edit_spreadsheet: `edits` must be non-empty");
+
+    // Write-time secret guard, same as write_file: a string cell value is
+    // model-authored content being persisted into the workbook.
+    for (const edit of edits) {
+      if (typeof edit.value !== "string") continue;
+      const secrets = scanForSecrets(edit.value);
+      if (secrets.length > 0) {
+        throw new Error(formatSecretWarning(secrets, relPath));
+      }
+    }
 
     const buf = await fs.readFile(abs);
     const { buf: out, applied } = await editXlsx(buf, edits);
