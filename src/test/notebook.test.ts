@@ -164,3 +164,29 @@ test("undo restores a notebook after an edit", async () => {
   const restored = await fs.readFile(path.join(ws, "nb.ipynb"), "utf8");
   assert.equal(restored, original);
 });
+
+test("edit_notebook blocks a cell source that contains a secret", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  await writeNb(ws, "nb.ipynb", sampleNotebook());
+  const before = await fs.readFile(path.join(ws, "nb.ipynb"), "utf8");
+  const key = "AKIA" + "Z".repeat(16);
+
+  await assert.rejects(
+    () =>
+      editNotebookTool.execute(
+        { path: "nb.ipynb", op: "insert", index: 1, source: `aws_key = "${key}"` },
+        ctx
+      ),
+    /Blocked write to nb\.ipynb/
+  );
+  await assert.rejects(
+    () =>
+      editNotebookTool.execute(
+        { path: "nb.ipynb", op: "replace", index: 1, source: `aws_key = "${key}"` },
+        ctx
+      ),
+    /Blocked write to nb\.ipynb/
+  );
+  assert.equal(await fs.readFile(path.join(ws, "nb.ipynb"), "utf8"), before);
+});
