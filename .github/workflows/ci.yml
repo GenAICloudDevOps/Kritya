@@ -64,6 +64,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          check-latest: true
           cache: npm
 
       # Fails in seconds if the runner's Node is below the security floor in
@@ -204,6 +205,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          check-latest: true
           cache: npm
 
       - run: npm ci
@@ -261,7 +263,14 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          # check-latest: setup-node resolves a range like `22.x` from a
+          # versions manifest that lags a new patch release by a day or more.
+          # A stale 22.22.x is below the security floor in engines.node
+          # (CVE-2026-111497), which `check:node` below correctly refuses — so
+          # ask nodejs.org for the newest patch of the line instead of trusting
+          # the cached manifest.
           node-version: ${{ matrix.cell.node }}
+          check-latest: true
           cache: npm
 
       # Assert the cell's Node meets engines.node before testing against it: a
@@ -329,6 +338,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          check-latest: true
           cache: npm
 
       - run: npm ci
@@ -354,6 +364,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          check-latest: true
           cache: npm
 
       - run: npm ci

@@ -40,7 +40,11 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          # check-latest: see ci.yml — the default versions manifest lags a
+          # new patch release, and a release must not be built on a Node below
+          # the security floor in engines.node (CVE-2026-111497).
           node-version: 22.x
+          check-latest: true
           # No npm cache here on purpose (zizmor cache-poisoning): this job
           # publishes to the registry, so a poisoned cache would ship. v7
           # auto-enables caching via package-manager-cache (default true), so
