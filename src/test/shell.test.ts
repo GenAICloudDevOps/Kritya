@@ -100,3 +100,25 @@ test("allowlist rules match safely", () => {
   assert.ok(!matchesRule("write_file", "shell", { command: "rm x" }));
   assert.ok(!matchesRule("", "shell", { command: "ls" }));
 });
+
+test("shell blocks a command that writes a literal secret to a file", async () => {
+  const key = "AKIA" + "Z".repeat(16);
+  await assert.rejects(
+    async () => shellTool.execute({ command: `echo '${key}' > keys.txt` }, ctx),
+    /Blocked shell command/
+  );
+  await assert.rejects(
+    async () => shellTool.execute({ command: `cat > app.config <<EOF\nkey = ${key}\nEOF` }, ctx),
+    /Blocked shell command/
+  );
+  await assert.rejects(
+    async () => shellTool.execute({ command: `echo '${key}' | tee keys.txt` }, ctx),
+    /Blocked shell command/
+  );
+});
+
+test("shell still runs a command that only prints a secret, with the output redacted", async () => {
+  const key = "AKIA" + "Z".repeat(16);
+  const out = await shellTool.execute({ command: `echo ${key}` }, ctx);
+  assert.ok(!out.includes(key));
+});

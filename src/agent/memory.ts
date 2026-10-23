@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ProviderClient } from "../provider/client.js";
+import { scanForSecrets } from "../tools/secretScan.js";
 import type { ChatMessage } from "../types.js";
 
 const MEMORY_FILE = "KRITYA.md";
@@ -147,6 +148,13 @@ export function mergeProjectMemory(workspace: string, newFacts: string[]): strin
   const added: string[] = [];
   for (const fact of newFacts) {
     if (seen.has(fact.toLowerCase())) continue;
+    // Write-time secret guard: facts are extracted from session transcripts,
+    // which can include credentials the model saw in tool output, and
+    // KRITYA.md is a plain workspace file that is read back into future
+    // prompts. A fact that looks like it contains a real secret is dropped
+    // rather than persisted — silently, since there is no user-facing write
+    // to block here, and the fact's value is the secret itself.
+    if (scanForSecrets(fact).length > 0) continue;
     seen.add(fact.toLowerCase());
     added.push(fact);
   }

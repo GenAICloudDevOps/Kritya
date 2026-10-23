@@ -107,3 +107,12 @@ test("mergeProjectMemory caps the section at the most recent facts once the limi
   assert.ok(!content.includes("fact number 0\n"), "oldest facts are dropped once over the cap");
   assert.ok(content.includes("fact number 24"), "most recent facts survive");
 });
+
+test("mergeProjectMemory drops a fact that looks like it contains a secret", () => {
+  const ws = workspace();
+  const key = "AKIA" + "Z".repeat(16);
+  const added = mergeProjectMemory(ws, ["tests run with npm test", `the deploy key is ${key}`]);
+  assert.deepEqual(added, ["tests run with npm test"]);
+  const content = fs.readFileSync(path.join(ws, "KRITYA.md"), "utf8");
+  assert.ok(!content.includes(key));
+});

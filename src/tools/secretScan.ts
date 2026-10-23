@@ -173,3 +173,35 @@ export function formatSecretWarning(matches: SecretMatch[], path: string): strin
     `like "sk-ant-EXAMPLE...".`
   );
 }
+
+/**
+ * Shell commands are the one write path the file tools can't see: a command
+ * like `echo '<key>' > notes.txt` or a heredoc puts a literal secret on disk
+ * without going through write_file/edit_file. The command string itself is
+ * the only place to catch that — but a secret merely *appearing* in a
+ * command (a curl Authorization header, say) doesn't put it in a file, so
+ * this only fires when the command also has a file-writing construct: an
+ * output redirect to a real target (not `>&` fd duplication or a `>=`
+ * comparison), `tee`, or `dd of=`. Heredocs are covered through the
+ * redirect they almost always pair with (`cat > f <<EOF`); a heredoc fed
+ * to an interpreter that then writes the secret itself is out of reach for
+ * a string scan and remains a known gap, like novel key formats.
+ */
+const SHELL_WRITE_RE = />{1,2}\s*(?![&=>])|\btee\b|\bdd\b[^|;&]*\bof=/;
+
+export function scanCommandForSecretWrite(command: string): SecretMatch[] {
+  if (!SHELL_WRITE_RE.test(command)) return [];
+  return scanForSecrets(command);
+}
+
+export function formatShellSecretWarning(matches: SecretMatch[]): string {
+  const lines = matches.map((m) => `  - ${m.kind}: ${m.snippet}`);
+  return (
+    `Blocked shell command: it writes to a file and contains what looks like real secret(s):\n` +
+    lines.join("\n") +
+    `\n\nEmbedding a literal secret in a shell command writes it to disk and shell history. ` +
+    `Reference the value from the environment instead (e.g. $API_KEY), or if this is ` +
+    `genuinely not a secret (e.g. a test fixture), rewrite it so it doesn't match common ` +
+    `key formats — for example, using an obvious placeholder like "sk-ant-EXAMPLE...".`
+  );
+}

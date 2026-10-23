@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { ToolDef } from "../types.js";
 import { writeFileAtomic } from "../atomicWrite.js";
 import { resolveSafe, truncateResult } from "./common.js";
+import { formatSecretWarning, scanForSecrets } from "./secretScan.js";
 
 /**
  * Jupyter notebooks (.ipynb) are just JSON: a top-level object with a `cells`
@@ -210,6 +211,16 @@ export const editNotebookTool: ToolDef = {
 
     const nb = await loadNotebook(abs);
     const cells = nb.cells;
+
+    // Same write-time secret guard as write_file/edit_file: cell source is
+    // model-authored content persisted to disk, and a notebook is an
+    // ordinary file a key can hide in just as easily as a .ts file.
+    if (op !== "delete" && args.source !== undefined) {
+      const secrets = scanForSecrets(String(args.source));
+      if (secrets.length > 0) {
+        throw new Error(formatSecretWarning(secrets, relPath));
+      }
+    }
 
     switch (op) {
       case "replace": {

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { readDocumentTool, writeDocumentTool } from "../tools/document.js";
+import { editSpreadsheetTool, readDocumentTool, writeDocumentTool } from "../tools/document.js";
 import { writePptx } from "../tools/document/pptx.js";
 import { UndoStack } from "../undo/undo.js";
 import JSZip from "jszip";
@@ -316,4 +316,34 @@ test("undo restores a binary document without corrupting it", async () => {
   undo.undo();
   const restored = await fs.readFile(path.join(ws, "report.docx"));
   assert.deepEqual(restored, original);
+});
+
+test("write_document blocks content that contains a secret", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  const key = "AKIA" + "Z".repeat(16);
+  await assert.rejects(
+    () =>
+      writeDocumentTool.execute(
+        { path: "report.docx", content: { blocks: [{ type: "paragraph", text: `key: ${key}` }] } },
+        ctx
+      ),
+    /Blocked write to report\.docx/
+  );
+  await assert.rejects(() => fs.stat(path.join(ws, "report.docx")));
+});
+
+test("edit_spreadsheet blocks a cell value that contains a secret", async () => {
+  const ws = await makeWorkspace();
+  const ctx = { workspace: ws };
+  await writeDocumentTool.execute(
+    { path: "data.xlsx", content: { sheets: [{ name: "S", rows: [["a"]] }] } },
+    ctx
+  );
+  const key = "AKIA" + "Z".repeat(16);
+  await assert.rejects(
+    () =>
+      editSpreadsheetTool.execute({ path: "data.xlsx", edits: [{ cell: "A1", value: key }] }, ctx),
+    /Blocked write to data\.xlsx/
+  );
 });
