@@ -4,6 +4,19 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.63-beta] — 2026-10-22
+
+### Security
+
+- **Recon-pattern tripwire.** Tool calls are now also scored as a sequence,
+  not only one at a time: credential-file probes, whole-environment dumps,
+  listings of home and system directories, and identity/network probes add
+  points over a rolling window of the session's recent calls. Past the
+  limit the session latches — further recon-like calls are blocked while
+  ordinary work (reading and editing project files, builds, tests)
+  continues untouched. Scores decay as calls age out of the window, and a
+  new session starts clean.
+
 ## [0.8.62-beta] — 2026-10-22
 
 ### Changed
