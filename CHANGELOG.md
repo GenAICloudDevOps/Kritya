@@ -4,6 +4,20 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Minimum Node.js is now 22.23.4** (was 22.19.0). The floor was raised for
+  CVE-2026-111497: Node's bundled Brotli decoder had an out-of-bounds write
+  reachable from any Brotli response kritya decompresses, and `fetch_url`
+  pulls arbitrary public URLs through undici, which advertises and decodes
+  `br` transparently. Patched releases are 22.23.4, 24.22.1 and 26.12.1; a
+  single `>=` floor cannot express the per-line requirement, so 24.0.0-24.22.0
+  and 26.0.0-26.12.0 still need their own patch. `npm run check:node` now
+  asserts the floor in CI and before publish, and `kritya doctor` compares
+  the patch number, not just major.minor. See SECURITY.md.
+
 ## [0.8.63-beta] — 2026-10-22
 
 ### Security

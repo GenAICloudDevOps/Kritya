@@ -48,6 +48,11 @@ jobs:
           # the slower uncached `npm ci` is negligible.
           package-manager-cache: false
 
+      # A release must never be built on a Node below the security floor in
+      # engines.node — the published artifact would carry the vulnerable
+      # Brotli decoder story into its provenance. See SECURITY.md.
+      - run: npm run check:node
+
       # Before anything expensive. A tag that disagrees with package.json, a
       # stale lock, or a missing/empty CHANGELOG section each produce a green
       # workflow with a wrong or blank result, so they are worth catching in

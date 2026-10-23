@@ -66,6 +66,11 @@ jobs:
           node-version: 22.x
           cache: npm
 
+      # Fails in seconds if the runner's Node is below the security floor in
+      # engines.node (CVE-2026-111497, see SECURITY.md). Before `npm ci`,
+      # because a dependency install is not what this check is about.
+      - run: npm run check:node
+
       # npm ci is itself the integrity check: it fails if any tarball doesn't
       # match the hash pinned in package-lock.json.
       - run: npm ci
@@ -259,6 +264,10 @@ jobs:
           node-version: ${{ matrix.cell.node }}
           cache: npm
 
+      # Assert the cell's Node meets engines.node before testing against it: a
+      # matrix entry that resolved to an older patch would otherwise report
+      # green coverage of a runtime the package doesn't claim to support.
+      - run: npm run check:node
       - run: npm ci
       - run: npm run build
       # Lint/format run once per OS (shard 1 of the 22.x cell) rather than

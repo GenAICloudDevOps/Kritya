@@ -74,6 +74,41 @@ buckets:
     breaking `.docx` support. Revisit once `mammoth` adapts to the new
     `xmldom` API.
 
+## Runtime requirements (Node.js)
+
+`engines.node` is **>=22.23.4**, and that is a security floor rather than a
+language-feature one. Node's bundled Brotli decoder carried an out-of-bounds
+write that malformed compressed input could turn into remote code execution
+(**CVE-2026-111497**), and kritya reaches that decoder on a path it cannot
+avoid: `fetch_url` pulls arbitrary public URLs and the provider client streams
+responses, both through undici, whose `fetch` advertises `br` and decompresses
+it transparently via `node:zlib`. A hostile page the agent visits is therefore
+untrusted Brotli data arriving inside kritya's own process — the one place the
+SSRF guard above does not help, because it constrains _where_ kritya fetches,
+not what comes back.
+
+The fix is upstream, in the Node release: **22.23.4, 24.22.1, and 26.12.1**
+(all released 2026-10-21). Node ships no in-runtime workaround, so there is
+nothing kritya can do in its own code beyond requiring a patched runtime.
+
+Two limits worth stating plainly:
+
+- **A single `>=` floor cannot express the per-line requirement.** 24.0.0
+  through 24.22.0 and 26.0.0 through 26.12.0 are affected too, but they compare
+  greater than 22.23.4 and so satisfy `engines.node`. The floor blocks the
+  oldest affected line; a user on a newer line still has to be on that line's
+  patched release. `kritya doctor` reports the running version against the
+  floor, and `npm run check:node` enforces it in CI and before publish.
+- **`engines` is a warning, not a gate.** npm reports EBADENGINE and installs
+  anyway, and a container image or system package manager can pin a Node that
+  kritya never inspects. A package inventory of `node_modules` will not reveal
+  it either, because the vulnerable code is in the interpreter, not in a
+  dependency.
+
+The Brotli _request-body_ path — the other way into that decoder — does not
+apply: kritya runs no Brotli body-parsing middleware, and its only HTTP servers
+are the localhost MCP OAuth callback and test fixtures.
+
 ## Third-party security scan
 
 kritya is enrolled in [Anthropic's OSS Scanner](https://red.anthropic.com/oss-scanner)

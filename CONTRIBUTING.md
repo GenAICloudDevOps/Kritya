@@ -19,9 +19,11 @@ npm test
 npm run dev        # run from source against a scratch project
 ```
 
-Requires Node >=22.19.0 (undici 8 needs it). CI runs 22.x, 24.x and 26.x on
-Ubuntu, Windows and macOS — the full claimed range on every OS the package
-ships to.
+Requires Node >=22.23.4 — a security floor, not a feature one: the Brotli
+decoder fix (CVE-2026-111497) ships in 22.23.4 / 24.22.1 / 26.12.1, and undici 8
+needs 22.19.0 at minimum. CI runs 22.x, 24.x and 26.x on Ubuntu, Windows and
+macOS — the full claimed range on every OS the package ships to — and each cell
+asserts the running Node meets the floor (`npm run check:node`).
 
 You'll need a provider API key (see the README) — get one at
 [build.nvidia.com](https://build.nvidia.com).

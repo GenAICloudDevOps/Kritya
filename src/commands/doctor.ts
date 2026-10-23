@@ -112,13 +112,19 @@ function runtimeSection(): Section {
   const checks: Check[] = [];
   const required = pkg.engines?.node;
   const actual = process.versions.node;
-  const [major = 0, minor = 0] = actual.split(".").map(Number);
+  const [major = 0, minor = 0, patch = 0] = actual.split(".").map(Number);
 
-  // engines.node is `>=22.19.0`. Parsed by hand because the only operators
-  // this package ever uses are `>=` and a bare version.
+  // engines.node is `>=22.23.4`. Parsed by hand because the only operators
+  // this package ever uses are `>=` and a bare version. The patch number is
+  // compared too, not just major.minor: the floor is a security floor (the
+  // Brotli decoder fix in CVE-2026-111497 landed in 22.23.4), so a 22.23.x
+  // below that patch is exactly the case this check exists to catch.
   const minimum = required?.replace(/^>=\s*/, "");
-  const [reqMajor = 0, reqMinor = 0] = (minimum ?? "").split(".").map(Number);
-  const tooOld = Boolean(minimum) && (major < reqMajor || (major === reqMajor && minor < reqMinor));
+  const [reqMajor = 0, reqMinor = 0, reqPatch = 0] = (minimum ?? "").split(".").map(Number);
+  const tooOld =
+    Boolean(minimum) &&
+    (major < reqMajor ||
+      (major === reqMajor && (minor < reqMinor || (minor === reqMinor && patch < reqPatch))));
 
   checks.push(
     tooOld

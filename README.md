@@ -59,7 +59,7 @@ review → fix → ship` for building something new end-to-end, with parked
 
 ## Setup
 
-Requires Node.js >=22.19.0.
+Requires Node.js >=22.23.4.
 
 1. Get an API key from your chosen provider (click any
    model → "Get API Key").
