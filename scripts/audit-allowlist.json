@@ -1,4 +1,11 @@
 {
   "_comment": "Advisories `npm audit` reports that do not fail CI, checked by scripts/check-audit.mjs. npm can only suppress by severity, never by advisory, so without this file one unfixable finding would force the whole high-severity gate down. An entry is only justified when there is no patched version to upgrade to AND the vulnerable code path is unreachable from this project — record the reachability argument in `reason`, not just the fact that it's inconvenient. `expires` is a hard deadline: past it, CI fails until someone re-checks whether a fix has shipped.",
-  "allow": []
+  "allow": [
+    {
+      "id": "GHSA-xjj6-f33q-929c",
+      "package": "undici",
+      "reason": "No patched undici release exists: 8.12.3 is the latest published version and is the flagged one, so there is nothing to upgrade to. The flaw crashes the process only when a server the client fetched from returns a response with an excessive content-encoding chain and closes the connection early. Kritya fetches remote content only through its host-validated fetch paths, with the sandbox network closed by default, so a hostile server can at worst terminate the local CLI process; no data loss or disclosure path is involved. Re-check for a patched undici before the expiry date; when one ships, upgrade undici and delete this entry.",
+      "expires": "2026-12-31"
+    }
+  ]
 }
