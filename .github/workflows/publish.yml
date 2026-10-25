@@ -30,9 +30,43 @@ jobs:
     # latest at a release yourself, once you're ready:
     #   npm dist-tag add kritya@<version> latest
     steps:
+      # Block mode, not audit: this is the one job that holds publish
+      # rights (GitHub release write + the npm OIDC identity), so it is the
+      # job where silent egress matters most. The job may reach only the
+      # endpoints below; everything else is stopped, not just logged.
+      #
+      # The list is the traffic the v0.8.64-beta publish run actually made,
+      # read from that run's audit-mode log: checkout and `gh release
+      # create` (github.com, api.github.com), setup-node's Node download
+      # (release-assets.githubusercontent.com), npm ci / publish / the
+      # registry verify step (registry.npmjs.org), and provenance signing
+      # (fulcio + rekor.sigstore.dev). Two entries were not in that log but
+      # belong here: tuf-repo-cdn.sigstore.io, where the provenance client
+      # refreshes its trust root when its cached copy ages out, and the
+      # wildcarded runner-infrastructure hosts — the run-actions and
+      # results endpoints are region-named (run-actions-3-azure-eastus
+      # that day) and the results blob host is numbered, so pinning the
+      # exact names would break the next run in another region.
+      # 168.63.129.16:80 is the Azure host-agent channel the runner VM
+      # itself talks on.
+      #
+      # Failure shape if this list ever misses something a future run
+      # needs: the job fails and the harden-runner log names the blocked
+      # endpoint, so the fix is one line here.
       - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            registry.npmjs.org:443
+            fulcio.sigstore.dev:443
+            rekor.sigstore.dev:443
+            tuf-repo-cdn.sigstore.io:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            168.63.129.16:80
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
