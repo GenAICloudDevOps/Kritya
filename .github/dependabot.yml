@@ -4,6 +4,15 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Cooldown: a version must be at least 3 days old before Dependabot
+    # opens a version-update PR for it. Fresh releases are where supply-
+    # chain attacks live — most are caught and pulled within days, so
+    # waiting costs little and skips that window entirely. Security
+    # updates are exempt by Dependabot's design and still arrive
+    # immediately. The daily dependency check applies the same 72-hour
+    # rule to the updates it applies itself.
+    cooldown:
+      default-days: 3
     open-pull-requests-limit: 5
     ignore:
       # typescript-eslint peers on `typescript >=4.8.4 <6.1.0`, so a TS 7 bump
@@ -24,6 +33,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Same 3-day cooldown as the npm entry above.
+    cooldown:
+      default-days: 3
     groups:
       # github/codeql-action is one dependency spread across several entry
       # points (init, analyze, upload-sarif), and CodeQL refuses to run when
