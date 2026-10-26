@@ -4,6 +4,46 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.65-beta] — 2026-10-25
+
+### Security
+
+- **Publish-workflow egress is now blocked, not merely logged.** The
+  `harden-runner` step went from `audit` to `block` with an explicit endpoint
+  allowlist. The publish job is the only job holding both GitHub
+  release-write and the npm OIDC identity, so it is the job where silent
+  egress costs the most: a compromised action could previously have shipped
+  that identity anywhere it liked, and the run would still have been green.
+  The list is the traffic the 0.8.64-beta publish actually made — checkout and
+  `gh release create` (github.com, api.github.com), setup-node's Node download
+  (release-assets.githubusercontent.com), `npm ci`/`publish` and the registry
+  verify (registry.npmjs.org), and provenance signing (fulcio, rekor) — plus
+  two things no single run's log shows: tuf-repo-cdn.sigstore.io, where the
+  provenance client refreshes its trust root once the cached copy ages out,
+  and the region-named runner hosts, which would break the next run in a
+  different region if pinned to today's names. A future run that needs an
+  endpoint the list is missing fails and names it, so the fix stays one line.
+- **undici advisory GHSA-xjj6-f33q-929c allowlisted until 2026-12-31.** There
+  is no patched release to upgrade to — 8.12.3 is both the latest published
+  version and the flagged one — so the high-severity audit gate would
+  otherwise sit permanently red on a finding nobody can act on. The entry
+  records the reachability argument rather than the inconvenience: the flaw
+  needs a hostile server to return an excessive content-encoding chain and
+  close early, kritya fetches only through its host-validated paths with the
+  sandbox network closed by default, so the worst case is a terminated local
+  process with no data loss or disclosure. The expiry is a hard deadline —
+  past it CI fails until someone re-checks for a fix.
+
+### Changed
+
+- **Dependabot now waits three days before proposing a version update.** New
+  releases are where supply-chain compromises live, and most are caught and
+  pulled within days, so waiting out that window costs little and skips it
+  entirely. Applied to both the npm and the actions ecosystems; security
+  updates are exempt by Dependabot's design and still arrive immediately.
+- **Dependencies bumped.** electron-builder 26.15.3 → 26.18.0;
+  `harden-runner` 2.22.1 → 2.22.2; the `codeql-action` group (3 updates).
+
 ## [0.8.64-beta] — 2026-10-23
 
 ### Security
