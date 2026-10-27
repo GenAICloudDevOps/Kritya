@@ -17,6 +17,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the fixed intermediates, so the coverage is stated in one place rather
   than implied.
 
+- **A vulnerable HTTP-client copy hiding in the build tooling is pinned to
+  its patched release.** The Electron packaging chain bundles its own copy
+  of undici (7.30.0) to download binaries; that version predates fixes for
+  TLS certificate-validation, cache-poisoning, and denial-of-service flaws
+  in the 7.x line. A scoped npm `overrides` entry now forces that nested
+  copy to 7.30.1. Kritya's own undici (8.12.3) was never in an affected
+  range, but the audit gate reports by package name, and a vulnerable copy
+  is a vulnerable copy wherever it sits, so it is fixed rather than
+  suppressed.
+
 ### Changed
 
 - **Dependencies bumped.** docx 9.14.0 → 9.15.0; openai 7.43.0 → 7.45.0;
