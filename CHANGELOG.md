@@ -4,6 +4,24 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.66-beta] — 2026-10-27
+
+### Security
+
+- **The patched-Node minimums are now enforced, not just documented.** The
+  per-line floors (Node 22 at 22.23.4, 24 at 24.22.1, 26 at 26.12.1) are
+  checked by `check:node` and surfaced by `doctor`, and end-of-life lines
+  (23, 25) and anything below 22 are rejected outright instead of merely
+  warned about. SECURITY.md also documents the Electron side: the desktop
+  build's bundled certificate handling and which Electron versions carry
+  the fixed intermediates, so the coverage is stated in one place rather
+  than implied.
+
+### Changed
+
+- **Dependencies bumped.** docx 9.14.0 → 9.15.0; openai 7.43.0 → 7.45.0;
+  typescript-eslint 8.72.0 → 8.72.1.
+
 ## [0.8.65-beta] — 2026-10-25
 
 ### Security
