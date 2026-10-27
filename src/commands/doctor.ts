@@ -108,28 +108,64 @@ function exists(p: string): boolean {
   }
 }
 
+/**
+ * The first Node release on each supported line that carries the Brotli
+ * decoder fix for CVE-2026-111497. `engines.node` can only state the lowest
+ * of these (`>=22.23.4`), and a single `>=` floor cannot express the rest:
+ * 24.22.0 and 26.12.0 both compare greater than 22.23.4 but are still
+ * affected. Lines with no entry below the newest one here (23, 25) are
+ * end-of-life and never received the fix; a line newer than every entry
+ * postdates the fix and is accepted.
+ */
+export const PATCHED_NODE_MINIMUMS: Readonly<Record<number, string>> = {
+  22: "22.23.4",
+  24: "24.22.1",
+  26: "26.12.1",
+};
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * Why `actual` is not a patched Node, or null when it is. Exported so the
+ * per-line table can be tested without faking the running runtime.
+ */
+export function nodeSecurityProblem(actual: string): string | null {
+  const [major = 0] = actual.split(".").map(Number);
+  const lines = Object.keys(PATCHED_NODE_MINIMUMS)
+    .map(Number)
+    .sort((a, b) => a - b);
+  const lowest = PATCHED_NODE_MINIMUMS[lines[0]];
+  if (major < lines[0]) {
+    return `node ${actual} — this package requires a patched Node (>=${lowest}; 22.23.4 / 24.22.1 / 26.12.1 per line)`;
+  }
+  const minimum = PATCHED_NODE_MINIMUMS[major];
+  if (minimum) {
+    return compareVersions(actual, minimum) < 0
+      ? `node ${actual} — Node ${major}.x requires >=${minimum} for the Brotli decoder fix (CVE-2026-111497)`
+      : null;
+  }
+  if (major < lines[lines.length - 1]) {
+    return `node ${actual} — Node ${major}.x is end-of-life and has no release with the Brotli decoder fix (CVE-2026-111497); use 22.23.4 / 24.22.1 / 26.12.1 or later`;
+  }
+  return null;
+}
+
 function runtimeSection(): Section {
   const checks: Check[] = [];
   const required = pkg.engines?.node;
   const actual = process.versions.node;
-  const [major = 0, minor = 0, patch = 0] = actual.split(".").map(Number);
-
-  // engines.node is `>=22.23.4`. Parsed by hand because the only operators
-  // this package ever uses are `>=` and a bare version. The patch number is
-  // compared too, not just major.minor: the floor is a security floor (the
-  // Brotli decoder fix in CVE-2026-111497 landed in 22.23.4), so a 22.23.x
-  // below that patch is exactly the case this check exists to catch.
-  const minimum = required?.replace(/^>=\s*/, "");
-  const [reqMajor = 0, reqMinor = 0, reqPatch = 0] = (minimum ?? "").split(".").map(Number);
-  const tooOld =
-    Boolean(minimum) &&
-    (major < reqMajor ||
-      (major === reqMajor && (minor < reqMinor || (minor === reqMinor && patch < reqPatch))));
+  const problem = nodeSecurityProblem(actual);
 
   checks.push(
-    tooOld
-      ? fail(`node ${actual} — this package requires >=${minimum}`)
-      : ok(`node ${actual}${minimum ? ` (requires >=${minimum})` : ""}`)
+    problem ? fail(problem) : ok(`node ${actual}${required ? ` (requires ${required})` : ""}`)
   );
   checks.push(ok(`${process.platform} ${process.arch}`));
   checks.push(ok(`kritya ${VERSION}`));

@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   collectDiagnostics,
+  nodeSecurityProblem,
   probeProvider,
   renderReport,
   summarize,
@@ -44,6 +45,33 @@ test("summarize reports zero when everything passes", () => {
 
   assert.equal(report.failures, 0);
   assert.equal(report.warnings, 0);
+});
+
+// ---------------------------------------------------------------------------
+// nodeSecurityProblem — the per-line patched minimums for CVE-2026-111497.
+// A single `>=22.23.4` floor would pass 24.22.0 and 26.12.0, which are
+// affected too, so each supported line is checked against its own patch.
+// ---------------------------------------------------------------------------
+
+test("nodeSecurityProblem accepts the patched release on each supported line", () => {
+  for (const version of ["22.23.4", "22.24.0", "24.22.1", "24.23.0", "26.12.1", "26.13.0"]) {
+    assert.equal(nodeSecurityProblem(version), null, version);
+  }
+});
+
+test("nodeSecurityProblem rejects releases below their line's patched minimum", () => {
+  for (const version of ["22.23.3", "22.22.0", "24.22.0", "24.0.0", "26.12.0", "26.0.0"]) {
+    assert.match(nodeSecurityProblem(version) ?? "", /CVE-2026-111497|patched Node/, version);
+  }
+  assert.match(nodeSecurityProblem("24.22.0") ?? "", />=24\.22\.1/);
+  assert.match(nodeSecurityProblem("26.12.0") ?? "", />=26\.12\.1/);
+});
+
+test("nodeSecurityProblem rejects lines with no patched release", () => {
+  for (const version of ["20.19.0", "21.7.0", "23.11.0", "25.0.0"]) {
+    assert.notEqual(nodeSecurityProblem(version), null, version);
+  }
+  assert.match(nodeSecurityProblem("25.0.0") ?? "", /end-of-life/);
 });
 
 // ---------------------------------------------------------------------------
