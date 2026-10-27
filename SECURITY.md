@@ -95,10 +95,12 @@ Two limits worth stating plainly:
 
 - **A single `>=` floor cannot express the per-line requirement.** 24.0.0
   through 24.22.0 and 26.0.0 through 26.12.0 are affected too, but they compare
-  greater than 22.23.4 and so satisfy `engines.node`. The floor blocks the
-  oldest affected line; a user on a newer line still has to be on that line's
-  patched release. `kritya doctor` reports the running version against the
-  floor, and `npm run check:node` enforces it in CI and before publish.
+  greater than 22.23.4 and so satisfy `engines.node`. That is why the gate is
+  not `engines` itself: `npm run check:node` (CI and before publish) and
+  `kritya doctor` both enforce the patched minimum **per line** — 22.23.4,
+  24.22.1 and 26.12.1 respectively — and reject the end-of-life lines in
+  between (23, 25), which never received a fix. `engines` stays as the coarse
+  signal npm itself shows.
 - **`engines` is a warning, not a gate.** npm reports EBADENGINE and installs
   anyway, and a container image or system package manager can pin a Node that
   kritya never inspects. A package inventory of `node_modules` will not reveal
@@ -108,6 +110,31 @@ Two limits worth stating plainly:
 The Brotli _request-body_ path — the other way into that decoder — does not
 apply: kritya runs no Brotli body-parsing middleware, and its only HTTP servers
 are the localhost MCP OAuth callback and test fixtures.
+
+## Desktop builds (Electron) and the compromised eMudhra intermediates
+
+In October 2026, eight eMudhra intermediate CA private keys were recovered
+from public certificate data — the keys were small enough to enumerate, so
+anyone could have issued certificates those intermediates would vouch for
+(CVE-2026-111943). Browsers blocked the intermediates through their own
+revocation channels, but that does not cover an application that carries its
+own TLS stack — and the Electron desktop build is exactly that: it bundles
+its own Chromium networking and its own Node.js `tls`/`https`/`fetch`, none
+of which follow the OS browser's block list.
+
+Electron shipped the block for the compromised intermediates in **44.9.1**
+(CVE-2026-115570), covering both the Chromium and the Node.js paths.
+kritya's desktop build is on Electron **44.9.3**, so current builds already
+reject those certificates on both paths. Two consequences worth stating
+plainly:
+
+- **A desktop binary built with Electron older than 44.9.1 stays affected
+  until it is rebuilt and redistributed.** Updating Chrome, the OS, or the
+  npm-installed CLI on the same machine does not change the copy inside an
+  already-built desktop app.
+- **The CLI install carries no such copy.** The npm package bundles no
+  Electron and no certificate store; its TLS trust comes from the running
+  Node.js, which is the runtime section above.
 
 ## Third-party security scan
 
