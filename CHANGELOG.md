@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **`@electron/get`'s nested `undici` is pinned to the patched 7.30.1.** The
+  supply-chain job went red on four high advisories in `undici@7.30.0` — a
+  nested copy under `@electron/get`, reached through the `electron`
+  devDependency, not the root `undici@8.12.3` that kritya itself uses. Three
+  of the four had no allowlist entry: cross-origin redirect cache poisoning
+  (GHSA-4w7w-5xrc-9h26), a TLS certificate-validation bypass in `Agent` that
+  drops the caller's `tls` options (GHSA-2m5v-pch6-74hx), and a DoS via TLS
+  1.2 certificate-changing renegotiation (GHSA-qrxm-fqhp-jwvm). All three are
+  fixed in 7.30.1, so this is an upgrade and not a suppression — an
+  `overrides` entry scoped to `@electron/get` moves that copy, which is
+  narrower than it looks: a root-level `undici` override would fight the
+  direct `^8.11.2` dependency. With the nested copy patched, `npm audit`
+  reports nothing at all, so the `GHSA-xjj6-f33q-929c` entry that was
+  covering the same package is deleted from `scripts/audit-allowlist.json` —
+  a suppression for an advisory that no longer fires has nothing left to
+  suppress, and leaving it behind only makes the next entry harder to trust.
 - **The patched-Node minimums are now enforced, not just documented.** The
   per-line floors (Node 22 at 22.23.4, 24 at 24.22.1, 26 at 26.12.1) are
   checked by `check:node` and surfaced by `doctor`, and end-of-life lines
