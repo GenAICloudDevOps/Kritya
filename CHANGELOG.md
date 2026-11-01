@@ -4,6 +4,33 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.67-beta] — 2026-11-01
+
+### Security
+
+- **minimatch is pinned to the patched 11.0.1, and glob to 14.0.2.** GHSA-g3hv-75wg-m249
+  is a ReDoS in minimatch's brace expansion, fixed in 11.0.1, and it reached kritya
+  through five separate parents: `eslint`, `@eslint/config-array`,
+  `@typescript-eslint/typescript-estree`, `app-builder-lib` and `test-exclude`. The
+  override is written per parent rather than as one root-level `minimatch` entry because
+  those five are the ones whose ranges can actually take 11.x — forcing it everywhere
+  would break the packages still on the 3.x/5.x/9.x API. Top-level `minimatch` goes
+  10.2.6 → 11.0.3 and `glob` 13.0.6 → 14.0.3; `readdir-glob` needed the same treatment
+  because `exceljs` reaches it directly.
+- **The remaining minimatch findings are dev-only and below the gate, on purpose.**
+  `npm audit` still reports 15 moderate findings for the same GHSA: five nested copies
+  (3.1.5, 5.1.9 ×2, 9.0.9) inside electron-builder's toolchain — `@electron/asar`,
+  `@electron/universal`, `archiver`, `dir-compare`, `filelist`. Those parents pin older
+  majors, nothing in the shipped CLI reaches them, and they sit below the `high`
+  threshold `check:audit` fails on, so CI stays green rather than an override forcing
+  an incompatible major into the desktop build.
+
+### Changed
+
+- **Dependencies bumped.** docx 9.15.0 → 9.15.1; openai 7.45.0 → 7.47.0; electron
+  44.9.3 → 44.10.1; eslint 10.13.0 → 10.14.0; @types/node 26.6.5 → 26.6.6;
+  globals 17.13.0 → 17.14.0.
+
 ## [0.8.66-beta] — 2026-10-27
 
 ### Security
