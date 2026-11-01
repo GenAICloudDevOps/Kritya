@@ -1,1 +1,162 @@
-ewogICJuYW1lIjogImtyaXR5YSIsCiAgInZlcnNpb24iOiAiMC44LjY2LWJldGEiLAogICJkZXNjcmlwdGlvbiI6ICJLcml0eWEg4oCUIFN1cGVyaW50ZWxsaWdlbmNlIGF0IHlvdXIgY29tbWFuZCBsaW5lIiwKICAidHlwZSI6ICJtb2R1bGUiLAogICJwdWJsaXNoQ29uZmlnIjogewogICAgInByb3ZlbmFuY2UiOiB0cnVlCiAgfSwKICAicmVwb3NpdG9yeSI6IHsKICAgICJ0eXBlIjogImdpdCIsCiAgICAidXJsIjogImdpdCtodHRwczovL2dpdGh1Yi5jb20vR2VuQUlDbG91ZERldk9wcy9Lcml0eWEuZ2l0IgogIH0sCiAgImhvbWVwYWdlIjogImh0dHBzOi8vZ2l0aHViLmNvbS9HZW5BSUNsb3VkRGV2T3BzL0tyaXR5YSNyZWFkbWUiLAogICJidWdzIjogewogICAgInVybCI6ICJodHRwczovL2dpdGh1Yi5jb20vR2VuQUlDbG91ZERldk9wcy9Lcml0eWEvaXNzdWVzIgogIH0sCiAgImF1dGhvciI6ICJWZW5rYXRhIFJhbWFuYW5kIiwKICAiYmluIjogewogICAgImtyaXR5YSI6ICJkaXN0L2luZGV4LmpzIgogIH0sCiAgImZpbGVzIjogWwogICAgImRpc3QiLAogICAgIiFkaXN0L3Rlc3QvKioiLAogICAgIiFkaXN0L2VsZWN0cm9uLyoqIgogIF0sCiAgImVuZ2luZXMiOiB7CiAgICAibm9kZSI6ICI+PTIyLjIzLjQiCiAgfSwKICAic2NyaXB0cyI6IHsKICAgICJidWlsZCI6ICJ0c2MiLAogICAgImRldiI6ICJ0c3ggc3JjL2luZGV4LnRzeCIsCiAgICAidGVzdCI6ICJucG0gcnVuIGJ1aWxkICYmIG5vZGUgc2NyaXB0cy9ydW4tdGVzdHMubWpzIiwKICAgICJ0ZXN0OndhdGNoIjogInRzeCAtLXRlc3QgLS13YXRjaCBcInNyYy90ZXN0LyoudGVzdC50c1wiIiwKICAgICJ0ZXN0OmNvdmVyYWdlIjogIm5wbSBydW4gYnVpbGQgJiYgYzggbm9kZSBzY3JpcHRzL3J1bi10ZXN0cy5tanMiLAogICAgImxpbnQiOiAiZXNsaW50IC4iLAogICAgImZvcm1hdCI6ICJwcmV0dGllciAtLXdyaXRlIC4iLAogICAgImZvcm1hdDpjaGVjayI6ICJwcmV0dGllciAtLWNoZWNrIC4iLAogICAgImNoZWNrOmF1ZGl0IjogIm5vZGUgc2NyaXB0cy9jaGVjay1hdWRpdC5tanMiLAogICAgImNoZWNrOmluc3RhbGwtc2NyaXB0cyI6ICJub2RlIHNjcmlwdHMvY2hlY2staW5zdGFsbC1zY3JpcHRzLm1qcyIsCiAgICAiY2hlY2s6bm9kZSI6ICJub2RlIHNjcmlwdHMvY2hlY2stbm9kZS5tanMiLAogICAgImNoZWNrOnBhY2thZ2UiOiAibm9kZSBzY3JpcHRzL2NoZWNrLXBhY2thZ2UubWpzIiwKICAgICJjaGVjazpyZWxlYXNlIjogIm5vZGUgc2NyaXB0cy9jaGVjay1yZWxlYXNlLm1qcyIsCiAgICAiY2hlY2s6c21va2UiOiAibm9kZSBzY3JpcHRzL3Ntb2tlLWluc3RhbGwubWpzIiwKICAgICJjaGVjazp0eXBlc2NyaXB0LXNldHVwIjogIm5vZGUgc2NyaXB0cy9jaGVjay10eXBlc2NyaXB0LXNldHVwLm1qcyIsCiAgICAibGluayI6ICJucG0gcnVuIGJ1aWxkICYmIG5wbSBsaW5rIiwKICAgICJwcmVwdWJsaXNoT25seSI6ICJucG0gcnVuIGJ1aWxkICYmIG5wbSBydW4gY2hlY2s6cGFja2FnZSAmJiBucG0gcnVuIGNoZWNrOnNtb2tlIiwKICAgICJwcmVwYXJlIjogImh1c2t5IiwKICAgICJlbGVjdHJvbjpkZXYiOiAibnBtIHJ1biBidWlsZCAmJiBlbGVjdHJvbiAuIiwKICAgICJlbGVjdHJvbjpidWlsZCI6ICJucG0gcnVuIGJ1aWxkICYmIGVsZWN0cm9uLWJ1aWxkZXIiCiAgfSwKICAia2V5d29yZHMiOiBbCiAgICAiY2xpIiwKICAgICJjb2RpbmctYWdlbnQiLAogICAgInRlcm1pbmFsIiwKICAgICJhaSIsCiAgICAibGxtIiwKICAgICJudmlkaWEiLAogICAgIm9wZW5haS1jb21wYXRpYmxlIiwKICAgICJtY3AiCiAgXSwKICAibGljZW5zZSI6ICJNSVQiLAogICJkZXBlbmRlbmNpZXMiOiB7CiAgICAiZG9jeCI6ICJeOS44LjEiLAogICAgImV4Y2VsanMiOiAiXjQuNC4wIiwKICAgICJpbmsiOiAiXjguMC4wIiwKICAgICJqc3ppcCI6ICJeMy4xMC4yIiwKICAgICJtYW1tb3RoIjogIl4xLjEzLjAiLAogICAgIm9wZW5haSI6ICJeNy4yOC4wIiwKICAgICJwZGYtbGliIjogIl4xLjE3LjEiLAogICAgInBkZmpzLWRpc3QiOiAiXjYuNC4yOTkiLAogICAgInBwdHhnZW5qcyI6ICJeNC4wLjEiLAogICAgInJlYWN0IjogIl4xOS4zLjAiLAogICAgInN0cmluZy13aWR0aCI6ICJeOC4zLjAiLAogICAgInRpbnlnbG9iYnkiOiAiXjAuMi4xNyIsCiAgICAidW5kaWNpIjogIl44LjExLjIiLAogICAgIndyYXAtYW5zaSI6ICJeMTAuMC4yIgogIH0sCiAgImRldkRlcGVuZGVuY2llcyI6IHsKICAgICJAZXNsaW50L2pzIjogIl4xMC4wLjEiLAogICAgIkB0eXBlcy9ub2RlIjogIl4yNi42LjQiLAogICAgIkB0eXBlcy9yZWFjdCI6ICJeMTkuMy4wIiwKICAgICJAdHlwZXNjcmlwdC9uYXRpdmUiOiAibnBtOnR5cGVzY3JpcHRAXjcuMC4yIiwKICAgICJjOCI6ICJeMTIuMC4wIiwKICAgICJlbGVjdHJvbiI6ICJeNDQuNS4xIiwKICAgICJlbGVjdHJvbi1idWlsZGVyIjogIl4yNi4xNS4zIiwKICAgICJlc2xpbnQiOiAiXjEwLjEyLjAiLAogICAgImdsb2JhbHMiOiAiXjE3LjEzLjAiLAogICAgImh1c2t5IjogIl45LjEuNyIsCiAgICAiaW5rLXRlc3RpbmctbGlicmFyeSI6ICJeNC4wLjAiLAogICAgImxpbnQtc3RhZ2VkIjogIl4xNy42LjAiLAogICAgInByZXR0aWVyIjogIl4zLjkuOSIsCiAgICAidHN4IjogIl40LjIzLjE1IiwKICAgICJ0eXBlc2NyaXB0IjogIm5wbTpAdHlwZXNjcmlwdC90eXBlc2NyaXB0NkBeNi4wLjIiLAogICAgInR5cGVzY3JpcHQtZXNsaW50IjogIl44LjcxLjEiCiAgfSwKICAib3ZlcnJpZGVzIjogewogICAgIkBlbGVjdHJvbi9nZXQiOiB7CiAgICAgICJ1bmRpY2kiOiAiXjcuMzAuMSIKICAgIH0sCiAgICAiQGVzbGludC9jb25maWctYXJyYXkiOiB7CiAgICAgICJtaW5pbWF0Y2giOiAiXjExLjAuMSIKICAgIH0sCiAgICAiQHR5cGVzY3JpcHQtZXNsaW50L3R5cGVzY3JpcHQtZXN0cmVlIjogewogICAgICAibWluaW1hdGNoIjogIl4xMS4wLjEiCiAgICB9LAogICAgImFwcC1idWlsZGVyLWxpYiI6IHsKICAgICAgIm1pbmltYXRjaCI6ICJeMTEuMC4xIgogICAgfSwKICAgICJlc2xpbnQiOiB7CiAgICAgICJtaW5pbWF0Y2giOiAiXjExLjAuMSIKICAgIH0sCiAgICAidGVzdC1leGNsdWRlIjogewogICAgICAibWluaW1hdGNoIjogIl4xMS4wLjEiCiAgICB9LAogICAgImFyZ3BhcnNlIjogIl4yLjAuMSIsCiAgICAiYnJhY2UtZXhwYW5zaW9uIjogIl41LjAuMTIiLAogICAgImZhc3QtdXJpIjogIl4zLjEuOCIsCiAgICAiZXhjZWxqcyI6IHsKICAgICAgInV1aWQiOiAiXjExLjEuMSIsCiAgICAgICJ1bnppcHBlciI6ICJeMC4xMi4zIiwKICAgICAgImFyY2hpdmVyIjogIl43LjAuMSIsCiAgICAgICJyZWFkZGlyLWdsb2IiOiB7CiAgICAgICAgInZlcnNpb24iOiAiXjMuMC4wIiwKICAgICAgICAibWluaW1hdGNoIjogIl4xMS4wLjEiCiAgICAgIH0sCiAgICAgICJnbG9iIjogIl4xNC4wLjIiLAogICAgICAiZmFzdC1jc3YiOiAiXjUuMC43IgogICAgfSwKICAgICJnbG9iIjogIl4xNC4wLjIiLAogICAgImltYWdlLXNpemUiOiAiXjIuMC40IgogIH0sCiAgImxpbnQtc3RhZ2VkIjogewogICAgIioue3RzLHRzeH0iOiBbCiAgICAgICJlc2xpbnQgLS1maXgiLAogICAgICAicHJldHRpZXIgLS13cml0ZSIKICAgIF0sCiAgICAiKi57anMsbWpzLGpzb24sbWR9IjogWwogICAgICAicHJldHRpZXIgLS13cml0ZSIKICAgIF0KICB9LAogICJidWlsZCI6IHsKICAgICJhcHBJZCI6ICJjb20ua3JpdHlhLmRlc2t0b3AiLAogICAgInByb2R1Y3ROYW1lIjogIktyaXR5YSIsCiAgICAiZGlyZWN0b3JpZXMiOiB7CiAgICAgICJvdXRwdXQiOiAicmVsZWFzZSIKICAgIH0sCiAgICAicHVibGlzaCI6IG51bGwsCiAgICAiZmlsZXMiOiBbCiAgICAgICJkaXN0LyoqLyoiLAogICAgICAiZWxlY3Ryb24vKiovKiIKICAgIF0sCiAgICAid2luIjogewogICAgICAidGFyZ2V0IjogIm5zaXMiCiAgICB9LAogICAgIm1hYyI6IHsKICAgICAgInRhcmdldCI6ICJkbWciCiAgICB9LAogICAgImxpbnV4IjogewogICAgICAidGFyZ2V0IjogIkFwcEltYWdlIgogICAgfQogIH0KfQo=
+{
+  "name": "kritya",
+  "version": "0.8.66-beta",
+  "description": "Kritya — Superintelligence at your command line",
+  "type": "module",
+  "publishConfig": {
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GenAICloudDevOps/Kritya.git"
+  },
+  "homepage": "https://github.com/GenAICloudDevOps/Kritya#readme",
+  "bugs": {
+    "url": "https://github.com/GenAICloudDevOps/Kritya/issues"
+  },
+  "author": "Venkata Ramanand",
+  "bin": {
+    "kritya": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/test/**",
+    "!dist/electron/**"
+  ],
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.tsx",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "test:watch": "tsx --test --watch \"src/test/*.test.ts\"",
+    "test:coverage": "npm run build && c8 node scripts/run-tests.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:audit": "node scripts/check-audit.mjs",
+    "check:install-scripts": "node scripts/check-install-scripts.mjs",
+    "check:node": "node scripts/check-node.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "check:smoke": "node scripts/smoke-install.mjs",
+    "check:typescript-setup": "node scripts/check-typescript-setup.mjs",
+    "link": "npm run build && npm link",
+    "prepublishOnly": "npm run build && npm run check:package && npm run check:smoke",
+    "prepare": "husky",
+    "electron:dev": "npm run build && electron .",
+    "electron:build": "npm run build && electron-builder"
+  },
+  "keywords": [
+    "cli",
+    "coding-agent",
+    "terminal",
+    "ai",
+    "llm",
+    "nvidia",
+    "openai-compatible",
+    "mcp"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "docx": "^9.8.1",
+    "exceljs": "^4.4.0",
+    "ink": "^8.0.0",
+    "jszip": "^3.10.2",
+    "mammoth": "^1.13.0",
+    "openai": "^7.28.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.4.299",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.3.0",
+    "string-width": "^8.3.0",
+    "tinyglobby": "^0.2.17",
+    "undici": "^8.11.2",
+    "wrap-ansi": "^10.0.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "c8": "^12.0.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
+    "ink-testing-library": "^4.0.0",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.71.1"
+  },
+  "overrides": {
+    "@electron/get": {
+      "undici": "^7.30.1"
+    },
+    "@eslint/config-array": {
+      "minimatch": "^11.0.1"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    },
+    "app-builder-lib": {
+      "minimatch": "^11.0.1"
+    },
+    "eslint": {
+      "minimatch": "^11.0.1"
+    },
+    "test-exclude": {
+      "minimatch": "^11.0.1"
+    },
+    "argparse": "^2.0.1",
+    "brace-expansion": "^5.0.12",
+    "fast-uri": "^3.1.8",
+    "exceljs": {
+      "uuid": "^11.1.1",
+      "unzipper": "^0.12.3",
+      "archiver": "^7.0.1",
+      "readdir-glob": {
+        "version": "^3.0.0",
+        "minimatch": "^11.0.1"
+      },
+      "glob": "^14.0.2",
+      "fast-csv": "^5.0.7"
+    },
+    "glob": "^14.0.2",
+    "image-size": "^2.0.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{js,mjs,json,md}": [
+      "prettier --write"
+    ]
+  },
+  "build": {
+    "appId": "com.kritya.desktop",
+    "productName": "Kritya",
+    "directories": {
+      "output": "release"
+    },
+    "publish": null,
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
