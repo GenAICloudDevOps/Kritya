@@ -168,11 +168,19 @@ jobs:
           echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  zizmor.tar.gz" | sha256sum -c -
           tar xzf zizmor.tar.gz zizmor
 
-      # --offline: no network lookups for action SHAs; the audit is purely
-      # local. Exits non-zero on any finding, so the fixes in build.yml and
+      # Online audits are ON (no --offline): with a token, zizmor also runs
+      # the checks that need GitHub's API — chiefly impostor-commit, which
+      # verifies each pinned action SHA is a real commit of that action's
+      # own repo, not a look-alike commit created in a fork. The token is
+      # this run's built-in GITHUB_TOKEN, passed as GH_TOKEN (zizmor reads
+      # it from the environment); it is read-only under this workflow's
+      # permissions and dies with the run — no stored secret is involved.
+      # Exits non-zero on any finding, so the fixes in build.yml and
       # publish.yml (and the adhoc-packages suppression) are load-bearing.
       - name: Audit workflows
-        run: ./zizmor --offline --no-progress .github/workflows/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./zizmor --no-progress .github/workflows/
 
   # Verifies the artifact users actually download. Every other job here runs
   # against the checkout, so a broken `files` field, a `bin` entry pointing
