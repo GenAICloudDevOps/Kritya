@@ -40,14 +40,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                release-assets.githubusercontent.com:443
-                  uploads.github.com:443
-                    *.actions.githubusercontent.com:443
-                      *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 uploads.github.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+          
+          - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -68,15 +63,8 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                registry.npmjs.org:443
-                  tuf-repo-cdn.sigstore.dev:443
-                    api.socket.dev:443
-                      *.actions.githubusercontent.com:443
-                        *.blob.core.windows.net:443
-
+          allowed-endpoints: github.com:443 api.github.com:443 registry.npmjs.org:443 tuf-repo-cdn.sigstore.dev:443 api.socket.dev:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+          
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -145,12 +133,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              release-assets.githubusercontent.com:443
-                *.actions.githubusercontent.com:443
-                  *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          allowed-endpoints: github.com:443 release-assets.githubusercontent.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+          
+          - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: a key committed last month is still a leak today.
           fetch-depth: 0
@@ -179,14 +164,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                release-assets.githubusercontent.com:443
-                  api.zizmor.org:443
-                    *.actions.githubusercontent.com:443
-                      *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+                    allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 api.zizmor.org:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+                    
+                    es: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -235,13 +215,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                registry.npmjs.org:443
-                  *.actions.githubusercontent.com:443
-                    *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+                    allowed-endpoints: github.com:443 api.github.com:443 registry.npmjs.org:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+                    
+                    es: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -299,16 +275,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                release-assets.githubusercontent.com:443
-                  registry.npmjs.org:443
-                    168.63.129.16:80
-                      hosted-compute-watchdog-prod-iad-02.githubapp.com:443
-                        *.actions.githubusercontent.com:443
-                          *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+                    allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 168.63.129.16:80 hosted-compute-watchdog-prod-iad-02.githubapp.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+                    
+                    es: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -378,15 +347,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                release-assets.githubusercontent.com:443
-                  registry.npmjs.org:443
-                    hosted-compute-watchdog-prod-iad-02.githubapp.com:443
-                      *.actions.githubusercontent.com:443
-                        *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+                    allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 hosted-compute-watchdog-prod-iad-02.githubapp.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+                    
+                    es: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -414,14 +377,9 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
-          allowed-endpoints: >-
-            github.com:443
-              api.github.com:443
-                release-assets.githubusercontent.com:443
-                  registry.npmjs.org:443
-                    *.actions.githubusercontent.com:443
-                      *.blob.core.windows.net:443
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+                    allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
+                    
+                    es: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
