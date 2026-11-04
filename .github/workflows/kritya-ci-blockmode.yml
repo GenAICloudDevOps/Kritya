@@ -1,0 +1,456 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# The shared Actions cache is restore-only for this workflow: jobs may read
+# cache entries but never save new ones, so an entry planted by one run can
+# never be picked up by a later run (cache poisoning). Trusted runs lose
+# nothing but cache freshness; a changed lockfile just means a full download.
+cache-mode: read
+
+jobs:
+  # Static analysis of the JS/TS source for security vulnerabilities
+  # (injection, unsafe regex, etc). Results land in the repo's Security tab,
+  # not in job logs — a green check here means no new alerts, not zero
+  # findings ever.
+  codeql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      # Needed for the analyze step to read workflow-run context on a
+      # private repo (GET /repos/.../actions/runs/...) — without it, the
+      # scan itself still completes but the job is reported as a
+      # "configuration error" when it can't fetch that metadata.
+      actions: read
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            uploads.github.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: javascript-typescript
+
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+
+  # Dependency checks that ask the registry, not the machine: the answer is the
+  # same on every OS and Node version, so running them once per matrix entry
+  # bought no extra coverage and made a registry-side hiccup look like five
+  # separate failures. Here a failure is one clearly-labelled red job.
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            api.socket.dev:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          check-latest: true
+          cache: npm
+
+      # Fails in seconds if the runner's Node is below the security floor in
+      # engines.node (CVE-2026-111497, see SECURITY.md). Before `npm ci`,
+      # because a dependency install is not what this check is about.
+      - run: npm run check:node
+
+      # npm ci is itself the integrity check: it fails if any tarball doesn't
+      # match the hash pinned in package-lock.json.
+      - run: npm ci
+      # `npm audit` behind a reviewed, expiring per-advisory allowlist — npm
+      # can only suppress by severity, which would drop the gate for every
+      # future high finding too. See scripts/audit-allowlist.json.
+      - run: npm run check:audit
+      - run: npm audit signatures
+      - run: npm run check:install-scripts
+      - run: npm run check:typescript-setup
+      # Socket catches supply-chain risk npm audit doesn't: malware,
+      # obfuscated/typosquatted packages, install-script behavior, etc.,
+      # evaluated against this org's Socket security policy. Reviewed,
+      # accepted findings (unreachable CVEs, minified-dist false positives)
+      # are documented in SECURITY.md and should be marked accepted in that
+      # policy, not re-litigated here on every run.
+      #
+      # Skipped on PRs from forks: GitHub withholds repo secrets from
+      # fork-triggered `pull_request` runs, so SOCKET_CLI_API_TOKEN would be
+      # empty there — failing the job on a missing token would be a false
+      # red, not a real finding.
+      #
+      # Skipped on Dependabot PRs for the same reason, and the fork check does
+      # not catch them: Dependabot branches live in this repo, so
+      # `head.repo.full_name == github.repository` is true and the step would
+      # run with an empty token. GitHub withholds secrets from every
+      # Dependabot-triggered run. The PR's own package changes are still
+      # covered by `npm ci` (lockfile hashes), `check:audit` and
+      # `npm audit signatures` above; Socket re-scans the merged commit on the
+      # push to main.
+      #
+      # Runs even if an earlier step in this job failed (e.g. npm audit's
+      # registry endpoint timing out) — `!cancelled()` skips this only if the
+      # job itself was cancelled, so a flaky npm audit doesn't also deny us
+      # Socket's independent coverage for the same push.
+      - name: Socket security scan
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: npx --yes @socketsecurity/cli ci
+        env:
+          SOCKET_CLI_API_TOKEN: ${{ secrets.SOCKET_CLI_API_TOKEN }}
+
+  # Secret scanning: gitleaks over the full git history. A committed API key
+  # lives in history forever even after rotation, so this gates every PR and
+  # every push to main. The allowlist in .gitleaks.toml covers only the
+  # deliberately fake secrets used by the secret-redaction tests — a real
+  # leaked key would never equal those exact values.
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a key committed last month is still a leak today.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Pinned binary + SHA256 rather than the gitleaks-action: fewer moving
+      # parts, and the checksum pins the artifact — a replaced release fails
+      # loudly instead of running quietly different code.
+      - name: Install gitleaks
+        run: |
+          curl -sL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.27.2/gitleaks_8.27.2_linux_x64.tar.gz
+          echo "141c3b2dede46d8b3a53b47116da756bd223decc0374797559a6b50ecba5590c  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+
+      - name: Scan for leaked secrets
+        run: ./gitleaks detect --config .gitleaks.toml --no-banner --verbose --redact
+
+  # Workflow scanning: zizmor audits the CI YAML itself for supply-chain
+  # issues (template injection, credential persistence, cache poisoning).
+  # CodeQL covers the TypeScript source and Scorecard covers repo hygiene;
+  # neither reads workflow semantics the way zizmor does.
+  workflow-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            api.zizmor.org:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned binary + SHA256: the checksum pins the artifact — a replaced
+      # release fails loudly instead of running quietly different code.
+      - name: Install zizmor
+        run: |
+          curl -sL -o zizmor.tar.gz https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  zizmor.tar.gz" | sha256sum -c -
+          tar xzf zizmor.tar.gz zizmor
+
+      # Online audits are ON (no --offline): with a token, zizmor also runs
+      # the checks that need GitHub's API — chiefly impostor-commit, which
+      # verifies each pinned action SHA is a real commit of that action's
+      # own repo, not a look-alike commit created in a fork. The token is
+      # this run's built-in GITHUB_TOKEN, passed as GH_TOKEN (zizmor reads
+      # it from the environment); it is read-only under this workflow's
+      # permissions and dies with the run — no stored secret is involved.
+      # Exits non-zero on any finding, so the fixes in build.yml and
+      # publish.yml (and the adhoc-packages suppression) are load-bearing.
+      - name: Audit workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./zizmor --no-progress .github/workflows/
+
+  # Verifies the artifact users actually download. Every other job here runs
+  # against the checkout, so a broken `files` field, a `bin` entry pointing
+  # outside the packed set, or a missing runtime asset would ship with every
+  # test still green — the repo tree is not what `npm install -g kritya`
+  # produces. This packs the tarball, asserts on the manifest, then installs it
+  # into a clean directory and runs the CLI from there.
+  #
+  # All three OSes on purpose: the global-install path is not the same code
+  # path on each. Windows gets .cmd/.ps1 shims and macOS a different bin
+  # symlink layout, so an entry point that is broken there still passes on
+  # Linux — which is exactly the leg that used to run alone. Each leg is cheap
+  # (~1 min), and the release depends on this being right.
+  package:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          check-latest: true
+          cache: npm
+
+      - run: npm ci
+      # `npm pack` does not run prepublishOnly, so dist/ has to exist first.
+      - run: npm run build
+      # Manifest only — cheap, and no second dependency install.
+      - run: npm run check:package
+      # The real thing: install the packed tarball into a temp dir and run it.
+      - run: npm run check:smoke
+
+  test:
+    runs-on: ${{ matrix.cell.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The suite (~3.5 min whole) is split into 4 shards running in
+        # parallel; each shard runs ~1/4 of the test files. run-tests.mjs
+        # assigns files to shards by sorted index, so shards are stable
+        # run to run. Bump the list if the suite grows a lot.
+        shard: [1, 2, 3, 4]
+        cell:
+          # Every live Node line (`engines: >=22`, so 22/24/26 are all
+          # claimed) against every OS the package ships to. 22.x is the
+          # floor, 24.x the outgoing Active LTS, 26.x the line that takes
+          # over Active LTS this month — testing only the floor and 24 left
+          # the newest claimed version unexercised on any platform.
+          #
+          # 9 cells x 4 shards = 36 shard jobs (was 16). Cheap on a public
+          # repo and shards run in parallel, so wall time barely moves; if
+          # the queue ever matters, drop 26.x from Windows/macOS first —
+          # a Node-version difference is far more likely to show on Linux
+          # than to be OS-specific.
+          #
+          # The ubuntu + 22.x cell additionally records raw coverage, merged
+          # and threshold-checked in the `coverage` job below; every cell
+          # still runs the full suite across its 4 shards.
+          - { os: ubuntu-latest, node: 22.x, coverage: true }
+          - { os: ubuntu-latest, node: 24.x, coverage: false }
+          - { os: ubuntu-latest, node: 26.x, coverage: false }
+          - { os: windows-latest, node: 22.x, coverage: false }
+          - { os: windows-latest, node: 24.x, coverage: false }
+          - { os: windows-latest, node: 26.x, coverage: false }
+          - { os: macos-latest, node: 22.x, coverage: false }
+          - { os: macos-latest, node: 24.x, coverage: false }
+          - { os: macos-latest, node: 26.x, coverage: false }
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            registry.npmjs.org:443
+            168.63.129.16:80
+            hosted-compute-watchdog-prod-iad-02.githubapp.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # check-latest: setup-node resolves a range like `22.x` from a
+          # versions manifest that lags a new patch release by a day or more.
+          # A stale 22.22.x is below the security floor in engines.node
+          # (CVE-2026-111497), which `check:node` below correctly refuses — so
+          # ask nodejs.org for the newest patch of the line instead of trusting
+          # the cached manifest.
+          node-version: ${{ matrix.cell.node }}
+          check-latest: true
+          cache: npm
+
+      # Assert the cell's Node meets engines.node before testing against it: a
+      # matrix entry that resolved to an older patch would otherwise report
+      # green coverage of a runtime the package doesn't claim to support.
+      - run: npm run check:node
+      - run: npm ci
+      - run: npm run build
+      # Lint/format run once per OS (shard 1 of the 22.x cell) rather than
+      # once per cell: a lint or Prettier result does not depend on the Node
+      # version, but it can depend on the OS, since Windows checkouts differ
+      # in line endings. Gating on node == 22.x keeps that OS coverage while
+      # dropping the two redundant repeats per OS that the 9-cell matrix
+      # would otherwise add.
+      - run: npm run lint
+        if: matrix.shard == 1 && matrix.cell.node == '22.x'
+      - run: npm run format:check
+        if: matrix.shard == 1 && matrix.cell.node == '22.x'
+
+      # Coverage cells record raw coverage for their shard instead of just
+      # running it; the `coverage` job merges all four shards and enforces
+      # the .c8rc.json thresholds. (The build above already ran, so the
+      # runner is invoked directly instead of via `npm test`.)
+      - run: npx c8 --reporter=none node scripts/run-tests.mjs --shard=${{ matrix.shard }}/4
+        if: matrix.cell.coverage
+      - name: Upload shard coverage
+        if: matrix.cell.coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage/tmp/
+          if-no-files-found: error
+      - run: node scripts/run-tests.mjs --shard=${{ matrix.shard }}/4
+        if: ${{ !matrix.cell.coverage }}
+
+  # The whole suite the way `npm test` runs it — every file in one `node --test`
+  # invocation on one machine — because that is the profile publish.yml gates a
+  # release on. Every other test job here shards (--shard=N/4, ~29 files per
+  # runner), so without this job that profile is exercised nowhere in CI.
+  #
+  # This is not hypothetical. 0.8.29-beta failed at release because a test that
+  # passes in every 29-file shard lost a race under the ~117-file load of the
+  # single unsharded run, while CI was green on the very same commit. Since
+  # ci.yml never runs on tags, that failure could only ever appear on the tag,
+  # where it is the release's only gate and there is no retry.
+  #
+  # Deliberately not a matrix cell, and deliberately unsharded: sharding is the
+  # thing that hides the failure. Invokes run-tests.mjs directly rather than
+  # `npm test` so the build above is not repeated.
+  unsharded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            registry.npmjs.org:443
+            hosted-compute-watchdog-prod-iad-02.githubapp.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # ubuntu + 22.x on purpose, matching publish.yml: the point is to
+      # reproduce the release environment, not to widen coverage. Lint and
+      # format are already covered once per cell by the test matrix.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          check-latest: true
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/run-tests.mjs
+
+  # Merges the raw per-shard coverage from the ubuntu + 22.x test cells and
+  # enforces the .c8rc.json thresholds. Waits for every test shard, so a red
+  # suite never produces a green coverage gate.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            registry.npmjs.org:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          check-latest: true
+          cache: npm
+
+      - run: npm ci
+      # Needed for `"all": true` in .c8rc.json: uncovered files are
+      # enumerated from dist/, so the report is computed against the same
+      # tree the shards ran against.
+      - run: npm run build
+
+      - name: Download shard coverage
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-shard-*
+          path: coverage/tmp/
+          merge-multiple: true
+
+      # Merges coverage/tmp/*.json and exits non-zero if the .c8rc.json
+      # thresholds aren't met.
+      - run: npx c8 report --reporter=text --reporter=html
