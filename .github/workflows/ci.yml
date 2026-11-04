@@ -14,6 +14,12 @@ concurrency:
 permissions:
   contents: read
 
+# The shared Actions cache is restore-only for this workflow: jobs may read
+# cache entries but never save new ones, so an entry planted by one run can
+# never be picked up by a later run (cache poisoning). Trusted runs lose
+# nothing but cache freshness; a changed lockfile just means a full download.
+cache-mode: read
+
 jobs:
   # Static analysis of the JS/TS source for security vulnerabilities
   # (injection, unsafe regex, etc). Results land in the repo's Security tab,
