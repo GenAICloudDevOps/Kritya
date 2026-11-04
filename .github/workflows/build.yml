@@ -27,14 +27,6 @@ jobs:
         # - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      # First step in the job, like every other workflow in this repo:
-      # watches the job's outbound network calls (audit mode — build.yml
-      # is manual-only and paused, so there is no recent observed traffic
-      # to build a block-mode allowlist from yet).
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
-        with:
-          egress-policy: audit
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # artipacked: this job uploads build artifacts, so the default
