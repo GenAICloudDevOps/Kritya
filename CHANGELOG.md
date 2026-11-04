@@ -4,6 +4,38 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.70-beta] — 2026-11-04
+
+### Security
+
+- **CI egress is blocked by default in the main workflow.** Every job in
+  `ci.yml` now runs its network monitor in block mode with a per-job endpoint
+  allowlist built from observed traffic: a job can reach only the endpoints on
+  its own list. The publish workflow already ran this way. The manual packaging
+  workflow gained the same monitor in audit mode (it is paused, so there is no
+  observed traffic to build an allowlist from yet); the scorecard and GitLab
+  mirror workflows remain audit-only. The first block-mode runs surfaced
+  exactly one missing endpoint — the fetchUrl tests perform DNS validation
+  against the IANA example domains — and `example.com` / `example.org` are now
+  allowlisted for the test job only.
+- **Dependency intake rules are committed in `.npmrc`.** Installs refuse
+  package versions published less than 3 days ago (`min-release-age=3`,
+  extending the Dependabot cooldown to manual installs), and dependency
+  install scripts never run automatically (`ignore-scripts=true`); only the
+  three allowlisted packages declare one, and the install-script gate in CI
+  still applies. A deliberate per-command exception stays available:
+  `npm install <pkg>@<version> --min-release-age=0`.
+- **The shared Actions cache is restore-only for CI.** `cache-mode: read` at
+  the top of `ci.yml`: jobs may restore cache entries but never save new ones,
+  so an entry planted by one run cannot be picked up by a later run.
+- **Workflow scanning now runs zizmor's online audits.** The workflow-scan job
+  no longer passes `--offline`, so the impostor-commit and other online checks
+  run on every workflow change, authenticated with the workflow's own token.
+
+### Changed
+
+- **Dependencies bumped.** docx 9.15.1 → 9.15.2.
+
 ## [0.8.68-beta] — 2026-11-02
 
 ### Security
