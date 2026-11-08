@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR } from "../config/config.js";
+import { warnUser } from "../config/debug.js";
+import { scanForSecrets } from "../tools/secretScan.js";
 
 /**
  * allow/deny rules from settings files. A rule is either a bare tool name
@@ -36,11 +38,35 @@ export function loadRules(workspace: string, trustWorkspace = true): PermissionR
         allow?: unknown;
         deny?: unknown;
       };
+      // Settings files are exactly the kind of file that gets shared with a
+      // team or committed to a repository, so a rule must never carry a
+      // literal credential (e.g. an approved command with a password or a
+      // token spelled out in it). Such rules are dropped, not applied, and
+      // the warning names only the redacted match — never the value itself.
+      const dropped: string[] = [];
+      const clean = (r: unknown): r is string => {
+        if (typeof r !== "string") return false;
+        const matches = scanForSecrets(r);
+        if (matches.length === 0) return true;
+        for (const m of matches) dropped.push(`${m.kind} (${m.snippet})`);
+        return false;
+      };
       if (includeAllow && Array.isArray(parsed.allow)) {
-        allow.push(...parsed.allow.filter((r): r is string => typeof r === "string"));
+        allow.push(...parsed.allow.filter(clean));
       }
       if (Array.isArray(parsed.deny)) {
-        deny.push(...parsed.deny.filter((r): r is string => typeof r === "string"));
+        deny.push(...parsed.deny.filter(clean));
+      }
+      if (dropped.length > 0) {
+        warnUser(
+          `permission rules in ${file}`,
+          new Error(
+            `dropped ${dropped.length} rule(s) containing what looks like a secret ` +
+              `(${dropped.join(", ")}). Settings files are often shared or committed, ` +
+              `so a literal credential must never be written into a rule — reference ` +
+              `the value from the environment instead (e.g. $API_KEY).`
+          )
+        );
       }
     } catch {
       // Missing or malformed settings file — no rules from it.

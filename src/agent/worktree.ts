@@ -43,6 +43,22 @@ export function isGitRepo(workspace: string): boolean {
 }
 
 /**
+ * Tracked files in `workspace` that are local, per-machine settings files
+ * (basename `settings.local.json`, typically under a dot-directory config
+ * folder). Such files collect approved commands and can carry credentials,
+ * so they are meant to stay out of version control entirely; a tracked one
+ * is a leak waiting for the next push. Returns [] outside a git repository.
+ */
+export function trackedLocalSettingsFiles(workspace: string): string[] {
+  const res = git(workspace, ["ls-files"]);
+  if (!res.ok) return [];
+  return res.out
+    .split("\n")
+    .map((f) => f.trim())
+    .filter((f) => f !== "" && f.split("/").pop() === "settings.local.json");
+}
+
+/**
  * Creates a fresh branch + worktree off the current HEAD so a write subagent
  * can edit and run commands without ever touching the user's real working
  * tree. Returns null if worktree creation failed (e.g. dirty index conflict,
