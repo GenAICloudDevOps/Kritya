@@ -16,7 +16,7 @@ import type { CliConfig, McpServerConfig } from "../config/config.js";
 import { defaultModelFor, contextWindowFor } from "../config/models.js";
 import { retentionDaysFor } from "../config/retention.js";
 import { assertJsonWithinLimits } from "../config/jsonSafety.js";
-import { isGitRepo } from "../agent/worktree.js";
+import { isGitRepo, trackedLocalSettingsFiles } from "../agent/worktree.js";
 import { loadHooks } from "../hooks/hooks.js";
 import { loadProjectMcpServers, missingVars } from "../mcp/servers.js";
 import { scanSkillsDetailed, skillsDir, userSkillsDir } from "../agent/skills.js";
@@ -338,6 +338,22 @@ function workspaceSection(workspace: string, config: ReturnType<typeof loadConfi
       ? ok("git repository")
       : warn("not a git repository — /commit and isolated write subagents are unavailable")
   );
+
+  // Local settings files (settings.local.json) hold per-machine state —
+  // approved commands, and with them anything the command carried, including
+  // credentials. One that git tracks will be shared with everyone who clones
+  // the repository, so it gets a warning even though nothing is broken yet.
+  if (isGitRepo(workspace)) {
+    for (const file of trackedLocalSettingsFiles(workspace)) {
+      checks.push(
+        warn(
+          `${file} is tracked by git — local settings files can contain approved ` +
+            `commands and credentials and should not be committed; untrack it ` +
+            `(git rm --cached) and add it to .gitignore`
+        )
+      );
+    }
+  }
 
   // Trust gates the workspace's own settings.json allow rules, hooks, .env and
   // custom commands. Worth stating explicitly: an untrusted workspace looks

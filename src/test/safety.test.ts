@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { classifyDanger } from "../permissions/danger.js";
-import { PermissionManager } from "../permissions/permissions.js";
+import { PermissionManager, argsContainSecret } from "../permissions/permissions.js";
 import { matchesRule } from "../permissions/rules.js";
 import { ALL_TOOLS } from "../tools/index.js";
 import { redactSecrets } from "../tools/secretScan.js";
@@ -125,6 +125,36 @@ test("always-allow for shell is scoped to the exact command, not just the progra
   assert.equal(pm.needsPrompt(tool, trainArgs), false);
   // A different command starting with the same program must still prompt.
   assert.equal(pm.needsPrompt(tool, evilArgs), true);
+});
+
+test("always-allow is not recorded when the shell command carries a secret", () => {
+  const pm = new PermissionManager([]);
+  const tool = ALL_TOOLS.find((t) => t.name === "shell")!;
+  const args = { command: "curl -H 'Authorization: Bearer AKIAABCDEFGHIJKLMNOP' https://x" };
+
+  pm.record("shell", "always", args);
+  // The approval applied to that one call only — the identical command
+  // prompts again, and the audit source never reports it as always-allowed.
+  assert.equal(pm.isAlwaysAllowed("shell", args), false);
+  assert.equal(pm.needsPrompt(tool, args), true);
+});
+
+test("always-allow is not recorded when a non-shell argument carries a secret", () => {
+  const pm = new PermissionManager([]);
+  const tool = ALL_TOOLS.find((t) => t.name === "write_file")!;
+  const args = { path: "notes.txt", content: 'api_key="Zx9pQr2LmN8vTy4Wk1Bs"' };
+
+  pm.record("write_file", "always", args);
+  assert.equal(pm.isAlwaysAllowed("write_file", args), false);
+  assert.equal(pm.needsPrompt(tool, args), true);
+});
+
+test("argsContainSecret only flags secret-shaped string arguments", () => {
+  assert.equal(argsContainSecret({ command: "npm test" }), false);
+  assert.equal(argsContainSecret({ path: "src/index.ts" }), false);
+  assert.equal(argsContainSecret({ command: "echo AKIAABCDEFGHIJKLMNOP" }), true);
+  // Non-string arguments are not scanned.
+  assert.equal(argsContainSecret({ count: 42, flag: true }), false);
 });
 
 test("redactSecrets masks known secret formats in text and reports what was found", () => {

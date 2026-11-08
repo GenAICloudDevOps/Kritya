@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -232,6 +233,41 @@ test("collectDiagnostics warns about an MCP server with an unset variable", asyn
   const warning = workspaceSection.checks.find((c) => /DEFINITELY_UNSET_TOKEN/.test(c.label));
   assert.ok(warning, "expected a warning naming the unset variable");
   assert.equal(warning.level, "warn");
+});
+
+test("collectDiagnostics warns when a local settings file is tracked by git", async () => {
+  const workspace = await tempDir("kritya-doctor-");
+  const git = (args: string[]) => execFileSync("git", args, { cwd: workspace, stdio: "ignore" });
+  git(["init"]);
+  await fsp.mkdir(path.join(workspace, ".agent"), { recursive: true });
+  await fsp.writeFile(path.join(workspace, ".agent", "settings.local.json"), "{}");
+  await fsp.writeFile(path.join(workspace, "tracked.txt"), "hello");
+  git(["add", ".agent/settings.local.json", "tracked.txt"]);
+
+  const sections = await collectDiagnostics({ workspace, offline: true });
+  const workspaceSection = sections.find((s) => s.title === "Workspace");
+
+  assert.ok(workspaceSection);
+  const warning = workspaceSection.checks.find((c) => /settings\.local\.json/.test(c.label));
+  assert.ok(warning, "expected a warning naming the tracked local settings file");
+  assert.equal(warning.level, "warn");
+  assert.match(warning.label, /should not be committed/);
+  // An ordinary tracked file is not flagged.
+  assert.ok(!workspaceSection.checks.some((c) => /tracked\.txt/.test(c.label)));
+});
+
+test("collectDiagnostics does not warn about an untracked local settings file", async () => {
+  const workspace = await tempDir("kritya-doctor-");
+  const git = (args: string[]) => execFileSync("git", args, { cwd: workspace, stdio: "ignore" });
+  git(["init"]);
+  await fsp.mkdir(path.join(workspace, ".agent"), { recursive: true });
+  await fsp.writeFile(path.join(workspace, ".agent", "settings.local.json"), "{}");
+
+  const sections = await collectDiagnostics({ workspace, offline: true });
+  const workspaceSection = sections.find((s) => s.title === "Workspace");
+
+  assert.ok(workspaceSection);
+  assert.ok(!workspaceSection.checks.some((c) => /settings\.local\.json/.test(c.label)));
 });
 
 // ---------------------------------------------------------------------------

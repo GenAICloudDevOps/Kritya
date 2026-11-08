@@ -1,4 +1,5 @@
 import type { PermissionDecision, ToolDef } from "../types.js";
+import { scanForSecrets } from "../tools/secretScan.js";
 import { matchesRule, type PermissionRules } from "./rules.js";
 
 /**
@@ -22,6 +23,22 @@ function alwaysAllowKey(toolName: string, args: Record<string, unknown>): string
   if (toolName !== "shell") return toolName;
   const command = String(args.command ?? "").trim();
   return command ? `shell:${command}` : "shell";
+}
+
+/**
+ * Whether any string argument of a call carries a secret-shaped value (for
+ * shell, the command string itself; for file tools, a path or a content
+ * payload). Used to keep such calls out of the "always allow" table: the
+ * recorded key for shell *is* the verbatim command, so remembering an
+ * approval for a command that embeds a literal credential would keep that
+ * credential in the approval table and silently re-run it for the rest of
+ * the session. A secret-bearing call can still be approved — once.
+ */
+export function argsContainSecret(args: Record<string, unknown>): boolean {
+  for (const value of Object.values(args)) {
+    if (typeof value === "string" && scanForSecrets(value).length > 0) return true;
+  }
+  return false;
 }
 
 export class PermissionManager {
@@ -53,7 +70,12 @@ export class PermissionManager {
   }
 
   record(toolName: string, decision: PermissionDecision, args: Record<string, unknown> = {}): void {
-    if (decision === "always") this.alwaysAllowed.add(alwaysAllowKey(toolName, args));
+    if (decision !== "always") return;
+    // Never record an "always" decision for a call whose arguments carry a
+    // secret-shaped value — see argsContainSecret. The approval stands for
+    // this one call; the next identical call prompts again.
+    if (argsContainSecret(args)) return;
+    this.alwaysAllowed.add(alwaysAllowKey(toolName, args));
   }
 
   /**
