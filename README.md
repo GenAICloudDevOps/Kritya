@@ -7,7 +7,8 @@
 
 Dependency risk is scanned on [Socket](https://socket.dev/npm/package/kritya);
 see [SECURITY.md](SECURITY.md#dependency-scanning) for how flagged findings
-are triaged.
+are triaged. Dependencies and source code are also scanned by
+[Snyk](https://snyk.io/).
 
 > ⚠️ **Beta** — APIs, flags, and behavior may still change between releases.
 
