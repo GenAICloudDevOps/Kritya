@@ -1,0 +1,63 @@
+name: Snyk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # A second, independent opinion on two questions other checks already
+  # ask: are the installed dependencies known to be vulnerable, and does
+  # our own code have security flaws? Snyk's vulnerability data and code
+  # analysis are separate from npm audit, Socket and CodeQL, so a miss by
+  # one tool can still be caught by another.
+  #
+  # Report-only for now: both scan steps are `continue-on-error`, so this
+  # workflow stays green and its value is the findings in the job log (the
+  # GitHub integration tracks the same project in the Snyk dashboard).
+  # Turning it into a merge gate is a separate, later decision — a strict
+  # gate would fail today on already-known findings that have no fix yet
+  # and are tracked elsewhere.
+  snyk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          check-latest: true
+          cache: npm
+
+      # The dependency scan reads the installed tree, not just the
+      # lockfile, so install exactly what the lockfile pins first.
+      - run: npm ci
+
+      # Skipped on fork PRs and Dependabot runs for the same reason the
+      # Socket step in ci.yml is: GitHub withholds repo secrets there, so
+      # SNYK_TOKEN would be empty and the scan could not authenticate.
+      - name: Snyk dependency scan
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        continue-on-error: true
+        run: npx --yes snyk test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Snyk code scan
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        continue-on-error: true
+        run: npx --yes snyk code test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
