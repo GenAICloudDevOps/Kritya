@@ -4,6 +4,24 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.71-beta] — 2026-11-08
+
+### Security
+
+- **Secrets can no longer ride along in approvals or settings.** A command
+  containing a secret-shaped value can still be approved — but once only;
+  it is never offered as an "always allow". Permission rules loaded from
+  settings files are scanned on load, and a rule carrying a literal secret
+  is dropped, not applied, with a warning that names only the redacted
+  match. And `kritya doctor` now warns when an agent local-settings file
+  is tracked by git, where an approved secret would otherwise be committed
+  and shared.
+
+### Changed
+
+- **Dependencies bumped.** electron 45.2.1 → 45.2.3; openai 7.47.0 →
+  7.53.0; undici 8.12.3 → 8.12.4; docx 9.15.2 → 9.15.3.
+
 ## [0.8.70-beta] — 2026-11-04
 
 ### Security
