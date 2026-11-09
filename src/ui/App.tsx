@@ -27,6 +27,7 @@ import { resolveSafe } from "../tools/common.js";
 import { loadIgnorePatterns } from "../tools/ignore.js";
 import type { UndoStack } from "../undo/undo.js";
 import type { AgentHandlers, TaskItem, UiBridge } from "../types.js";
+import { sweepColor } from "./Banner.js";
 import { Markdown } from "./Markdown.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { ElicitationPrompt } from "./ElicitationPrompt.js";
@@ -1120,7 +1121,15 @@ export function App({
       {phase === "input" && (
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="gray" paddingX={1}>
-            <Text color="green">❯ </Text>
+            {/* The prompt carries the K>_ mark, swept through the banner's
+                cyan→green ramp the same way the tagline is. */}
+            <Text>
+              {"K>_".split("").map((ch, i) => (
+                <Text key={i} color={sweepColor(i, 3)}>
+                  {ch}
+                </Text>
+              ))}{" "}
+            </Text>
             <TextInput
               key={inputKey}
               value={input}
