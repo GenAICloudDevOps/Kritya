@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/kritya-bear.png" alt="The Kritya bear, working on a laptop" width="200">
+</p>
+
 # kritya
 
 [![CI](https://github.com/GenAICloudDevOps/Kritya/actions/workflows/ci.yml/badge.svg)](https://github.com/GenAICloudDevOps/Kritya/actions/workflows/ci.yml)
