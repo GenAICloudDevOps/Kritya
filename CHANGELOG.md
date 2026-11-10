@@ -4,6 +4,17 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.72-beta] — 2026-11-09
+
+### Added
+
+- **Snyk scanning in CI.** A report-only Snyk workflow (`.github/workflows/snyk.yml`) scans dependencies and source code; the README now notes the scanning. Report-only for now — no failing gate yet.
+
+### Changed
+
+- **Branding: `K>_` prompt mark and bear logo.** The input prompt now uses a `K>_` mark swept through the banner's cyan-to-green ramp (`sweepColor`), replacing the plain `❯`. The README carries the Kritya bear logo (`assets/kritya-bear.png`).
+- **Dependencies bumped.** `github/codeql-action` group 4.39.1 → 4.39.3 (`init`, `analyze`, `upload-sarif`).
+
 ## [0.8.71-beta] — 2026-11-08
 
 ### Security
