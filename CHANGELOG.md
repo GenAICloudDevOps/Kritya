@@ -4,6 +4,12 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.73-beta] — 2026-11-15
+
+### Changed
+
+- **Dependencies bumped.** docx 9.15.3 → 9.15.4; electron 45.2.3 → 45.3.2; eslint 10.14.0 → 10.15.0; openai 7.54.0 → 7.57.0; prettier 3.9.10 → 3.10.1.
+
 ## [0.8.72-beta] — 2026-11-09
 
 ### Added
