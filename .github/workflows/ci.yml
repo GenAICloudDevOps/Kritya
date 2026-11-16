@@ -37,7 +37,7 @@ jobs:
       # "configuration error" when it can't fetch that metadata.
       actions: read
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 uploads.github.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 registry.npmjs.org:443 tuf-repo-cdn.sigstore.dev:443 api.socket.dev:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -130,7 +130,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 release-assets.githubusercontent.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -161,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 api.zizmor.org:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -212,7 +212,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 registry.npmjs.org:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -272,7 +272,7 @@ jobs:
           - { os: macos-latest, node: 24.x, coverage: false }
           - { os: macos-latest, node: 26.x, coverage: false }
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 example.com:443 example.org:443 168.63.129.16:80 hosted-compute-watchdog-prod-iad-02.githubapp.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -344,7 +344,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 hosted-compute-watchdog-prod-iad-02.githubapp.com:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
@@ -374,7 +374,7 @@ jobs:
     timeout-minutes: 15
     needs: test
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: github.com:443 api.github.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 *.actions.githubusercontent.com:443 *.blob.core.windows.net:443
