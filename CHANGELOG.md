@@ -4,6 +4,12 @@ All notable changes to kritya are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.74-beta] — 2026-11-18
+
+### Changed
+
+- **Dependencies bumped.** electron 45.3.2 → 45.3.4; lint-staged 17.6.0 → 17.6.1; openai 7.57.0 → 7.59.0; step-security/harden-runner 2.22.3 → 2.22.4; typescript-eslint 8.72.2 → 8.73.0.
+
 ## [0.8.73-beta] — 2026-11-15
 
 ### Changed
