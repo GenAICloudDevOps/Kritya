@@ -70,7 +70,7 @@
     "pdfjs-dist": "^6.4.299",
     "pptxgenjs": "^4.0.1",
     "react": "^19.3.0",
-    "string-width": "^8.3.0",
+    "string-width": "^9.0.0",
     "tinyglobby": "^0.2.17",
     "undici": "^8.11.2",
     "wrap-ansi": "^10.0.2"
